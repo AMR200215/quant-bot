@@ -1,0 +1,50 @@
+name: Daily Market Scan
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # 9:00 AM UTC every day
+  workflow_dispatch:        # lets you trigger it manually from GitHub too
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Auto-resolve pending journal entries
+        run: python -m app.auto_resolve
+        env:
+          DATA_SOURCE: live
+
+      - name: Run market scan (paper trades at 1%, real signals at 5%)
+        run: python -m app.scan_near_term 2 60
+        env:
+          DATA_SOURCE: live
+          TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
+          BANKROLL: ${{ secrets.BANKROLL }}
+          FRACTIONAL_KELLY: "0.25"
+          MAX_DRAWDOWN: "0.20"
+          MIN_EV: "0.05"
+          MIN_VOLUME: "5000"
+          MAX_IMPACT: "0.03"
+
+      - name: Commit updated journal and logs
+        run: |
+          git config user.name  "quant-bot[actions]"
+          git config user.email "quant-bot@users.noreply.github.com"
+          git add logs/market_journal.csv logs/live_scan_results.csv
+          git diff --cached --quiet || git commit -m "scan: $(date -u +%Y-%m-%d)"
+          git push

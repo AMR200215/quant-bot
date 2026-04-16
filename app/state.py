@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+data_source = os.getenv("DATA_SOURCE", "live")
+
 
 @dataclass
 class Settings:
@@ -16,6 +18,11 @@ class Settings:
 
     polygon_api_key: str = os.getenv("POLYGON_API_KEY", "")
 
+    # External signal sources
+    twitter_bearer_token: str = os.getenv("TWITTER_BEARER_TOKEN", "")
+    use_external_signals: bool = os.getenv("USE_EXTERNAL_SIGNALS", "true").lower() == "true"
+    data_source: str = data_source
+
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
@@ -25,7 +32,9 @@ class Settings:
 
     max_drawdown: float = float(os.getenv("MAX_DRAWDOWN", 0.20))
 
-    min_ev: float = float(os.getenv("MIN_EV", 0.03))
+    # Minimum adjusted edge to emit a signal.  Must exceed the ~2.5% fee buffer
+    # to generate any real profit; 5% gives a meaningful margin above costs.
+    min_ev: float = float(os.getenv("MIN_EV", 0.05))
 
     min_volume: float = float(os.getenv("MIN_VOLUME", 5000))
 

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Scan — Quant Bot{% endblock %}
+{% block content %}
+
+<h1>Market Scanner</h1>
+
+<div class="card">
+  <form method="POST" action="/scan" id="scanForm">
+    <div class="grid-3" style="margin-bottom:16px;">
+      <div>
+        <label>Min Days to Close</label>
+        <input type="number" name="min_days" value="{{ params.min_days }}" min="0" step="1">
+      </div>
+      <div>
+        <label>Max Days to Close</label>
+        <input type="number" name="max_days" value="{{ params.max_days }}" min="1" step="1">
+      </div>
+      <div>
+        <label>Min Edge Threshold</label>
+        <input type="number" name="threshold" value="{{ params.threshold }}" min="0" step="0.001">
+      </div>
+    </div>
+    <button type="submit" onclick="this.closest('form').classList.add('loading')">
+      <span class="spinner"><span class="spin"></span></span>
+      <span class="btn-label">Run Scan</span>
+    </button>
+  </form>
+</div>
+
+{% if results is not none %}
+  {% if results|length == 0 %}
+    <div class="empty">No opportunities found. Try lowering the threshold or widening the day range.</div>
+  {% else %}
+    <h2>{{ results|length }} Opportunities Found</h2>
+    {% for r in results %}
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px;">
+        <div style="flex:1; padding-right:20px;">
+          <div style="font-weight:600; font-size:15px; margin-bottom:4px;">{{ r.question }}</div>
+          <div class="muted mono" style="font-size:11px;">ID: {{ r.market_id }}  ·  Closes in {{ r.days|round(1) }} days</div>
+        </div>
+        <div style="text-align:right; flex-shrink:0;">
+          <span class="badge {% if r.signal_label == 'strong' %}badge-green{% elif r.signal_label == 'moderate' %}badge-yellow{% else %}badge-gray{% endif %}">
+            {{ r.signal_label }}
+          </span>
+          <div style="font-size:20px; font-weight:700; margin-top:6px; color: {% if r.signal_label == 'strong' %}var(--green){% elif r.signal_label == 'moderate' %}var(--yellow){% else %}var(--muted){% endif %};">
+            {{ "%.4f"|format(r.signal_edge) }}
+          </div>
+          <div class="muted" style="font-size:11px;">signal</div>
+        </div>
+      </div>
+
+      <div class="grid-3" style="gap:12px;">
+        <div style="background:var(--surface2); border-radius:6px; padding:12px;">
+          <div class="muted" style="font-size:11px; margin-bottom:4px;">SIDE</div>
+          <div class="{% if r.side == 'buy_yes' %}side-yes{% else %}side-no{% endif %}" style="font-size:15px;">
+            {% if r.side == 'buy_yes' %}▲ BUY YES{% else %}▼ BUY NO{% endif %}
+          </div>
+        </div>
+        <div style="background:var(--surface2); border-radius:6px; padding:12px;">
+          <div class="muted" style="font-size:11px; margin-bottom:4px;">POSTERIOR vs MARKET</div>
+          <div style="font-size:15px; font-weight:600;">{{ "%.1f"|format(r.posterior * 100) }}%
+            <span class="muted" style="font-size:12px; font-weight:400;">vs {{ "%.1f"|format(r.yes_price * 100) }}%</span>
+          </div>
+          <div class="muted" style="font-size:11px;">gap: {{ "%+.1f"|format((r.posterior - r.yes_price)*100) }}pp</div>
+        </div>
+        <div style="background:var(--surface2); border-radius:6px; padding:12px;">
+          <div class="muted" style="font-size:11px; margin-bottom:4px;">ADJ EDGE</div>
+          <div style="font-size:15px; font-weight:600;">{{ "%.4f"|format(r.adjusted_edge) }}</div>
+          <div class="signal-bar"><div class="signal-bar-fill" style="width:{{ [r.adjusted_edge * 1000, 100]|min }}%"></div></div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:24px; margin-top:12px; font-size:12px; color:var(--muted);">
+        <span>Confidence: <b style="color:var(--text);">{{ "%.2f"|format(r.confidence) }}</b> [{{ r.confidence_label }}]</span>
+        <span>Risk: <b style="color:var(--text);">{{ "%.2f"|format(r.risk_score) }}</b> [{{ r.risk_label }}]</span>
+        <span>Volume: <b style="color:var(--text);">${{ "{:,.0f}".format(r.volume) }}</b></span>
+        <span>Liquidity: <b style="color:var(--text);">${{ "{:,.0f}".format(r.liquidity) }}</b></span>
+      </div>
+      <div style="margin-top:8px; font-size:11px; color:var(--muted);">{{ r.rationale }}</div>
+    </div>
+    {% endfor %}
+  {% endif %}
+{% endif %}
+
+{% endblock %}

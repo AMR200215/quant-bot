@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Quant Bot{% endblock %}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0d0d;
+      --surface:   #161616;
+      --surface2:  #1f1f1f;
+      --border:    #2a2a2a;
+      --text:      #e8e8e8;
+      --muted:     #888;
+      --accent:    #00c896;
+      --red:       #ff5555;
+      --yellow:    #f5a623;
+      --green:     #00c896;
+      --blue:      #5b9cf6;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      height: 52px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    nav .logo {
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--accent);
+      text-decoration: none;
+      letter-spacing: 0.5px;
+    }
+
+    nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 4px 0;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    nav a:hover, nav a.active {
+      color: var(--text);
+      border-bottom-color: var(--accent);
+    }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 28px 24px; }
+
+    h1 { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+    h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+
+    input[type=number], input[type=text], select {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus, select:focus { border-color: var(--accent); }
+
+    button, .btn {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: 6px;
+      padding: 9px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    button:hover, .btn:hover { opacity: 0.85; }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { color: var(--text); border-color: var(--text); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 10px 12px; color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-green  { background: rgba(0,200,150,0.15); color: var(--green); }
+    .badge-red    { background: rgba(255,85,85,0.15);  color: var(--red); }
+    .badge-yellow { background: rgba(245,166,35,0.15); color: var(--yellow); }
+    .badge-blue   { background: rgba(91,156,246,0.15); color: var(--blue); }
+    .badge-gray   { background: rgba(136,136,136,0.15); color: var(--muted); }
+
+    .stat { text-align: center; padding: 16px; }
+    .stat .val { font-size: 26px; font-weight: 700; color: var(--accent); }
+    .stat .lbl { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.6px; }
+
+    .signal-bar {
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .signal-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+
+    .flash { padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    .flash-success { background: rgba(0,200,150,0.1); border: 1px solid rgba(0,200,150,0.3); color: var(--green); }
+    .flash-error   { background: rgba(255,85,85,0.1);  border: 1px solid rgba(255,85,85,0.3);  color: var(--red); }
+
+    .muted { color: var(--muted); }
+    .mono { font-family: "SF Mono", "Fira Code", monospace; }
+
+    .spinner { display: none; }
+    .loading .spinner { display: inline-block; }
+    .loading .btn-label { display: none; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid #000; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
+
+    .side-yes { color: var(--green); font-weight: 600; }
+    .side-no  { color: var(--blue);  font-weight: 600; }
+
+    .empty { text-align: center; padding: 48px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/" class="logo">⬡ Quant Bot</a>
+    <a href="/"        {% if active == 'scan'      %}class="active"{% endif %}>Scan</a>
+    <a href="/journal" {% if active == 'journal'   %}class="active"{% endif %}>Journal</a>
+    <a href="/analytics" {% if active == 'analytics' %}class="active"{% endif %}>Analytics</a>
+  </nav>
+  <div class="container">
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in msgs %}
+        <div class="flash flash-{{ cat }}">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

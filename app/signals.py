@@ -2,21 +2,26 @@
 
 
 def expected_value_yes(
-    model_p: float, yes_price: float, fee_buffer: float = 0.01
+    model_p: float, yes_price: float, fee_buffer: float = 0.025
 ) -> float:
-    """Compute the expected value of buying YES."""
+    """Compute the expected value of buying YES.
+
+    fee_buffer covers the ~2% Polymarket fee on winnings plus a small
+    bid-ask spread allowance.  0.025 is the minimum required to break even;
+    only signals well above this generate real profit.
+    """
     return model_p - yes_price - fee_buffer
 
 
 def expected_value_no(
-    model_p: float, no_price: float, fee_buffer: float = 0.01
+    model_p: float, no_price: float, fee_buffer: float = 0.025
 ) -> float:
     """Compute the expected value of buying NO."""
     return (1 - model_p) - no_price - fee_buffer
 
 
 def choose_side(
-    model_p: float, yes_price: float, no_price: float, fee_buffer: float = 0.01
+    model_p: float, yes_price: float, no_price: float, fee_buffer: float = 0.025
 ) -> dict:
     """Choose the best side based on simple expected value."""
     ev_yes = expected_value_yes(model_p, yes_price, fee_buffer)

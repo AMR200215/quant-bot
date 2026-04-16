@@ -2,5 +2,11 @@ venv/
 .env
 __pycache__/
 *.pyc
-logs/
 .DS_Store
+
+# Large raw data file (re-fetchable)
+data/historical_raw.json
+
+# Keep logs in repo so GitHub Actions can commit daily results
+!logs/market_journal.csv
+!logs/live_scan_results.csv

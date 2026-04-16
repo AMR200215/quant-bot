@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Analytics — Quant Bot{% endblock %}
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+  <h1 style="margin:0;">Analytics</h1>
+  <span class="muted" style="font-size:13px;">{{ dataset_size }} historical markets</span>
+</div>
+
+<!-- Model status card -->
+<div class="card" style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+  <div>
+    {% if model_meta %}
+      <span style="font-weight:600;">Trained Model</span>
+      <span class="muted" style="margin-left:10px; font-size:13px;">
+        {{ model_meta.n_samples }} training markets &nbsp;·&nbsp;
+        CV AUC <b style="color:var(--green);">{{ model_meta.cv_auc_mean }}</b> ± {{ model_meta.cv_auc_std }}
+      </span>
+    {% else %}
+      <span style="font-weight:600; color:var(--yellow);">No trained model found</span>
+      <span class="muted" style="margin-left:10px; font-size:13px;">Using heuristic fallback. Click Retrain to fit from historical data.</span>
+    {% endif %}
+  </div>
+  <form method="POST" action="/retrain">
+    <button type="submit" style="padding:6px 16px; font-size:13px;">Retrain Model</button>
+  </form>
+</div>
+
+{% if not dataset_size %}
+  <div class="empty">No dataset found. Run <code>python -m app.fetch_historical</code> then <code>python -m app.build_dataset</code> first.</div>
+{% else %}
+
+<!-- Overview -->
+<div class="card grid-3" style="padding:0; overflow:hidden; margin-bottom:20px;">
+  <div class="stat">
+    <div class="val">{{ overall_win_rate }}</div>
+    <div class="lbl">Overall Win Rate</div>
+  </div>
+  <div class="stat">
+    <div class="val" style="color:{% if best_roi_f > 0 %}var(--green){% else %}var(--red){% endif %};">{{ best_roi }}</div>
+    <div class="lbl">Best ROI (threshold {{ best_threshold }})</div>
+  </div>
+  <div class="stat">
+    <div class="val">{{ max_drawdown }}</div>
+    <div class="lbl">Max Drawdown</div>
+  </div>
+</div>
+
+<div class="grid-2" style="gap:16px;">
+
+<!-- Threshold sweep -->
+<div class="card">
+  <h2>Threshold Sweep</h2>
+  <table>
+    <thead>
+      <tr><th>Threshold</th><th>Trades</th><th>Win %</th><th>ROI</th><th>Sharpe</th></tr>
+    </thead>
+    <tbody>
+      {% for row in threshold_rows %}
+      <tr {% if row.best %}style="background:rgba(0,200,150,0.05);"{% endif %}>
+        <td class="mono">{{ row.threshold }}</td>
+        <td>{{ row.trades }}</td>
+        <td>
+          <span class="badge {% if row.win_rate_f >= 0.65 %}badge-green{% elif row.win_rate_f >= 0.55 %}badge-yellow{% else %}badge-gray{% endif %}">
+            {{ row.win_rate }}
+          </span>
+        </td>
+        <td style="color:{% if row.roi_f > 0 %}var(--green){% else %}var(--red){% endif %}; font-weight:600;">{{ row.roi }}</td>
+        <td class="muted mono">{{ row.sharpe }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Calibration -->
+<div class="card">
+  <h2>Calibration</h2>
+  <table>
+    <thead>
+      <tr><th>Predicted</th><th>Actual</th><th>Count</th><th>Gap</th></tr>
+    </thead>
+    <tbody>
+      {% for row in calibration_rows %}
+      <tr>
+        <td>{{ row.bucket }}</td>
+        <td>{{ row.actual }}</td>
+        <td class="muted">{{ row.count }}</td>
+        <td style="color:{% if row.gap_f > 0.10 %}var(--yellow){% elif row.gap_f < -0.10 %}var(--yellow){% else %}var(--green){% endif %}; font-weight:600;">
+          {{ row.gap }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div style="margin-top:12px; font-size:12px; color:var(--muted);">Mean absolute error: <b style="color:var(--text);">{{ calibration_mae }}</b></div>
+</div>
+
+<!-- Side bias -->
+<div class="card">
+  <h2>Side Bias</h2>
+  {% for side in side_rows %}
+  <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border);">
+    <span class="{% if side.side == 'buy_yes' %}side-yes{% else %}side-no{% endif %}">
+      {% if side.side == 'buy_yes' %}▲ BUY YES{% else %}▼ BUY NO{% endif %}
+    </span>
+    <span class="muted">{{ side.count }} trades</span>
+    <span class="badge {% if side.win_rate_f >= 0.60 %}badge-green{% elif side.win_rate_f >= 0.50 %}badge-yellow{% else %}badge-red{% endif %}">
+      {{ side.win_rate }}
+    </span>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Category breakdown -->
+<div class="card">
+  <h2>By Category</h2>
+  <table>
+    <thead>
+      <tr><th>Category</th><th>Trades</th><th>Win %</th></tr>
+    </thead>
+    <tbody>
+      {% for row in category_rows %}
+      <tr>
+        <td style="text-transform:capitalize;">{{ row.category }}</td>
+        <td class="muted">{{ row.count }}</td>
+        <td>
+          <span class="badge {% if row.win_rate_f >= 0.65 %}badge-green{% elif row.win_rate_f >= 0.50 %}badge-yellow{% else %}badge-red{% endif %}">
+            {{ row.win_rate }}
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+</div>
+{% endif %}
+
+{% endblock %}

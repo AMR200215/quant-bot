@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Journal — Quant Bot{% endblock %}
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+  <h1 style="margin:0;">Journal</h1>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <span class="muted" style="font-size:13px;">{{ records|length }} entries</span>
+  </div>
+</div>
+
+{% if records %}
+<!-- Summary stats -->
+<div class="card grid-3" style="margin-bottom:20px; padding:0; overflow:hidden;">
+  {% set resolved = records|selectattr('actual_outcome')|list %}
+  {% set correct  = resolved|selectattr('bot_correct', 'equalto', 'true')|list %}
+  <div class="stat">
+    <div class="val">{{ records|length }}</div>
+    <div class="lbl">Total Tracked</div>
+  </div>
+  <div class="stat">
+    <div class="val">{{ resolved|length }}</div>
+    <div class="lbl">Resolved</div>
+  </div>
+  <div class="stat">
+    <div class="val">{% if resolved|length > 0 %}{{ "%.0f"|format(correct|length / resolved|length * 100) }}%{% else %}—{% endif %}</div>
+    <div class="lbl">Win Rate</div>
+  </div>
+</div>
+
+<!-- Update outcome form -->
+<div class="card" style="margin-bottom:20px;">
+  <h2 style="margin-bottom:12px;">Update Outcome</h2>
+  <form method="POST" action="/update_outcome" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+    <div style="flex:2; min-width:160px;">
+      <label>Market ID</label>
+      <input type="text" name="market_id" placeholder="e.g. 1918083" required>
+    </div>
+    <div style="flex:1; min-width:100px;">
+      <label>Outcome</label>
+      <select name="outcome">
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    </div>
+    <div style="flex:3; min-width:160px;">
+      <label>Notes (optional)</label>
+      <input type="text" name="notes" placeholder="Optional notes">
+    </div>
+    <div><button type="submit">Save</button></div>
+  </form>
+</div>
+
+<!-- Journal table -->
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="overflow-x:auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Market</th>
+          <th>Side</th>
+          <th>Signal</th>
+          <th>Confidence</th>
+          <th>Risk</th>
+          <th>Days</th>
+          <th>Outcome</th>
+          <th>Correct</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in records|reverse %}
+        <tr>
+          <td style="max-width:300px;">
+            <div style="font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ r.question }}</div>
+            <div class="muted mono" style="font-size:11px;">{{ r.market_id }}</div>
+          </td>
+          <td>
+            <span class="{% if r.preferred_side == 'buy_yes' %}side-yes{% else %}side-no{% endif %}">
+              {% if r.preferred_side == 'buy_yes' %}▲ YES{% else %}▼ NO{% endif %}
+            </span>
+          </td>
+          <td class="mono">{{ "%.4f"|format(r.final_signal|float) }}</td>
+          <td>
+            <span class="badge {% if r.confidence|float >= 0.6 %}badge-green{% elif r.confidence|float >= 0.3 %}badge-yellow{% else %}badge-gray{% endif %}">
+              {{ "%.2f"|format(r.confidence|float) }}
+            </span>
+          </td>
+          <td>
+            <span class="badge {% if r.risk_score|float < 0.3 %}badge-green{% elif r.risk_score|float < 0.6 %}badge-yellow{% else %}badge-red{% endif %}">
+              {{ "%.2f"|format(r.risk_score|float) }}
+            </span>
+          </td>
+          <td class="muted">{% if r.days_to_resolution %}{{ "%.1f"|format(r.days_to_resolution|float) }}d{% else %}—{% endif %}</td>
+          <td>
+            {% if r.actual_outcome %}
+              <span class="badge {% if r.actual_outcome == 'yes' %}badge-green{% else %}badge-blue{% endif %}">{{ r.actual_outcome|upper }}</span>
+            {% else %}
+              <span class="muted">pending</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if r.bot_correct == 'true' %}
+              <span class="badge badge-green">✓ WIN</span>
+            {% elif r.bot_correct == 'false' %}
+              <span class="badge badge-red">✗ LOSS</span>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+  <div class="empty">No journal entries yet. Run a scan to start tracking markets.</div>
+{% endif %}
+
+{% endblock %}
