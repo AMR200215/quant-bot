@@ -5,6 +5,9 @@ on:
     - cron: "0 9 * * *"   # 9:00 AM UTC every day
   workflow_dispatch:        # lets you trigger it manually from GitHub too
 
+permissions:
+  contents: write
+
 jobs:
   scan:
     runs-on: ubuntu-latest
