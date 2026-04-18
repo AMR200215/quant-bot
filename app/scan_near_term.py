@@ -29,6 +29,27 @@ FETCH_LIMIT = 100
 # collect data even when the model isn't confident enough to signal a real trade
 PAPER_TRADE_MIN_EDGE = 0.01
 
+# Leagues/keywords with elevated match-fixing risk
+# Sources: FIFA/TI fixing reports, known scandal history
+_HIGH_RISK_PATTERNS = [
+    # Chinese football
+    "shandong", "qingdao", "zhejiang", "yunnan", "chongqing", "chengdu",
+    "beijing guoan", "dalian", "shanghai", "tianjin", "wuhan", "hebei",
+    "guangzhou", "shenzhen", "changchun", "jiangsu", "liaoning",
+    "fc seoul", "korean", "k league",
+    # South/Central American lower tiers
+    "pumas", "cienciano", "san lorenzo", "busan",
+    # Lower-tier tennis (Challenger/ITF circuits)
+    "challenger", "itf", "wuning", "futures",
+    # Other flagged leagues
+    "albanian", "moldovan", "kosovo", "macedonian", "bosnian",
+]
+
+
+def is_high_risk(question: str) -> bool:
+    q = question.lower()
+    return any(p in q for p in _HIGH_RISK_PATTERNS)
+
 
 def describe_edge(value: float) -> str:
     if value < 0.02:
@@ -137,6 +158,7 @@ def main(
                 "days": days,
                 "external": external,
                 "is_real_signal": is_real_signal,
+                "high_risk": is_high_risk(market.question),
             }
         )
 
@@ -163,6 +185,7 @@ def main(
         market = c["market"]
         edge   = c["edge"]
         label  = "REAL SIGNAL" if c["is_real_signal"] else "paper trade"
+        risk_tag = " | HIGH RISK: match-fixing" if c["high_risk"] else ""
 
         append_journal_record(
             market_id=market.market_id,
@@ -178,11 +201,11 @@ def main(
             days_to_resolution=c["days"],
             maturity_score=edge.maturity_score,
             resolution_quality_score=edge.resolution_quality_score,
-            notes=f"{label} | scan: {min_days:.0f}-{max_days:.0f}d window",
+            notes=f"{label} | scan: {min_days:.0f}-{max_days:.0f}d window{risk_tag}",
         )
 
         print("-" * 60)
-        print(f"Rank #{rank}  [{label}]")
+        print(f"Rank #{rank}  [{label}]{' ⚠ HIGH RISK: match-fixing' if c['high_risk'] else ''}")
         print(f"Market:    {market.question}")
         print(f"ID:        {market.market_id}")
         print(f"Closes in: {c['days']:.1f} days")
