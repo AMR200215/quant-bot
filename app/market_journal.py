@@ -35,6 +35,16 @@ def ensure_journal_exists() -> None:
             writer.writerow(JOURNAL_HEADER)
 
 
+def is_already_logged(market_id: str) -> bool:
+    """Return True if this market already has an unresolved entry in the journal."""
+    ensure_journal_exists()
+    with JOURNAL_FILE.open("r", newline="") as csv_file:
+        for row in csv.DictReader(csv_file):
+            if row["market_id"] == market_id and not row["actual_outcome"]:
+                return True
+    return False
+
+
 def append_journal_record(
     market_id: str,
     question: str,
@@ -50,8 +60,15 @@ def append_journal_record(
     maturity_score: float,
     resolution_quality_score: float,
     notes: str = "",
-) -> None:
-    """Append a new market analysis record to the journal."""
+) -> bool:
+    """Append a new market analysis record to the journal.
+
+    Skips markets that already have an unresolved entry (deduplication).
+    Returns True if the record was written, False if skipped.
+    """
+    if is_already_logged(market_id):
+        return False
+
     ensure_journal_exists()
     timestamp = datetime.now(UTC).isoformat()
     days_value = "" if days_to_resolution is None else days_to_resolution
@@ -79,6 +96,7 @@ def append_journal_record(
                 notes,
             ]
         )
+    return True
 
 
 def load_journal_records() -> List[Dict]:

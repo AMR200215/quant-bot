@@ -94,7 +94,19 @@ def main(
     print("=" * 60)
     print(f"Fetching markets closing in {min_days:.0f}–{max_days:.0f} days (no junk)...")
 
-    markets = fetch_markets_by_days(min_days=min_days, max_days=max_days, limit=FETCH_LIMIT)
+    # Fetch two windows separately — short-term sports/events flood the API
+    # and fill up the limit before longer-term markets are ever returned
+    mid = 7.0
+    short = fetch_markets_by_days(min_days=min_days, max_days=mid, limit=FETCH_LIMIT // 2)
+    long_ = fetch_markets_by_days(min_days=mid, max_days=max_days, limit=FETCH_LIMIT // 2)
+
+    # Merge, deduplicate by market_id
+    seen = set()
+    markets = []
+    for m in short + long_:
+        if m.market_id not in seen:
+            markets.append(m)
+            seen.add(m.market_id)
 
     # Enrich with 7-day price momentum
     enrich_with_momentum(markets)
