@@ -7,8 +7,15 @@ import requests
 
 from app.data_client import fetch_live_markets, get_market_snapshot
 from app.edge import estimate_edge
+from app.external_signals import get_external_consensus
 from app.market_journal import append_journal_record
 from app.model import estimate_probability
+from app.state import settings
+
+# Signals above this are in the historically best-performing band (1-3% adj edge).
+# Signals above 5% have shown inverse accuracy — model is fighting the market.
+MIN_ACTIONABLE_EDGE = 0.01
+MAX_RELIABLE_EDGE   = 0.05
 
 GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 
@@ -189,7 +196,19 @@ def analyze_market(market: object) -> None:
     """Run the existing analysis output for a selected market."""
     estimate = estimate_probability(market)
     posterior = estimate.posterior
-    edge = estimate_edge(market, posterior)
+
+    # Blend with external consensus when available (Manifold / Metaculus)
+    external = get_external_consensus(
+        market.question,
+        twitter_bearer_token=settings.twitter_bearer_token,
+    )
+    external_sources = external.get("sources", 0)
+    if external.get("consensus_p") is not None:
+        weight = 0.20 if external_sources == 1 else 0.35
+        posterior = round(weight * external["consensus_p"] + (1 - weight) * posterior, 4)
+        posterior = max(0.02, min(0.98, posterior))
+
+    edge = estimate_edge(market, posterior, logit=estimate.logit)
 
     if edge.preferred_side == "buy_yes":
         signal_edge = edge.final_signal_yes
@@ -223,7 +242,12 @@ def analyze_market(market: object) -> None:
     print()
     print("[Model]")
     print(f"Rationale: {estimate.rationale}")
-    print(f"Posterior: {posterior:.4f}")
+    print(f"Posterior: {posterior:.4f}  (market: {market.yes_price:.4f}  gap: {posterior - market.yes_price:+.4f})")
+    if external.get("consensus_p") is not None:
+        print(
+            f"External:  consensus={external['consensus_p']:.4f}  "
+            f"(Manifold={external['manifold_p']}  Metaculus={external['metaculus_p']})"
+        )
     print()
     print("[Signal]")
     print(f"Side: {edge.preferred_side}")
@@ -231,6 +255,13 @@ def analyze_market(market: object) -> None:
         f"Adjusted Edge: {signal_edge:.4f} "
         f"[{describe_adjusted_edge(signal_edge)}; weak < 0.02 | moderate 0.02–0.05 | strong > 0.05]"
     )
+    if adjusted_edge < MIN_ACTIONABLE_EDGE:
+        print(f"  !! Edge below 1% — likely noise.")
+    elif adjusted_edge > MAX_RELIABLE_EDGE:
+        print(
+            f"  !! Edge above 5% — model is strongly disagreeing with the market; "
+            "historically these have lower accuracy than the 1-3% band."
+        )
     print(
         f"Confidence: {edge.confidence:.4f} "
         f"[{describe_confidence(edge.confidence)}; low < 0.30 | medium 0.30–0.60 | high > 0.60]"

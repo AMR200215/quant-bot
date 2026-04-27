@@ -1,8 +1,66 @@
 """Compute market edge and confidence-adjusted edge for the quant bot."""
 
+import csv
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.data_client import Market
+
+# ---------------------------------------------------------------------------
+# Category accuracy — loaded once from historical_dataset.csv
+# ---------------------------------------------------------------------------
+
+_CATEGORY_ACCURACY: dict[str, float] | None = None
+
+
+def _load_category_accuracy() -> dict[str, float]:
+    """Compute per-category direction accuracy from historical_dataset.csv.
+
+    Direction accuracy = fraction of markets where (yes_price > 0.5) correctly
+    predicted the YES outcome.  Returns a multiplier relative to the overall
+    average, clamped to [0.6, 1.4].  Categories with fewer than 20 samples
+    get a neutral multiplier of 1.0.
+    """
+    global _CATEGORY_ACCURACY
+    if _CATEGORY_ACCURACY is not None:
+        return _CATEGORY_ACCURACY
+
+    path = Path("data/historical_dataset.csv")
+    if not path.exists():
+        _CATEGORY_ACCURACY = {}
+        return _CATEGORY_ACCURACY
+
+    counts: dict[str, list[int]] = {}  # category -> [correct, total]
+    with path.open(newline="") as f:
+        for row in csv.DictReader(f):
+            cat = (row.get("category") or "other").strip() or "other"
+            outcome = (row.get("actual_outcome") or "").lower().strip()
+            if outcome not in ("yes", "no"):
+                continue
+            try:
+                yes_price = float(row.get("yes_price", 0.5))
+            except (TypeError, ValueError):
+                continue
+            counts.setdefault(cat, [0, 0])
+            counts[cat][1] += 1
+            if (yes_price > 0.5) == (outcome == "yes"):
+                counts[cat][0] += 1
+
+    total_correct = sum(v[0] for v in counts.values())
+    total_all = sum(v[1] for v in counts.values())
+    overall_acc = total_correct / total_all if total_all > 0 else 0.65
+
+    multipliers: dict[str, float] = {}
+    for cat, (correct, total) in counts.items():
+        if total < 20:
+            multipliers[cat] = 1.0
+            continue
+        cat_acc = correct / total
+        raw_mult = cat_acc / overall_acc
+        multipliers[cat] = round(max(0.6, min(1.4, raw_mult)), 4)
+
+    _CATEGORY_ACCURACY = multipliers
+    return _CATEGORY_ACCURACY
 
 
 @dataclass
@@ -26,16 +84,36 @@ class EdgeEstimate:
     rationale: str
 
 
-def compute_confidence(market: Market) -> float:
-    """Estimate confidence from market structure."""
-    volume_score = min(market.volume / 500000, 1.0)
-    liquidity_score = min(market.liquidity_depth / 50000, 1.0)
-    distance_score = min(abs(market.yes_price - 0.5) / 0.5, 1.0)
+def compute_confidence(market: Market, logit: float = 0.0) -> float:
+    """Estimate confidence from market structure, model conviction, and category accuracy.
 
-    confidence = (
-        0.4 * volume_score + 0.4 * liquidity_score + 0.2 * distance_score
+    Four components:
+      - volume_score:      market trading activity (35%)
+      - liquidity_score:   depth available to trade (35%)
+      - distance_score:    how far the price is from 50/50 (15%)
+      - model_conviction:  magnitude of the logistic regression logit (15%)
+
+    The base score is then scaled by a per-category accuracy multiplier derived
+    from historical resolution data (how reliably each category's markets resolve
+    in the direction the market prices imply).
+    """
+    volume_score     = min(market.volume / 500000, 1.0)
+    liquidity_score  = min(market.liquidity_depth / 50000, 1.0)
+    distance_score   = min(abs(market.yes_price - 0.5) / 0.5, 1.0)
+    # logit of ~3 maps to ~95% sigmoid — treat that as maximum conviction
+    model_conviction = min(abs(logit) / 3.0, 1.0)
+
+    base = (
+        0.35 * volume_score
+        + 0.35 * liquidity_score
+        + 0.15 * distance_score
+        + 0.15 * model_conviction
     )
-    return min(max(confidence, 0.0), 1.0)
+
+    cat = (getattr(market, "category", None) or "other").strip() or "other"
+    cat_multiplier = _load_category_accuracy().get(cat, 1.0)
+
+    return round(min(max(base * cat_multiplier, 0.0), 1.0), 6)
 
 
 def compute_risk_score(market: Market) -> float:
@@ -87,11 +165,11 @@ def compute_resolution_quality_score(market: Market) -> float:
     return min(max(score, 0.1), 1.0)
 
 
-def estimate_edge(market: Market, posterior: float) -> EdgeEstimate:
+def estimate_edge(market: Market, posterior: float, logit: float = 0.0) -> EdgeEstimate:
     """Estimate raw and confidence-adjusted edge for a market."""
     edge_yes = posterior - market.yes_price
     edge_no = (1 - posterior) - market.no_price
-    confidence = compute_confidence(market)
+    confidence = compute_confidence(market, logit=logit)
     risk_score = compute_risk_score(market)
     if risk_score < 0.30:
         risk_multiplier = 1.0

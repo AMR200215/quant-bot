@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.bayes import bayes_update
+from app.calibration_correction import apply_calibration
 from app.data_client import Market
 
 _WEIGHTS_PATH = Path("data/model_weights.json")
@@ -44,8 +45,13 @@ def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
-def _trained_posterior(market: Market, w: dict) -> tuple[float, str]:
-    """Compute P(YES) using the trained logistic regression weights."""
+def _trained_posterior(market: Market, w: dict) -> tuple[float, str, float]:
+    """Compute P(YES) using the trained logistic regression weights.
+
+    Returns (calibrated_posterior, rationale, logit).
+    The logit (pre-sigmoid dot product) is exposed so callers can use its
+    magnitude as a model conviction signal.
+    """
     yp  = market.yes_price
     vol = market.volume
     cat = getattr(market, "category", None) or "other"
@@ -79,17 +85,21 @@ def _trained_posterior(market: Market, w: dict) -> tuple[float, str]:
 
     # Logistic regression prediction
     dot = sum(c * f for c, f in zip(coef, feats)) + intercept
-    posterior = _sigmoid(dot)
-    posterior = round(max(0.02, min(0.98, posterior)), 4)
+    raw_posterior = _sigmoid(dot)
+    raw_posterior = round(max(0.02, min(0.98, raw_posterior)), 4)
+
+    # Apply calibration correction (fixes systematic overconfidence in 20-50% range)
+    posterior = apply_calibration(raw_posterior)
 
     direction = "YES" if posterior > yp else "NO"
     auc_note  = f"CV AUC {w.get('cv_auc_mean', '?')}"
     rationale = (
-        f"Trained model ({auc_note}): posterior={posterior:.3f} vs market={yp:.3f}  "
+        f"Trained model ({auc_note}): posterior={posterior:.3f} "
+        f"(raw={raw_posterior:.3f}) vs market={yp:.3f}  "
         f"→ edge on {direction}  |  "
         f"vol={vol:,.0f}  cat={cat}"
     )
-    return posterior, rationale
+    return posterior, rationale, dot
 
 
 @dataclass
@@ -100,6 +110,7 @@ class ModelEstimate:
     likelihood_false: float
     posterior: float
     rationale: str
+    logit: float = field(default=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -153,8 +164,9 @@ def estimate_probability(market: Market) -> ModelEstimate:
     prior = market.yes_price
     w     = _load_weights()
 
+    logit = 0.0
     if w is not None:
-        posterior, rationale = _trained_posterior(market, w)
+        posterior, rationale, logit = _trained_posterior(market, w)
         # Derive pseudo likelihood-true/false for downstream compatibility
         # (edge.py uses these only to pass through; the posterior is what matters)
         delta = posterior - 0.5
@@ -173,6 +185,7 @@ def estimate_probability(market: Market) -> ModelEstimate:
         likelihood_false=likelihood_false,
         posterior=posterior,
         rationale=rationale,
+        logit=logit,
     )
 
 
