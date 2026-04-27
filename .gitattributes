@@ -1,0 +1,2 @@
+logs/market_journal.csv merge=union
+logs/live_scan_results.csv merge=union
