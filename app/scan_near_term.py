@@ -15,6 +15,7 @@ import sys
 from app.data_client import enrich_with_momentum, fetch_markets_by_days
 from app.edge import estimate_edge
 from app.external_signals import get_external_consensus
+from app.gpt_analyst import GPT_MIN_EDGE, analyze as gpt_analyze
 from app.market_classifier import get_topic_category
 from app.market_journal import append_journal_record
 from app.model import estimate_probability
@@ -29,6 +30,9 @@ FETCH_LIMIT = 500
 # How many markets to log per run and how many per topic category
 LOG_LIMIT = 75
 CATEGORY_CAP = 5
+
+# Max GPT calls per scan run (controls cost — ~$0.03-0.05 each)
+GPT_CAP = 10
 
 # Paper trading logs everything above this edge — lower than MIN_EV so we
 # collect data even when the model isn't confident enough to signal a real trade
@@ -227,11 +231,25 @@ def main(
         print("No opportunities found above paper trade threshold (1%).")
         return
 
+    gpt_calls = 0
     for rank, c in enumerate(selected, start=1):
         market = c["market"]
         edge   = c["edge"]
         label  = "REAL SIGNAL" if c["is_real_signal"] else "paper trade"
         risk_tag = " | HIGH RISK: match-fixing" if c["high_risk"] else ""
+
+        # GPT web search — only for markets above the edge threshold, up to GPT_CAP
+        gpt = {"verdict": "skipped", "reasoning": ""}
+        if gpt_calls < GPT_CAP and c["adjusted_edge"] >= GPT_MIN_EDGE:
+            gpt = gpt_analyze(
+                question=market.question,
+                yes_price=market.yes_price,
+                posterior=c["posterior"],
+                preferred_side=edge.preferred_side,
+                adjusted_edge=c["adjusted_edge"],
+            )
+            if gpt["verdict"] not in ("skipped", "error"):
+                gpt_calls += 1
 
         append_journal_record(
             market_id=market.market_id,
@@ -247,6 +265,8 @@ def main(
             days_to_resolution=c["days"],
             maturity_score=edge.maturity_score,
             resolution_quality_score=edge.resolution_quality_score,
+            gpt_verdict=gpt["verdict"],
+            gpt_reasoning=gpt["reasoning"],
             notes=f"{label} | scan: {min_days:.0f}-{max_days:.0f}d window{risk_tag}",
         )
 
@@ -281,6 +301,9 @@ def main(
                 f"Metaculus={ext['metaculus_p']}  "
                 f"X={ext.get('x_sentiment')})"
             )
+        if gpt["verdict"] not in ("skipped", "error"):
+            verdict_icon = "✓" if gpt["verdict"] == "confirm" else ("✗" if gpt["verdict"] == "reject" else "~")
+            print(f"GPT:       [{verdict_icon} {gpt['verdict'].upper()}] {gpt['reasoning']}")
         print()
 
     print(f"Top {len(selected)} logged to journal ({len(real_signals)} real, {len(paper_only)} paper).")
