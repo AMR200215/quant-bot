@@ -1,0 +1,76 @@
+{
+  "buckets": [
+    {
+      "bucket": "0-10%",
+      "predicted": 0.05,
+      "actual": 0.0677,
+      "count": 266,
+      "gap": 0.0177
+    },
+    {
+      "bucket": "10-20%",
+      "predicted": 0.15,
+      "actual": 0.1011,
+      "count": 178,
+      "gap": -0.0489
+    },
+    {
+      "bucket": "20-30%",
+      "predicted": 0.25,
+      "actual": 0.1053,
+      "count": 19,
+      "gap": -0.1447
+    },
+    {
+      "bucket": "30-40%",
+      "predicted": 0.35,
+      "actual": 0.2698,
+      "count": 63,
+      "gap": -0.0802
+    },
+    {
+      "bucket": "40-50%",
+      "predicted": 0.45,
+      "actual": 0.3858,
+      "count": 127,
+      "gap": -0.0642
+    },
+    {
+      "bucket": "50-60%",
+      "predicted": 0.55,
+      "actual": 0.5378,
+      "count": 543,
+      "gap": -0.0122
+    },
+    {
+      "bucket": "60-70%",
+      "predicted": 0.65,
+      "actual": 0.6436,
+      "count": 693,
+      "gap": -0.0064
+    },
+    {
+      "bucket": "70-80%",
+      "predicted": 0.75,
+      "actual": 0.7178,
+      "count": 698,
+      "gap": -0.0322
+    },
+    {
+      "bucket": "80-90%",
+      "predicted": 0.85,
+      "actual": 0.8186,
+      "count": 485,
+      "gap": -0.0314
+    },
+    {
+      "bucket": "90-100%",
+      "predicted": 0.95,
+      "actual": 0.875,
+      "count": 8,
+      "gap": -0.075
+    }
+  ],
+  "mean_absolute_calibration_error": 0.0513,
+  "n_markets": 3080
+}
