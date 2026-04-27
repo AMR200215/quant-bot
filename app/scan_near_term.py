@@ -15,19 +15,30 @@ import sys
 from app.data_client import enrich_with_momentum, fetch_markets_by_days
 from app.edge import estimate_edge
 from app.external_signals import get_external_consensus
+from app.market_classifier import get_topic_category
 from app.market_journal import append_journal_record
 from app.model import estimate_probability
 from app.portfolio import get_status, is_halted
 from app.state import settings
 
-DEFAULT_MIN_DAYS = 2
+DEFAULT_MIN_DAYS = 1
 DEFAULT_MAX_DAYS = 60
 DEFAULT_THRESHOLD = 0.005
-FETCH_LIMIT = 100
+FETCH_LIMIT = 500
+
+# How many markets to log per run and how many per topic category
+LOG_LIMIT = 75
+CATEGORY_CAP = 5
 
 # Paper trading logs everything above this edge — lower than MIN_EV so we
 # collect data even when the model isn't confident enough to signal a real trade
 PAPER_TRADE_MIN_EDGE = 0.01
+
+# Minimum adjusted edge to treat a candidate as a real (non-paper) signal.
+# Historical data shows peak accuracy in the 1-3% adj_edge band — large edges
+# tend to indicate the model is fighting the market (and losing).
+# Set at 1% to capture that band; the paper threshold stays at 1% too.
+MIN_REAL_SIGNAL_EDGE = 0.01
 
 # Leagues/keywords with elevated match-fixing risk
 # Sources: FIFA/TI fixing reports, known scandal history
@@ -99,6 +110,7 @@ def main(
     mid = 7.0
     short = fetch_markets_by_days(min_days=min_days, max_days=mid, limit=FETCH_LIMIT // 2)
     long_ = fetch_markets_by_days(min_days=mid, max_days=max_days, limit=FETCH_LIMIT // 2)
+    # FETCH_LIMIT is split evenly so neither window monopolises the API page
 
     # Merge, deduplicate by market_id
     seen = set()
@@ -131,10 +143,12 @@ def main(
             twitter_bearer_token=settings.twitter_bearer_token,
         )
         if external.get("consensus_p") is not None:
-            posterior = round(0.60 * posterior + 0.40 * external["consensus_p"], 4)
+            ext_sources = external.get("sources", 1)
+            weight = 0.20 if ext_sources == 1 else 0.35
+            posterior = round(weight * external["consensus_p"] + (1 - weight) * posterior, 4)
             posterior = max(0.02, min(0.98, posterior))
 
-        edge = estimate_edge(market, posterior)
+        edge = estimate_edge(market, posterior, logit=estimate.logit)
 
         if edge.preferred_side == "buy_yes":
             signal_edge = edge.final_signal_yes
@@ -146,7 +160,7 @@ def main(
         # Paper trade threshold — log everything above 1% edge
         # regardless of whether it passes the strict real-trade filter
         is_real_signal = (
-            adjusted_edge >= max(threshold, settings.min_ev)
+            adjusted_edge >= max(threshold, settings.min_ev, MIN_REAL_SIGNAL_EDGE)
             and not (
                 market.momentum_7d is not None
                 and (
@@ -171,29 +185,49 @@ def main(
                 "external": external,
                 "is_real_signal": is_real_signal,
                 "high_risk": is_high_risk(market.question),
+                "category": get_topic_category(market.question),
             }
         )
 
     candidates.sort(key=lambda x: x["signal_edge"], reverse=True)
 
+    # Apply diversity cap: walk ranked candidates and keep at most
+    # CATEGORY_CAP entries per topic category, up to LOG_LIMIT total.
+    category_counts: dict[str, int] = {}
+    selected: list[dict] = []
+    for c in candidates:
+        cat = c["category"]
+        if category_counts.get(cat, 0) >= CATEGORY_CAP:
+            continue
+        category_counts[cat] = category_counts.get(cat, 0) + 1
+        selected.append(c)
+        if len(selected) >= LOG_LIMIT:
+            break
+
     total_scanned = sum(
         1 for m in markets
         if 0.05 <= m.yes_price <= 0.95 and m.volume >= 1000
     )
-    real_signals  = [c for c in candidates if c["is_real_signal"]]
-    paper_only    = [c for c in candidates if not c["is_real_signal"]]
+    real_signals  = [c for c in selected if c["is_real_signal"]]
+    paper_only    = [c for c in selected if not c["is_real_signal"]]
 
+    # Category breakdown for transparency
+    cat_summary = ", ".join(
+        f"{cat}:{cnt}" for cat, cnt in sorted(category_counts.items())
+    )
     print(
         f"Markets in window: {total_scanned}  |  "
+        f"Selected: {len(selected)} (cap {CATEGORY_CAP}/category)  |  "
         f"Real signals: {len(real_signals)}  |  "
-        f"Paper-only: {len(paper_only)}\n"
+        f"Paper-only: {len(paper_only)}"
     )
+    print(f"Category breakdown: {cat_summary}\n")
 
-    if not candidates:
+    if not selected:
         print("No opportunities found above paper trade threshold (1%).")
         return
 
-    for rank, c in enumerate(candidates[:10], start=1):
+    for rank, c in enumerate(selected, start=1):
         market = c["market"]
         edge   = c["edge"]
         label  = "REAL SIGNAL" if c["is_real_signal"] else "paper trade"
@@ -249,7 +283,7 @@ def main(
             )
         print()
 
-    print(f"Top {min(len(candidates), 10)} logged to journal ({len(real_signals)} real, {len(paper_only)} paper).")
+    print(f"Top {len(selected)} logged to journal ({len(real_signals)} real, {len(paper_only)} paper).")
     print("=" * 60)
 
 
