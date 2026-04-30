@@ -17,7 +17,7 @@ from app.edge import estimate_edge
 from app.external_signals import get_external_consensus
 from app.gpt_analyst import GPT_MIN_EDGE, analyze as gpt_analyze
 from app.market_classifier import get_topic_category
-from app.market_journal import append_journal_record
+from app.market_journal import append_journal_record, is_already_logged
 from app.model import estimate_probability
 from app.portfolio import get_status, is_halted
 from app.state import settings
@@ -232,11 +232,16 @@ def main(
         return
 
     gpt_calls = 0
+    newly_logged = 0
     for rank, c in enumerate(selected, start=1):
         market = c["market"]
         edge   = c["edge"]
         label  = "REAL SIGNAL" if c["is_real_signal"] else "paper trade"
         risk_tag = " | HIGH RISK: match-fixing" if c["high_risk"] else ""
+
+        # Skip markets already in the journal BEFORE burning a GPT slot
+        if is_already_logged(market.market_id):
+            continue
 
         # GPT web search — only for markets above the edge threshold, up to GPT_CAP
         gpt = {"verdict": "skipped", "reasoning": ""}
@@ -251,7 +256,7 @@ def main(
             if gpt["verdict"] not in ("skipped", "error"):
                 gpt_calls += 1
 
-        append_journal_record(
+        written = append_journal_record(
             market_id=market.market_id,
             question=market.question,
             yes_price=market.yes_price,
@@ -269,6 +274,8 @@ def main(
             gpt_reasoning=gpt["reasoning"],
             notes=f"{label} | scan: {min_days:.0f}-{max_days:.0f}d window{risk_tag}",
         )
+        if written:
+            newly_logged += 1
 
         print("-" * 60)
         print(f"Rank #{rank}  [{label}]{' ⚠ HIGH RISK: match-fixing' if c['high_risk'] else ''}")
@@ -306,7 +313,8 @@ def main(
             print(f"GPT:       [{verdict_icon} {gpt['verdict'].upper()}] {gpt['reasoning']}")
         print()
 
-    print(f"Top {len(selected)} logged to journal ({len(real_signals)} real, {len(paper_only)} paper).")
+    already_known = len(selected) - newly_logged
+    print(f"Newly logged: {newly_logged}  |  Already in journal: {already_known}  |  GPT calls used: {gpt_calls}/{GPT_CAP}")
     print("=" * 60)
 
 

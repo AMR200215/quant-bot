@@ -133,7 +133,9 @@ def update_journal_outcome(
 
     row = rows[target_index]
     row["actual_outcome"] = actual_outcome
-    row["notes"] = notes if notes else row["notes"]
+    if notes:
+        existing = row.get("notes", "").strip()
+        row["notes"] = f"{existing} | {notes}" if existing else notes
 
     preferred_side = row.get("preferred_side", "")
     outcome_normalized = actual_outcome.lower()

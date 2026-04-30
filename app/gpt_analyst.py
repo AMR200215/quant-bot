@@ -12,7 +12,9 @@ run in scan_near_term.py.
 
 import hashlib
 import os
-from typing import Optional
+
+from dotenv import load_dotenv
+load_dotenv()
 
 GPT_MIN_EDGE = 0.02          # only call GPT on markets with >= 2% adjusted edge
 GPT_MODEL    = "gpt-4o-search-preview"
@@ -20,7 +22,7 @@ GPT_MODEL    = "gpt-4o-search-preview"
 _SYSTEM = (
     "You are a prediction market analyst with access to real-time web search. "
     "Your job is to find current, factual information relevant to a market question "
-    "and judge whether the signal direction looks correct. Be brief and factual."
+    "and output a structured verdict using the exact format requested."
 )
 
 _CACHE: dict[str, dict] = {}
@@ -60,7 +62,7 @@ def analyze(
 
     Returns dict with:
         verdict   — 'confirm' | 'reject' | 'neutral' | 'skipped' | 'error'
-        reasoning — one-sentence explanation
+        reasoning — evidence summary + reason
     """
     if adjusted_edge < GPT_MIN_EDGE:
         return {"verdict": "skipped", "reasoning": "edge below GPT threshold"}
@@ -74,35 +76,48 @@ def analyze(
         return _CACHE[cache_key]
 
     side_label = "YES" if preferred_side == "buy_yes" else "NO"
+
+    # Pre-compute the explicit mapping so GPT doesn't have to infer it.
+    # This is the key fix for direction confusion: GPT states YES_LIKELY first,
+    # then the rules map that unambiguously to confirm/reject.
+    if preferred_side == "buy_yes":
+        higher_maps_to = "confirm"
+        lower_maps_to  = "reject"
+    else:
+        higher_maps_to = "reject"
+        lower_maps_to  = "confirm"
+
     prompt = (
-        f"Prediction market question: {question}\n"
-        f"Current market price: {yes_price:.0%} YES\n"
-        f"Model estimate: {posterior:.0%} YES  →  signal is buy {side_label} "
-        f"(edge: {adjusted_edge:.1%})\n\n"
-        "Search for current information relevant to this question — news, "
-        "recent results, injuries, context, or anything that affects the outcome.\n\n"
-        "Reply in EXACTLY this format with no other text:\n"
-        "VERDICT: confirm\n"
-        "REASON: <one sentence>\n\n"
-        "Rules:\n"
-        "- 'confirm' if evidence supports buying " + side_label + "\n"
-        "- 'reject' if evidence contradicts buying " + side_label + "\n"
-        "- 'neutral' if you found nothing useful or the evidence is mixed\n"
+        f'Prediction market question: "{question}"\n'
+        f"This market resolves YES if the stated outcome occurs, NO otherwise.\n"
+        f"Current market YES price: {yes_price:.0%}  |  Model estimate: {posterior:.0%} YES\n"
+        f"Signal: buy {side_label} (edge {adjusted_edge:.1%})\n\n"
+        "Search for the most current, factual information about this question.\n\n"
+        "Reply in EXACTLY this 4-line format — no extra text, no markdown:\n"
+        "EVIDENCE: <one sentence: the key fact you found>\n"
+        "YES_LIKELY: higher / lower / unchanged\n"
+        "VERDICT: confirm / reject / neutral\n"
+        "REASON: <one sentence explaining the verdict>\n\n"
+        "Mapping rules (follow these exactly):\n"
+        f"  YES_LIKELY=higher   → VERDICT={higher_maps_to}\n"
+        f"  YES_LIKELY=lower    → VERDICT={lower_maps_to}\n"
+        f"  YES_LIKELY=unchanged → VERDICT=neutral\n"
+        "  If you found nothing useful, set YES_LIKELY=unchanged and VERDICT=neutral.\n"
     )
 
     try:
-        response = _get_client().chat.completions.create(
+        response = client.chat.completions.create(
             model=GPT_MODEL,
             messages=[
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",   "content": prompt},
             ],
-            max_tokens=150,
+            max_tokens=250,
         )
         text = response.choices[0].message.content.strip()
         verdict, reasoning = _parse_response(text)
     except Exception as exc:
-        result = {"verdict": "error", "reasoning": str(exc)[:120]}
+        result = {"verdict": "error", "reasoning": str(exc)[:200]}
         _CACHE[cache_key] = result
         return result
 
@@ -112,13 +127,19 @@ def analyze(
 
 
 def _parse_response(text: str) -> tuple[str, str]:
-    """Extract verdict and reasoning from GPT response."""
-    verdict   = "neutral"
-    reasoning = text[:200]  # fallback: raw response truncated
+    """Extract verdict and reasoning from GPT response.
+
+    Combines EVIDENCE + REASON into the reasoning field so the journal
+    captures both the raw finding and the verdict explanation.
+    """
+    verdict  = "neutral"
+    evidence = ""
+    reason   = text[:300]  # fallback: raw response truncated
 
     for line in text.splitlines():
         line = line.strip()
-        if line.upper().startswith("VERDICT:"):
+        upper = line.upper()
+        if upper.startswith("VERDICT:"):
             raw = line.split(":", 1)[1].strip().lower()
             if "confirm" in raw:
                 verdict = "confirm"
@@ -126,7 +147,15 @@ def _parse_response(text: str) -> tuple[str, str]:
                 verdict = "reject"
             else:
                 verdict = "neutral"
-        elif line.upper().startswith("REASON:"):
-            reasoning = line.split(":", 1)[1].strip()
+        elif upper.startswith("EVIDENCE:"):
+            evidence = line.split(":", 1)[1].strip()
+        elif upper.startswith("REASON:"):
+            reason = line.split(":", 1)[1].strip()
+
+    # Combine evidence + reason for richer journal logging
+    if evidence and reason and evidence != reason:
+        reasoning = f"{evidence} → {reason}"
+    else:
+        reasoning = reason or evidence
 
     return verdict, reasoning

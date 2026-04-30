@@ -81,6 +81,25 @@ def summarize_bucket(
     return summary
 
 
+def summarize_gpt_verdict(records: list[dict]) -> dict[str, dict]:
+    """Compute win rate for resolved records grouped by GPT verdict."""
+    summary: dict[str, dict] = {}
+
+    for row in resolved_records(records):
+        verdict = row.get("gpt_verdict", "").strip() or "skipped"
+        if verdict not in summary:
+            summary[verdict] = {"count": 0, "correct_count": 0, "win_rate": 0.0}
+        summary[verdict]["count"] += 1
+        if row.get("bot_correct", "").lower() == "true":
+            summary[verdict]["correct_count"] += 1
+
+    for verdict, values in summary.items():
+        count = values["count"]
+        values["win_rate"] = values["correct_count"] / count if count else 0.0
+
+    return summary
+
+
 def summarize_side(records: list[dict]) -> dict[str, dict]:
     """Compute win-rate summary by preferred side."""
     summary: dict[str, dict] = {}
@@ -158,6 +177,7 @@ def main() -> None:
     final_signal_summary = summarize_bucket(records, bucket_final_signal, "final_signal")
     confidence_summary = summarize_bucket(records, bucket_confidence, "confidence")
     risk_summary = summarize_bucket(records, bucket_risk, "risk_score")
+    gpt_summary = summarize_gpt_verdict(records)
 
     print_bucket_section(
         "[By Final Signal]",
@@ -174,6 +194,24 @@ def main() -> None:
         ["low", "medium", "high"],
         risk_summary,
     )
+
+    # GPT verdict accuracy — key signal for whether GPT is adding real edge
+    print("[By GPT Verdict]")
+    gpt_order = ["confirm", "reject", "neutral", "skipped", "error"]
+    baseline = gpt_summary.get("skipped", {}).get("win_rate", 0.0)
+    for verdict in gpt_order:
+        values = gpt_summary.get(verdict, {"count": 0, "correct_count": 0, "win_rate": 0.0})
+        if values["count"] == 0:
+            continue
+        delta = values["win_rate"] - baseline
+        delta_str = f"  ({delta:+.1%} vs skipped)" if verdict != "skipped" else ""
+        print(
+            f"{verdict:<8} | count={values['count']:<3} | "
+            f"win_rate={values['win_rate']:.2%}{delta_str}"
+        )
+    if len(gpt_summary) <= 1:
+        print("  No GPT verdicts logged yet — OPENAI_API_KEY may not be set.")
+    print()
 
     best_signal_bucket = max(
         final_signal_summary.items(),
@@ -209,6 +247,25 @@ def main() -> None:
         print("- High-risk markets appear to underperform lower-risk setups.")
     else:
         print("- High-risk markets do not obviously underperform yet.")
+
+    confirm_wr = gpt_summary.get("confirm", {}).get("win_rate", None)
+    reject_wr = gpt_summary.get("reject", {}).get("win_rate", None)
+    confirm_n = gpt_summary.get("confirm", {}).get("count", 0)
+    reject_n = gpt_summary.get("reject", {}).get("count", 0)
+    if confirm_wr is not None and confirm_n >= 3:
+        if confirm_wr > baseline + 0.05:
+            print(f"- GPT CONFIRM boosts win rate to {confirm_wr:.1%} (+{confirm_wr - baseline:.1%} vs baseline) — strong signal.")
+        elif confirm_wr < baseline - 0.05:
+            print(f"- GPT CONFIRM underperforms baseline ({confirm_wr:.1%} vs {baseline:.1%}) — investigate.")
+        else:
+            print(f"- GPT CONFIRM win rate {confirm_wr:.1%} is near baseline — not yet decisive (n={confirm_n}).")
+    if reject_wr is not None and reject_n >= 3:
+        if reject_wr < baseline - 0.05:
+            print(f"- GPT REJECT correctly flags losers: win rate {reject_wr:.1%} ({reject_wr - baseline:.1%} vs baseline).")
+        else:
+            print(f"- GPT REJECT win rate {reject_wr:.1%} is not clearly worse than baseline (n={reject_n}).")
+    if confirm_n < 3 and reject_n < 3:
+        print("- Not enough GPT verdicts resolved yet to draw conclusions (need n>=3 per verdict).")
 
 
 if __name__ == "__main__":
