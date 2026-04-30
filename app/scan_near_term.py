@@ -147,6 +147,7 @@ def main(
             twitter_bearer_token=settings.twitter_bearer_token,
             odds_api_key=settings.odds_api_key,
             kalshi_api_key=settings.kalshi_api_key,
+            kalshi_key_id=settings.kalshi_key_id,
         )
         if external.get("consensus_p") is not None:
             # Weight external consensus higher when sharp markets (sportsbook/kalshi) contribute

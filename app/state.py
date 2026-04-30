@@ -23,6 +23,7 @@ class Settings:
     twitter_bearer_token: str  = os.getenv("TWITTER_BEARER_TOKEN", "")
     odds_api_key: str          = os.getenv("ODDS_API_KEY", "")
     kalshi_api_key: str        = os.getenv("KALSHI_API_KEY", "")
+    kalshi_key_id: str         = os.getenv("KALSHI_KEY_ID", "")
     use_external_signals: bool = os.getenv("USE_EXTERNAL_SIGNALS", "true").lower() == "true"
     data_source: str = data_source
 

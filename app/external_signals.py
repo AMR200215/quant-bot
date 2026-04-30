@@ -29,7 +29,7 @@ MANIFOLD_SEARCH_URL  = "https://api.manifold.markets/v0/search-markets"
 METACULUS_SEARCH_URL = "https://www.metaculus.com/api2/questions/"
 TWITTER_SEARCH_URL   = "https://api.twitter.com/2/tweets/search/recent"
 ODDS_API_BASE        = "https://api.the-odds-api.com/v4"
-KALSHI_API_BASE      = "https://trading-api.kalshi.com/trade-api/v2"
+KALSHI_API_BASE      = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Minimum text similarity (0–1) to accept an external match
 MATCH_THRESHOLD = 0.55
@@ -312,19 +312,20 @@ def fetch_odds_probability(question: str, api_key: str) -> Optional[float]:
 # Kalshi
 # ---------------------------------------------------------------------------
 
-def _kalshi_auth_headers(private_key_pem: str, method: str, path: str) -> dict:
+def _kalshi_auth_headers(private_key_pem: str, key_id: str, method: str, path: str) -> dict:
     """Build Kalshi RSA-signed request headers.
 
     Kalshi v2 requires:
-      KALSHI-ACCESS-KEY    — your key ID (first line of PEM minus headers, first 32 chars)
+      KALSHI-ACCESS-KEY       — key ID shown in Kalshi dashboard after uploading public key
       KALSHI-ACCESS-SIGNATURE — base64(RSA-SHA256(timestamp + method + path))
       KALSHI-ACCESS-TIMESTAMP — milliseconds since epoch as string
     """
+    if not key_id:
+        return {}
     try:
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import padding
     except ImportError:
-        # cryptography package not installed — fall back to no auth (will 401)
         return {}
 
     ts = str(int(time.time() * 1000))
@@ -338,14 +339,6 @@ def _kalshi_auth_headers(private_key_pem: str, method: str, path: str) -> dict:
     except Exception:
         return {}
 
-    # Key ID: Kalshi uses the first 32 chars of the base64-encoded public key
-    # In practice, pass the key_id separately; here we derive a stub from PEM
-    pub = private_key.public_key().public_bytes(
-        serialization.Encoding.DER,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    key_id = base64.b64encode(pub).decode()[:32]
-
     return {
         "KALSHI-ACCESS-KEY": key_id,
         "KALSHI-ACCESS-SIGNATURE": sig_b64,
@@ -353,22 +346,21 @@ def _kalshi_auth_headers(private_key_pem: str, method: str, path: str) -> dict:
     }
 
 
-def fetch_kalshi_probability(question: str, api_key: str) -> Optional[float]:
+def fetch_kalshi_probability(question: str, api_key: str, key_id: str = "") -> Optional[float]:
     """Return the YES probability of the best-matching open Kalshi market.
 
     Kalshi is a regulated US prediction market — real-money prices are sharper
     than Manifold, especially for politics, macro, and earnings events.
 
-    `api_key` should be the PEM-encoded RSA private key (contents of the .pem
-    file, newlines replaced with \\n).  Generate with:
-        openssl genrsa -out kalshi_private.pem 2048
-    Upload the corresponding public key in your Kalshi dashboard.
+    `api_key`  — PEM-encoded RSA private key (KALSHI_API_KEY in env)
+    `key_id`   — Key ID shown in Kalshi dashboard after uploading the public key
+                 (KALSHI_KEY_ID in env)
     """
-    if not api_key:
+    if not api_key or not key_id:
         return None
 
     path = "/trade-api/v2/markets"
-    headers = _kalshi_auth_headers(api_key, "GET", path)
+    headers = _kalshi_auth_headers(api_key, key_id, "GET", path)
     if not headers:
         return None
 
@@ -466,6 +458,7 @@ def get_external_consensus(
     twitter_bearer_token: str = "",
     odds_api_key: str = "",
     kalshi_api_key: str = "",
+    kalshi_key_id: str = "",
 ) -> dict:
     """Return a weighted external probability consensus for a question.
 
@@ -478,14 +471,14 @@ def get_external_consensus(
       consensus_p   — Weighted average of available signals (float or None)
       sources       — number of sources that returned a valid probability
     """
-    cache_key = _question_hash(question + odds_api_key[:8] + kalshi_api_key[:8])
+    cache_key = _question_hash(question + odds_api_key[:8] + kalshi_api_key[:8] + kalshi_key_id[:8])
     if cache_key in _CACHE:
         return _CACHE[cache_key]
 
     manifold_p   = fetch_manifold_probability(question)
     metaculus_p  = fetch_metaculus_probability(question)
     sportsbook_p = fetch_odds_probability(question, odds_api_key)
-    kalshi_p     = fetch_kalshi_probability(question, kalshi_api_key)
+    kalshi_p     = fetch_kalshi_probability(question, kalshi_api_key, kalshi_key_id)
     x_sentiment  = (
         fetch_x_sentiment(question, twitter_bearer_token)
         if twitter_bearer_token else None
@@ -544,6 +537,7 @@ if __name__ == "__main__":
             q,
             odds_api_key=os.getenv("ODDS_API_KEY", ""),
             kalshi_api_key=os.getenv("KALSHI_API_KEY", ""),
+            kalshi_key_id=os.getenv("KALSHI_KEY_ID", ""),
         )
         for k, v in r.items():
             if v is not None and k != "sources":

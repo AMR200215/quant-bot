@@ -43,6 +43,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           KALSHI_API_KEY: ${{ secrets.KALSHI_API_KEY }}
+          KALSHI_KEY_ID: ${{ secrets.KALSHI_KEY_ID }}
           TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
           BANKROLL: ${{ secrets.BANKROLL }}
           FRACTIONAL_KELLY: "0.25"
