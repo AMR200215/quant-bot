@@ -1,0 +1,691 @@
+{% extends "base.html" %}
+{% block title %}Memecoin — Quant Bot{% endblock %}
+{% block content %}
+
+<style>
+  .chain-sol { color: #9945ff; font-weight: 600; }
+  .chain-bsc { color: #f0b90b; font-weight: 600; }
+  .strength-strong { color: var(--green); font-weight: 700; }
+  .strength-medium { color: var(--yellow); font-weight: 600; }
+  .strength-weak   { color: var(--muted); }
+  .type-copy_trade      { background: rgba(91,156,246,0.15); color: var(--blue); }
+  .type-volume_breakout { background: rgba(245,166,35,0.15);  color: var(--yellow); }
+  .type-new_launch      { background: rgba(0,200,150,0.15);   color: var(--green); }
+  .type-manual          { background: rgba(136,136,136,0.15); color: var(--muted); }
+  .pnl-pos { color: var(--green); font-weight: 600; }
+  .pnl-neg { color: var(--red);   font-weight: 600; }
+  .tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .tab-btn {
+    padding: 10px 22px; font-size: 13px; font-weight: 600;
+    color: var(--muted); background: none; border: none;
+    border-bottom: 2px solid transparent; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-btn.active, .tab-btn:hover { color: var(--text); border-bottom-color: var(--accent); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .addr { font-family: monospace; font-size: 11px; color: var(--muted); }
+  .score-bar { display: inline-block; width: 60px; height: 6px;
+               background: var(--border); border-radius: 3px; vertical-align: middle; }
+  .score-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+  .close-btn {
+    background: transparent; border: 1px solid var(--red); color: var(--red);
+    border-radius: 4px; padding: 3px 10px; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: background 0.15s;
+  }
+  .close-btn:hover { background: rgba(255,85,85,0.1); }
+  .refresh-ts { font-size: 11px; color: var(--muted); margin-left: 12px; }
+</style>
+
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <h1 style="margin:0;">Memecoin Trading</h1>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <span class="badge badge-gray">Paper Trade Mode</span>
+    <span class="refresh-ts" id="last-refresh">—</span>
+    <button class="btn" onclick="refreshAll()" style="padding:7px 16px; font-size:12px;">Refresh</button>
+  </div>
+</div>
+
+<!-- Summary stats -->
+<div class="grid-3" style="margin-bottom:20px;" id="summary-row">
+  <div class="card stat">
+    <div class="val" id="stat-signals">{{ signals|length }}</div>
+    <div class="lbl">Signals (last 50)</div>
+  </div>
+  <div class="card stat">
+    <div class="val" id="stat-open">{{ positions|length }}</div>
+    <div class="lbl">Open Positions</div>
+  </div>
+  <div class="card stat">
+    <div class="val" id="stat-pnl">
+      {% set total = namespace(v=0.0) %}
+      {% for p in positions %}{% set total.v = total.v + (p.pnl_usd or 0) %}{% endfor %}
+      ${{ "%.2f"|format(total.v) }}
+    </div>
+    <div class="lbl">Unrealised PnL</div>
+  </div>
+</div>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('signals',this)">Live Signals</button>
+  <button class="tab-btn" onclick="switchTab('positions',this)">Open Positions</button>
+  <button class="tab-btn" onclick="switchTab('journal',this)">Trade History</button>
+  <button class="tab-btn" onclick="switchTab('manual',this)">Manual Trade</button>
+  <button class="tab-btn" onclick="switchTab('wallets',this)">Whale Wallets</button>
+  <button class="tab-btn" onclick="switchTab('settings',this)">⚙ Settings</button>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB: Live Signals                                            -->
+<!-- ============================================================ -->
+<div class="tab-panel active" id="tab-signals">
+  <div class="card" style="padding:0; overflow:hidden;">
+    {% if signals %}
+    <table id="signals-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Chain</th>
+          <th>Token</th>
+          <th>Type</th>
+          <th>Strength</th>
+          <th>Price</th>
+          <th>Liquidity</th>
+          <th>Volume 1h</th>
+          <th>Whales</th>
+          <th>Score</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in signals %}
+        <tr>
+          <td class="addr">{{ s.timestamp|int|strftime if s.timestamp else "—" }}</td>
+          <td>
+            {% if s.chain == "solana" %}<span class="chain-sol">SOL</span>
+            {% else %}<span class="chain-bsc">BNB</span>{% endif %}
+          </td>
+          <td>
+            <span style="font-weight:600;">{{ s.token_symbol or "—" }}</span>
+            <br><span class="addr">{{ s.token_address[:10] if s.token_address else "" }}…</span>
+          </td>
+          <td><span class="badge type-{{ s.signal_type }}">{{ s.signal_type.replace("_"," ") }}</span></td>
+          <td><span class="strength-{{ s.strength }}">{{ s.strength.upper() }}</span></td>
+          <td class="mono">${{ "%.8f"|format(s.price_usd|float) }}</td>
+          <td class="mono">${{ "{:,.0f}".format(s.liquidity_usd|float) }}</td>
+          <td class="mono">${{ "{:,.0f}".format(s.volume_h1|float) }}</td>
+          <td>{{ s.whale_count }} {% if s.whale_tiers %}(T{{ s.whale_tiers|min }}){% endif %}</td>
+          <td>
+            <span class="score-bar"><span class="score-fill" style="width:{{ (s.composite_score|float * 100)|int }}%"></span></span>
+            <span style="font-size:11px; margin-left:4px;">{{ "%.2f"|format(s.composite_score|float) }}</span>
+          </td>
+          <td class="muted" style="font-size:11px;">{{ s.notes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+      <div style="font-size:28px; margin-bottom:10px;">📡</div>
+      <div style="font-weight:600; margin-bottom:6px;">Scanning for signals…</div>
+      <div class="muted">Whale wallets and market scanner are running in the background.<br>First signals appear within 1–2 minutes.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB: Open Positions                                          -->
+<!-- ============================================================ -->
+<div class="tab-panel" id="tab-positions">
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table id="positions-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Chain</th>
+          <th>Token</th>
+          <th>Type</th>
+          <th>Entry</th>
+          <th>Current</th>
+          <th>Peak</th>
+          <th>PnL %</th>
+          <th>PnL $</th>
+          <th>Whales</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="positions-tbody"></tbody>
+    </table>
+    <div id="positions-empty" class="empty" style="display:none;">
+      <div class="muted">No open positions.<br>Medium/strong signals auto-open paper positions.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB: Trade History                                           -->
+<!-- ============================================================ -->
+<div class="tab-panel" id="tab-journal">
+  <div class="card" style="padding:0; overflow:hidden;">
+    {% if journal %}
+    <table>
+      <thead>
+        <tr>
+          <th>Entry Time</th>
+          <th>Token</th>
+          <th>Chain</th>
+          <th>Type</th>
+          <th>Strength</th>
+          <th>Entry $</th>
+          <th>Exit $</th>
+          <th>Exit Reason</th>
+          <th>PnL %</th>
+          <th>PnL $</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for j in journal|reverse %}
+        <tr>
+          <td class="addr">{{ j.entry_time }}</td>
+          <td style="font-weight:600;">{{ j.token_symbol }}</td>
+          <td>
+            {% if j.chain == "solana" %}<span class="chain-sol">SOL</span>
+            {% else %}<span class="chain-bsc">BNB</span>{% endif %}
+          </td>
+          <td><span class="badge type-{{ j.signal_type }}">{{ j.signal_type.replace("_"," ") }}</span></td>
+          <td><span class="strength-{{ j.strength }}">{{ j.strength.upper() }}</span></td>
+          <td class="mono">${{ j.entry_price }}</td>
+          <td class="mono">${{ j.exit_price }}</td>
+          <td>
+            {% set r = j.exit_reason %}
+            {% if "stop" in r %}<span class="badge badge-red">{{ r }}</span>
+            {% elif "profit" in r or "tp_" in r %}<span class="badge badge-green">{{ r }}</span>
+            {% elif "whale_exit" in r %}<span class="badge badge-blue">{{ r }}</span>
+            {% else %}<span class="badge badge-gray">{{ r }}</span>{% endif %}
+          </td>
+          <td>
+            {% set pct = j.pnl_pct|float %}
+            <span class="{{ 'pnl-pos' if pct >= 0 else 'pnl-neg' }}">{{ "%.1f"|format(pct) }}%</span>
+          </td>
+          <td>
+            {% set pusd = j.pnl_usd|float %}
+            <span class="{{ 'pnl-pos' if pusd >= 0 else 'pnl-neg' }}">${{ "%.2f"|format(pusd) }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+      <div class="muted">No closed trades yet.<br>They'll appear here once positions close.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB: Manual Trade                                            -->
+<!-- ============================================================ -->
+<div class="tab-panel" id="tab-manual">
+  <div class="card" style="max-width:560px;">
+    <h2>Open Manual Paper Trade</h2>
+    <p class="muted" style="font-size:13px; margin-bottom:20px;">
+      Enter any token address to open a ${{ config.TRADE_SIZE_USD if config else 30 }} paper position immediately.
+      Use this to test the full trade flow or to manually copy a trade you spotted.
+    </p>
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div>
+        <label>Chain</label>
+        <select id="manual-chain">
+          <option value="solana">Solana</option>
+          <option value="bsc">BNB Chain (BSC)</option>
+        </select>
+      </div>
+      <div>
+        <label>Token Address</label>
+        <input type="text" id="manual-address" placeholder="e.g. 6W6x6Q8qKFL6Ak6ou43peJcijqjqZsSfK5HZmbzypump" style="font-family:monospace; font-size:12px;" />
+      </div>
+      <div id="manual-result" style="display:none;" class="flash"></div>
+      <button class="btn" onclick="openManualTrade()" id="manual-btn" style="width:fit-content;">
+        <span class="btn-label">Open Paper Trade</span>
+        <span class="spinner"><span class="spin"></span></span>
+      </button>
+    </div>
+  </div>
+
+  <div class="card" style="max-width:560px; margin-top:0;">
+    <h2>How Paper Trading Works</h2>
+    <div style="font-size:13px; color:var(--muted); line-height:1.8;">
+      <div>Entry price is fetched live from DexScreener at time of opening.</div>
+      <div>Position monitors price every 60s and tracks peak price.</div>
+      <div style="margin-top:8px;"><b style="color:var(--text);">Auto-exits trigger when:</b></div>
+      <div>• Price drops -35% from entry (hard stop)</div>
+      <div>• Price drops -40% from peak after being up +100% (trailing stop)</div>
+      <div>• Flat for 45 min with less than +30% gain (time stop)</div>
+      <div>• Whale that entered the trade exits (copy-trade positions only)</div>
+      <div>• Take profit: sells 30% at +100%, 30% at +300%, rides 40%</div>
+      <div style="margin-top:8px;"><b style="color:var(--text);">Manual exit:</b> click Close in Open Positions tab anytime.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB: Whale Wallets                                           -->
+<!-- ============================================================ -->
+<div class="tab-panel" id="tab-wallets">
+  <div class="grid-2">
+    <div class="card">
+      <h2>Solana Wallets</h2>
+      <div id="sol-wallet-info" class="muted" style="font-size:13px;">
+        Loading wallet file info…
+      </div>
+    </div>
+    <div class="card">
+      <h2>BNB Chain Wallets</h2>
+      <div id="bnb-wallet-info" class="muted" style="font-size:13px;">
+        Loading wallet file info…
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Load Your Wallet Files</h2>
+    <p class="muted" style="font-size:13px; line-height:1.7; margin-bottom:0;">
+      Place your whale wallet files at:<br>
+      <code style="background:var(--surface2); padding:2px 6px; border-radius:4px; font-size:12px;">memecoin/data/whale_wallets_sol.json</code> — Solana (300 wallets)<br>
+      <code style="background:var(--surface2); padding:2px 6px; border-radius:4px; font-size:12px;">memecoin/data/whale_wallets_bnb.json</code> — BNB Chain (100+ wallets)<br><br>
+      Supported formats: JSON array of strings, JSON array of objects with <code>"address"</code> key, or plain text (one address per line).
+    </p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB: Settings                                                -->
+<!-- ============================================================ -->
+<div class="tab-panel" id="tab-settings">
+
+  <div id="settings-alert" style="display:none; margin-bottom:16px;" class="flash"></div>
+
+  <p class="muted" style="font-size:13px; margin-bottom:20px;">
+    Each signal type has its own trade size and exit rules. Changes apply immediately to new trades — open positions keep their original settings.
+  </p>
+
+  <div id="settings-cards" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:16px;"></div>
+
+  <div style="display:flex; gap:10px; margin-top:24px;">
+    <button class="btn" onclick="saveSettings()" id="save-settings-btn">Save All Settings</button>
+    <button class="btn" onclick="loadSettings()" style="background:var(--surface2); color:var(--muted);">Reset</button>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- JavaScript                                                   -->
+<!-- ============================================================ -->
+<script>
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'positions') loadPositions();
+  if (name === 'settings') loadSettings();
+}
+
+function _pnlPct(p) {
+  if (!p.entry_price || p.entry_price === 0) return 0;
+  const cur = p.current_price || p.entry_price;
+  return (cur - p.entry_price) / p.entry_price * 100;
+}
+
+async function loadPositions() {
+  const r = await fetch('/memecoin/api/positions');
+  const positions = await r.json();
+  const tbody = document.getElementById('positions-tbody');
+  const empty = document.getElementById('positions-empty');
+  if (!tbody) return;
+
+  if (!positions.length) {
+    tbody.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  tbody.innerHTML = positions.map(p => {
+    const pct  = _pnlPct(p);
+    const pusd = pct / 100 * (p.size_usd || 30);
+    const pctClass  = pct >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const chainSpan = p.chain === 'solana'
+      ? '<span class="chain-sol">SOL</span>'
+      : '<span class="chain-bsc">BNB</span>';
+    const cur   = p.current_price  ? '$' + p.current_price.toExponential(4)  : '—';
+    const entry = p.entry_price    ? '$' + p.entry_price.toExponential(4)    : '—';
+    const peak  = p.peak_price     ? '$' + p.peak_price.toExponential(4)     : '—';
+    const hs    = p.hard_stop_pct        ? (Math.abs(p.hard_stop_pct)*100).toFixed(0)  : '35';
+    const ts    = p.trailing_stop_pct    ? (Math.abs(p.trailing_stop_pct)*100).toFixed(0) : '40';
+    const ta    = p.trail_activates_pct  ? (p.trail_activates_pct*100).toFixed(0)      : '100';
+    const tm    = p.time_stop_minutes    || 45;
+    return `<tr id="pos-${p.id}">
+      <td class="addr">${p.id}</td>
+      <td>${chainSpan}</td>
+      <td style="font-weight:600;">${p.token_symbol || p.token_address.slice(0,8)}</td>
+      <td><span class="badge type-${p.signal_type}">${p.signal_type.replace('_',' ')}</span></td>
+      <td class="mono">${entry}</td>
+      <td class="mono">${cur}</td>
+      <td class="mono">${peak}</td>
+      <td><span class="${pctClass}">${pct.toFixed(1)}%</span></td>
+      <td><span class="${pctClass}">$${pusd.toFixed(2)}</span></td>
+      <td>${p.whale_count || 0}</td>
+      <td style="display:flex; gap:6px;">
+        <button class="close-btn" onclick="togglePosSettings('${p.id}')" title="Edit stop/size">⚙</button>
+        <button class="close-btn" onclick="closePosition('${p.id}')">Close</button>
+      </td>
+    </tr>
+    <tr id="pos-settings-${p.id}" style="display:none; background:var(--surface2);">
+      <td colspan="11" style="padding:14px 18px;">
+        <div style="display:flex; gap:24px; align-items:flex-end; flex-wrap:wrap;">
+          <div>
+            <label style="font-size:11px; color:var(--muted); display:block; margin-bottom:4px;">Hard Stop %</label>
+            <input type="number" id="pset-hs-${p.id}" value="${hs}" min="5" max="90" step="1"
+                   style="width:70px; padding:4px 6px; font-size:13px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px;">
+          </div>
+          <div>
+            <label style="font-size:11px; color:var(--muted); display:block; margin-bottom:4px;">Trailing Stop %</label>
+            <input type="number" id="pset-ts-${p.id}" value="${ts}" min="5" max="90" step="1"
+                   style="width:70px; padding:4px 6px; font-size:13px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px;">
+          </div>
+          <div>
+            <label style="font-size:11px; color:var(--muted); display:block; margin-bottom:4px;">Trail Activates at %</label>
+            <input type="number" id="pset-ta-${p.id}" value="${ta}" min="10" max="1000" step="10"
+                   style="width:80px; padding:4px 6px; font-size:13px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px;">
+          </div>
+          <div>
+            <label style="font-size:11px; color:var(--muted); display:block; margin-bottom:4px;">Time Stop (min)</label>
+            <input type="number" id="pset-tm-${p.id}" value="${tm}" min="5" max="360" step="5"
+                   style="width:70px; padding:4px 6px; font-size:13px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px;">
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" onclick="savePosSettings('${p.id}')" style="padding:5px 14px; font-size:12px;">Save</button>
+            <button class="btn" onclick="togglePosSettings('${p.id}')" style="padding:5px 14px; font-size:12px; background:var(--surface2); color:var(--muted);">Cancel</button>
+          </div>
+          <span id="pset-msg-${p.id}" style="font-size:12px; color:var(--green); display:none;">✓ Saved</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function togglePosSettings(posId) {
+  const row = document.getElementById('pos-settings-' + posId);
+  row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+}
+
+async function savePosSettings(posId) {
+  const payload = {
+    hard_stop_pct:       parseFloat(document.getElementById('pset-hs-' + posId).value),
+    trailing_stop_pct:   parseFloat(document.getElementById('pset-ts-' + posId).value),
+    trail_activates_pct: parseFloat(document.getElementById('pset-ta-' + posId).value),
+    time_stop_minutes:   parseInt(document.getElementById('pset-tm-' + posId).value),
+  };
+  const r = await fetch('/memecoin/api/position/' + posId + '/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const d = await r.json();
+  const msg = document.getElementById('pset-msg-' + posId);
+  if (d.ok) {
+    msg.style.display = 'inline';
+    msg.style.color = 'var(--green)';
+    msg.textContent = '✓ Saved';
+    setTimeout(() => { msg.style.display = 'none'; togglePosSettings(posId); }, 1200);
+  } else {
+    msg.style.display = 'inline';
+    msg.style.color = 'var(--red)';
+    msg.textContent = '✗ ' + (d.errors || [d.error]).join(', ');
+  }
+}
+
+async function closePosition(posId) {
+  if (!confirm('Close position ' + posId + '?')) return;
+  const r = await fetch('/memecoin/api/position/' + posId + '/close', {method: 'POST'});
+  const data = await r.json();
+  if (data.ok) {
+    const row = document.getElementById('pos-' + posId);
+    if (row) row.remove();
+    updateSummary();
+  } else {
+    alert('Error: ' + (data.error || 'unknown'));
+  }
+}
+
+async function openManualTrade() {
+  const chain   = document.getElementById('manual-chain').value;
+  const address = document.getElementById('manual-address').value.trim();
+  const result  = document.getElementById('manual-result');
+  const btn     = document.getElementById('manual-btn');
+
+  if (!address) { alert('Enter a token address.'); return; }
+
+  btn.classList.add('loading');
+  result.style.display = 'none';
+
+  try {
+    const r = await fetch('/memecoin/api/trade/manual', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({chain, token_address: address}),
+    });
+    const d = await r.json();
+    result.style.display = 'block';
+    if (d.ok) {
+      const p = d.position;
+      const sym = p.token_symbol || address.slice(0,8);
+      result.className = 'flash flash-success';
+      result.innerHTML = `Paper position opened: <b>${sym}</b> @ $${p.entry_price.toExponential(4)} &nbsp;|&nbsp; Size: $${p.size_usd} &nbsp;|&nbsp; ID: ${p.id}<br>
+        <span style="font-size:11px;">Switch to Open Positions tab to track PnL and close manually.</span>`;
+      document.getElementById('manual-address').value = '';
+      updateSummary();
+      loadPositions();
+    } else {
+      result.className = 'flash flash-error';
+      result.textContent = 'Error: ' + (d.error || 'unknown');
+    }
+  } catch(e) {
+    result.style.display = 'block';
+    result.className = 'flash flash-error';
+    result.textContent = 'Request failed: ' + e;
+  }
+  btn.classList.remove('loading');
+}
+
+async function updateSummary() {
+  const r = await fetch('/memecoin/api/summary');
+  const d = await r.json();
+  if (d.signal_count !== undefined)
+    document.getElementById('stat-signals').textContent = d.signal_count;
+  if (d.open_count !== undefined)
+    document.getElementById('stat-open').textContent = d.open_count;
+  if (d.unrealised_pnl_usd !== undefined)
+    document.getElementById('stat-pnl').textContent = '$' + d.unrealised_pnl_usd.toFixed(2);
+}
+
+async function refreshAll() {
+  await updateSummary();
+  document.getElementById('last-refresh').textContent =
+    'Refreshed ' + new Date().toLocaleTimeString();
+}
+
+// Wallet file info (static — just show counts from file)
+document.getElementById('sol-wallet-info').innerHTML =
+  '<b>{{ signals|selectattr("chain","eq","solana")|list|length }}</b> Solana signals so far<br>' +
+  'Wallet polling: every 30s via Solana RPC + GMGN';
+document.getElementById('bnb-wallet-info').innerHTML =
+  '<b>{{ signals|selectattr("chain","eq","bsc")|list|length }}</b> BNB signals so far<br>' +
+  'Wallet polling: every 60s via BscScan API';
+
+// Load positions immediately on page load
+loadPositions();
+
+// Auto-refresh summary every 30s, positions every 60s
+setInterval(refreshAll, 30000);
+setInterval(loadPositions, 60000);
+
+document.getElementById('last-refresh').textContent =
+  'Loaded ' + new Date().toLocaleTimeString();
+
+// ---- Settings ----
+const SIGNAL_TYPE_LABELS = {
+  '__default__':    'Global Default',
+  'copy_trade':     'Copy Trade',
+  'volume_breakout':'Volume Breakout',
+  'new_launch':     'New Launch',
+  'manual':         'Manual Trade',
+};
+
+function _makeSlider(sigType, key, label, min, max, step, value, fmt) {
+  const id = `sl-${sigType}-${key}`;
+  const lblId = `lbl-${sigType}-${key}`;
+  return `
+    <div style="margin-bottom:14px;">
+      <label style="font-size:12px; font-weight:600; display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>${label}</span>
+        <span id="${lblId}" style="color:var(--accent);">${fmt(value)}</span>
+      </label>
+      <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}"
+             oninput="document.getElementById('${lblId}').textContent='${fmt('__v__')}'"
+             style="width:100%;">
+      <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-top:1px;">
+        <span>${fmt(min)}</span><span>${fmt(max)}</span>
+      </div>
+    </div>`.replace(/'${fmt\('__v__'\)}'/g, `'` + fmt('__v__').replace('__v__', `'+this.value+'`) + `'`);
+}
+
+function _buildCard(sigType, s) {
+  const label = SIGNAL_TYPE_LABELS[sigType] || sigType;
+  const isDefault = sigType === '__default__';
+  return `
+    <div class="card" id="card-${sigType}">
+      <h3 style="margin:0 0 4px; font-size:14px;">${label}
+        ${isDefault ? '<span style="font-size:10px; color:var(--muted); font-weight:400; margin-left:6px;">applies when no override set</span>' : ''}
+      </h3>
+      <hr style="border-color:var(--border); margin:10px 0 14px;">
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; display:flex; justify-content:space-between; margin-bottom:4px;">
+          <span>Trade Size</span>
+          <span id="lbl-${sigType}-trade_size_usd" style="color:var(--accent);">$${s.trade_size_usd}</span>
+        </label>
+        <input type="range" id="sl-${sigType}-trade_size_usd" min="5" max="500" step="5" value="${s.trade_size_usd}"
+               oninput="document.getElementById('lbl-${sigType}-trade_size_usd').textContent='$'+this.value"
+               style="width:100%;">
+        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-top:1px;"><span>$5</span><span>$500</span></div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; display:flex; justify-content:space-between; margin-bottom:4px;">
+          <span>Hard Stop Loss</span>
+          <span id="lbl-${sigType}-hard_stop_pct" style="color:var(--red);">-${s.hard_stop_pct}%</span>
+        </label>
+        <input type="range" id="sl-${sigType}-hard_stop_pct" min="5" max="90" step="1" value="${s.hard_stop_pct}"
+               oninput="document.getElementById('lbl-${sigType}-hard_stop_pct').textContent='-'+this.value+'%'"
+               style="width:100%;">
+        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-top:1px;"><span>5%</span><span>90%</span></div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; display:flex; justify-content:space-between; margin-bottom:4px;">
+          <span>Trailing Stop</span>
+          <span id="lbl-${sigType}-trailing_stop_pct" style="color:var(--yellow);">-${s.trailing_stop_pct}%</span>
+        </label>
+        <input type="range" id="sl-${sigType}-trailing_stop_pct" min="5" max="90" step="1" value="${s.trailing_stop_pct}"
+               oninput="document.getElementById('lbl-${sigType}-trailing_stop_pct').textContent='-'+this.value+'%'"
+               style="width:100%;">
+        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-top:1px;"><span>5%</span><span>90%</span></div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; display:flex; justify-content:space-between; margin-bottom:4px;">
+          <span>Trail Activates At</span>
+          <span id="lbl-${sigType}-trail_activates_pct" style="color:var(--accent);">+${s.trail_activates_pct}%</span>
+        </label>
+        <input type="range" id="sl-${sigType}-trail_activates_pct" min="10" max="500" step="10" value="${s.trail_activates_pct}"
+               oninput="document.getElementById('lbl-${sigType}-trail_activates_pct').textContent='+'+this.value+'%'"
+               style="width:100%;">
+        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-top:1px;"><span>+10%</span><span>+500%</span></div>
+      </div>
+
+      <div>
+        <label style="font-size:12px; font-weight:600; display:flex; justify-content:space-between; margin-bottom:4px;">
+          <span>Time Stop</span>
+          <span id="lbl-${sigType}-time_stop_minutes" style="color:var(--muted);">${s.time_stop_minutes} min</span>
+        </label>
+        <input type="range" id="sl-${sigType}-time_stop_minutes" min="5" max="360" step="5" value="${s.time_stop_minutes}"
+               oninput="document.getElementById('lbl-${sigType}-time_stop_minutes').textContent=this.value+' min'"
+               style="width:100%;">
+        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-top:1px;"><span>5 min</span><span>360 min</span></div>
+      </div>
+    </div>`;
+}
+
+async function loadSettings() {
+  try {
+    const r = await fetch('/memecoin/api/settings');
+    const d = await r.json();
+    const container = document.getElementById('settings-cards');
+    container.innerHTML = '';
+    // render __default__ first, then others
+    const order = ['__default__', 'copy_trade', 'volume_breakout', 'new_launch', 'manual'];
+    for (const t of order) {
+      if (d[t]) container.innerHTML += _buildCard(t, d[t]);
+    }
+  } catch(e) { console.error('loadSettings failed', e); }
+}
+
+async function saveSettings() {
+  const btn   = document.getElementById('save-settings-btn');
+  const alert = document.getElementById('settings-alert');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const types = ['__default__', 'copy_trade', 'volume_breakout', 'new_launch', 'manual'];
+    const payload = {};
+    for (const t of types) {
+      const card = document.getElementById('card-' + t);
+      if (!card) continue;
+      payload[t] = {
+        trade_size_usd:      parseFloat(document.getElementById(`sl-${t}-trade_size_usd`).value),
+        hard_stop_pct:       parseFloat(document.getElementById(`sl-${t}-hard_stop_pct`).value),
+        trailing_stop_pct:   parseFloat(document.getElementById(`sl-${t}-trailing_stop_pct`).value),
+        trail_activates_pct: parseFloat(document.getElementById(`sl-${t}-trail_activates_pct`).value),
+        time_stop_minutes:   parseInt(document.getElementById(`sl-${t}-time_stop_minutes`).value),
+      };
+    }
+    const r = await fetch('/memecoin/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    alert.style.display = 'block';
+    if (d.ok) {
+      alert.className = 'flash flash-success';
+      alert.textContent = '✓ Settings saved — active for all new trades.';
+    } else {
+      alert.className = 'flash flash-error';
+      alert.textContent = '✗ ' + (d.errors || [d.error]).join(', ');
+    }
+  } catch(e) {
+    alert.style.display = 'block';
+    alert.className = 'flash flash-error';
+    alert.textContent = '✗ ' + e;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save All Settings';
+    setTimeout(() => { alert.style.display = 'none'; }, 4000);
+  }
+}
+</script>
+
+{% endblock %}

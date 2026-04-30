@@ -9,7 +9,7 @@ Then open http://localhost:5000
 import math
 from pathlib import Path
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 
 from app.data_client import fetch_markets_by_days
 from app.edge import estimate_edge
@@ -20,6 +20,26 @@ from app.model import estimate_probability
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 app.secret_key = "quant-bot-dev"
+
+import time as _time
+
+@app.template_filter("strftime")
+def _strftime(ts, fmt="%H:%M:%S"):
+    try:
+        return _time.strftime(fmt, _time.gmtime(float(ts)))
+    except Exception:
+        return "—"
+
+# ---------------------------------------------------------------------------
+# Memecoin scanner — start background threads on first import
+# ---------------------------------------------------------------------------
+try:
+    import memecoin.scanner as _mc_scanner
+    _mc_scanner.start(daemon=True)
+except Exception as _e:
+    import logging
+    logging.getLogger(__name__).warning("Memecoin scanner failed to start: %s", _e)
+    _mc_scanner = None
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +384,251 @@ def retrain():
     except Exception as exc:
         flash(f"Retrain failed: {exc}", "error")
     return redirect(url_for("analytics"))
+
+
+# ---------------------------------------------------------------------------
+# Memecoin
+# ---------------------------------------------------------------------------
+
+@app.route("/memecoin")
+def memecoin():
+    summary   = _mc_scanner.get_summary()   if _mc_scanner else {}
+    signals   = _mc_scanner.get_signals(50) if _mc_scanner else []
+    positions = _mc_scanner.get_open_positions() if _mc_scanner else []
+    journal   = _mc_scanner.get_journal(100)     if _mc_scanner else []
+    return render_template(
+        "memecoin.html", active="memecoin",
+        summary=summary, signals=signals,
+        positions=positions, journal=journal,
+    )
+
+
+@app.route("/memecoin/api/signals")
+def memecoin_api_signals():
+    return jsonify(_mc_scanner.get_signals(50) if _mc_scanner else [])
+
+
+@app.route("/memecoin/api/positions")
+def memecoin_api_positions():
+    return jsonify(_mc_scanner.get_open_positions() if _mc_scanner else [])
+
+
+@app.route("/memecoin/api/summary")
+def memecoin_api_summary():
+    return jsonify(_mc_scanner.get_summary() if _mc_scanner else {})
+
+
+@app.route("/memecoin/api/position/<pos_id>/settings", methods=["POST"])
+def memecoin_update_position_settings(pos_id):
+    if not _mc_scanner:
+        return jsonify({"ok": False, "error": "scanner not running"}), 500
+    pos = _mc_scanner.portfolio.get_position(pos_id)
+    if not pos:
+        return jsonify({"ok": False, "error": "position not found"}), 404
+
+    data = request.get_json(force=True) or {}
+    errors = []
+
+    if "hard_stop_pct" in data:
+        v = float(data["hard_stop_pct"])
+        if not 5 <= v <= 90:
+            errors.append("hard_stop_pct must be 5–90%")
+        else:
+            pos.hard_stop_pct = -(v / 100)
+
+    if "trailing_stop_pct" in data:
+        v = float(data["trailing_stop_pct"])
+        if not 5 <= v <= 90:
+            errors.append("trailing_stop_pct must be 5–90%")
+        else:
+            pos.trailing_stop_pct = -(v / 100)
+
+    if "trail_activates_pct" in data:
+        v = float(data["trail_activates_pct"])
+        if not 10 <= v <= 1000:
+            errors.append("trail_activates_pct must be 10–1000%")
+        else:
+            pos.trail_activates_pct = v / 100
+
+    if "time_stop_minutes" in data:
+        v = int(data["time_stop_minutes"])
+        if not 5 <= v <= 360:
+            errors.append("time_stop_minutes must be 5–360")
+        else:
+            pos.time_stop_minutes = v
+
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    # persist immediately
+    from memecoin.portfolio import _save_positions
+    _save_positions(_mc_scanner.portfolio._positions)
+
+    return jsonify({
+        "ok": True,
+        "hard_stop_pct":     abs(pos.hard_stop_pct) * 100,
+        "trailing_stop_pct": abs(pos.trailing_stop_pct) * 100,
+        "trail_activates_pct": pos.trail_activates_pct * 100,
+        "time_stop_minutes": pos.time_stop_minutes,
+    })
+
+
+@app.route("/memecoin/api/position/<pos_id>/close", methods=["POST"])
+def memecoin_close_position(pos_id):
+    result = _mc_scanner.manual_close(pos_id) if _mc_scanner else None
+    if result:
+        return jsonify({"ok": True, "position": result})
+    return jsonify({"ok": False, "error": "position not found"}), 404
+
+
+@app.route("/memecoin/api/scan", methods=["POST"])
+def memecoin_trigger_scan():
+    return jsonify({"ok": True, "message": "Scanner is running continuously."})
+
+
+@app.route("/memecoin/api/settings", methods=["GET"])
+def memecoin_get_settings():
+    import memecoin.config as _cfg
+    result = {}
+    for sig_type, s in _cfg.SIGNAL_SETTINGS.items():
+        result[sig_type] = {
+            "trade_size_usd":      s["trade_size_usd"],
+            "hard_stop_pct":       abs(s["hard_stop_pct"]) * 100,
+            "trailing_stop_pct":   abs(s["trailing_stop_pct"]) * 100,
+            "trail_activates_pct": s["trail_activates_pct"] * 100,
+            "time_stop_minutes":   s["time_stop_minutes"],
+        }
+    return jsonify(result)
+
+
+@app.route("/memecoin/api/settings", methods=["POST"])
+def memecoin_update_settings():
+    import memecoin.config as _cfg
+    data = request.get_json(force=True) or {}
+    errors = []
+    VALID_TYPES = set(_cfg.SIGNAL_SETTINGS.keys())
+
+    for sig_type, values in data.items():
+        if sig_type not in VALID_TYPES:
+            errors.append(f"Unknown signal type: {sig_type}")
+            continue
+        if not isinstance(values, dict):
+            errors.append(f"Values for {sig_type} must be an object")
+            continue
+
+        target = _cfg.SIGNAL_SETTINGS[sig_type]
+
+        if "trade_size_usd" in values:
+            v = float(values["trade_size_usd"])
+            if not 5 <= v <= 500:
+                errors.append(f"{sig_type}.trade_size_usd must be $5–$500")
+            else:
+                target["trade_size_usd"] = v
+
+        if "hard_stop_pct" in values:
+            v = float(values["hard_stop_pct"])
+            if not 5 <= v <= 90:
+                errors.append(f"{sig_type}.hard_stop_pct must be 5–90%")
+            else:
+                target["hard_stop_pct"] = -(v / 100)
+
+        if "trailing_stop_pct" in values:
+            v = float(values["trailing_stop_pct"])
+            if not 5 <= v <= 90:
+                errors.append(f"{sig_type}.trailing_stop_pct must be 5–90%")
+            else:
+                target["trailing_stop_pct"] = -(v / 100)
+
+        if "trail_activates_pct" in values:
+            v = float(values["trail_activates_pct"])
+            if not 10 <= v <= 1000:
+                errors.append(f"{sig_type}.trail_activates_pct must be 10–1000%")
+            else:
+                target["trail_activates_pct"] = v / 100
+
+        if "time_stop_minutes" in values:
+            v = int(values["time_stop_minutes"])
+            if not 5 <= v <= 360:
+                errors.append(f"{sig_type}.time_stop_minutes must be 5–360")
+            else:
+                target["time_stop_minutes"] = v
+
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    # Return updated state
+    result = {}
+    for sig_type, s in _cfg.SIGNAL_SETTINGS.items():
+        result[sig_type] = {
+            "trade_size_usd":      s["trade_size_usd"],
+            "hard_stop_pct":       abs(s["hard_stop_pct"]) * 100,
+            "trailing_stop_pct":   abs(s["trailing_stop_pct"]) * 100,
+            "trail_activates_pct": s["trail_activates_pct"] * 100,
+            "time_stop_minutes":   s["time_stop_minutes"],
+        }
+    return jsonify({"ok": True, **result})
+
+
+@app.route("/memecoin/api/trade/manual", methods=["POST"])
+def memecoin_manual_trade():
+    """Open a manual paper trade on any token address."""
+    if not _mc_scanner:
+        return jsonify({"ok": False, "error": "scanner not running"}), 500
+
+    data    = request.get_json(force=True) or {}
+    chain   = (data.get("chain") or "solana").lower()
+    address = (data.get("token_address") or "").strip()
+    if not address:
+        return jsonify({"ok": False, "error": "token_address required"}), 400
+
+    from memecoin.screener import screen_token
+    from memecoin.signals import Signal
+    from memecoin.data_client import dex_get_token
+    import time, uuid
+
+    screen = screen_token(chain, address)
+    pair   = screen.get("pair") or dex_get_token(chain, address) or {}
+    base   = (pair.get("baseToken") or {})
+    price  = screen["price_usd"] or float(pair.get("priceUsd") or 0)
+
+    sig = Signal(
+        id=str(uuid.uuid4())[:8],
+        timestamp=time.time(),
+        chain=chain,
+        token_address=address,
+        token_name=base.get("name", ""),
+        token_symbol=base.get("symbol", address[:6]),
+        signal_type="manual",
+        strength="medium",
+        price_usd=price,
+        liquidity_usd=screen["liquidity_usd"],
+        mcap_usd=screen["mcap_usd"],
+        volume_h1=screen["volume_h1"],
+        volume_h24=screen["volume_h24"],
+        age_minutes=screen["age_minutes"],
+        safety_score=0.5,
+        momentum_score=0.5,
+        composite_score=0.5,
+        notes="manual paper trade",
+    )
+    sig.paper_entry_price = price
+    sig.paper_entry_time  = sig.timestamp
+
+    try:
+        pos = _mc_scanner.portfolio.open_position(sig)
+        from dataclasses import asdict
+        return jsonify({"ok": True, "position": asdict(pos)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# IBKR Day Trading (placeholder)
+# ---------------------------------------------------------------------------
+
+@app.route("/ibkr")
+def ibkr():
+    return render_template("ibkr.html", active="ibkr")
 
 
 # ---------------------------------------------------------------------------
