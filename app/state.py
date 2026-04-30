@@ -19,8 +19,10 @@ class Settings:
     polygon_api_key: str = os.getenv("POLYGON_API_KEY", "")
 
     # External signal sources
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    twitter_bearer_token: str = os.getenv("TWITTER_BEARER_TOKEN", "")
+    openai_api_key: str        = os.getenv("OPENAI_API_KEY", "")
+    twitter_bearer_token: str  = os.getenv("TWITTER_BEARER_TOKEN", "")
+    odds_api_key: str          = os.getenv("ODDS_API_KEY", "")
+    kalshi_api_key: str        = os.getenv("KALSHI_API_KEY", "")
     use_external_signals: bool = os.getenv("USE_EXTERNAL_SIGNALS", "true").lower() == "true"
     data_source: str = data_source
 

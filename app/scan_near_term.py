@@ -145,10 +145,19 @@ def main(
         external = get_external_consensus(
             market.question,
             twitter_bearer_token=settings.twitter_bearer_token,
+            odds_api_key=settings.odds_api_key,
+            kalshi_api_key=settings.kalshi_api_key,
         )
         if external.get("consensus_p") is not None:
+            # Weight external consensus higher when sharp markets (sportsbook/kalshi) contribute
+            has_sharp = external.get("sportsbook_p") is not None or external.get("kalshi_p") is not None
             ext_sources = external.get("sources", 1)
-            weight = 0.20 if ext_sources == 1 else 0.35
+            if has_sharp:
+                weight = 0.45  # sharp market — trust it heavily
+            elif ext_sources >= 2:
+                weight = 0.35  # multiple soft sources
+            else:
+                weight = 0.20  # single soft source
             posterior = round(weight * external["consensus_p"] + (1 - weight) * posterior, 4)
             posterior = max(0.02, min(0.98, posterior))
 
@@ -272,6 +281,8 @@ def main(
             resolution_quality_score=edge.resolution_quality_score,
             gpt_verdict=gpt["verdict"],
             gpt_reasoning=gpt["reasoning"],
+            sportsbook_p=str(round(c["external"]["sportsbook_p"], 4)) if c["external"].get("sportsbook_p") is not None else "",
+            kalshi_p=str(round(c["external"]["kalshi_p"], 4)) if c["external"].get("kalshi_p") is not None else "",
             notes=f"{label} | scan: {min_days:.0f}-{max_days:.0f}d window{risk_tag}",
         )
         if written:
@@ -302,12 +313,18 @@ def main(
             print(f"Momentum (7d): {market.momentum_7d:+.4f}  [{direction}]")
         ext = c["external"]
         if ext.get("consensus_p") is not None:
-            print(
-                f"External:  consensus={ext['consensus_p']:.4f}  "
-                f"(Manifold={ext['manifold_p']}  "
-                f"Metaculus={ext['metaculus_p']}  "
-                f"X={ext.get('x_sentiment')})"
-            )
+            parts = [f"consensus={ext['consensus_p']:.4f}"]
+            if ext.get("sportsbook_p") is not None:
+                parts.append(f"Sportsbook={ext['sportsbook_p']:.4f}")
+            if ext.get("kalshi_p") is not None:
+                parts.append(f"Kalshi={ext['kalshi_p']:.4f}")
+            if ext.get("manifold_p") is not None:
+                parts.append(f"Manifold={ext['manifold_p']:.4f}")
+            if ext.get("metaculus_p") is not None:
+                parts.append(f"Metaculus={ext['metaculus_p']:.4f}")
+            if ext.get("x_sentiment") is not None:
+                parts.append(f"X={ext['x_sentiment']:.4f}")
+            print(f"External:  {  '  '.join(parts)}")
         if gpt["verdict"] not in ("skipped", "error"):
             verdict_icon = "✓" if gpt["verdict"] == "confirm" else ("✗" if gpt["verdict"] == "reject" else "~")
             print(f"GPT:       [{verdict_icon} {gpt['verdict'].upper()}] {gpt['reasoning']}")
