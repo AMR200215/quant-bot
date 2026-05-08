@@ -17,6 +17,8 @@ WHALE_STATS_FILE  = DATA_DIR / "whale_stats.json"
 JOURNAL_FILE           = LOGS_DIR / "memecoin_journal.csv"
 CANDIDATES_FILE        = LOGS_DIR / "signal_candidates.csv"
 WINNERS_FILE           = LOGS_DIR / "winners_journal.csv"
+DEV_WALLETS_FILE       = DATA_DIR / "dev_wallets.json"
+DEV_LAST_SEEN_FILE     = DATA_DIR / "dev_last_seen.json"
 
 # ---------------------------------------------------------------------------
 # Trade sizing  (change this one number to adjust all trade sizes)
@@ -96,6 +98,13 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "trailing_stop_pct":   -0.50,
         "trail_activates_pct": 1.50,
         "time_stop_minutes":   20,
+    },
+    "dev_launch": {
+        "trade_size_usd":      40,
+        "hard_stop_pct":       -0.35,
+        "trailing_stop_pct":   -0.35,
+        "trail_activates_pct": 0.75,
+        "time_stop_minutes":   45,
     },
     "manual": {
         "trade_size_usd":      TRADE_SIZE_USD,

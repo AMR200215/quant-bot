@@ -305,6 +305,135 @@ def rugcheck_sol(token_address: str) -> Optional[dict]:
     }
 
 
+def sol_get_token_creator(token_address: str) -> Optional[str]:
+    """
+    Find the wallet that deployed a Solana token by tracing to its oldest transaction.
+    For pump.fun tokens this is the dev who called the create instruction.
+    """
+    before = None
+    last_page: list[dict] = []
+    for _ in range(10):  # max 1000 txs lookback
+        page = sol_get_recent_signatures(token_address, limit=100, before=before)
+        if not page:
+            break
+        last_page = page
+        if len(page) < 100:
+            break
+        before = page[-1]["signature"]
+
+    if not last_page:
+        return None
+
+    tx = sol_get_transaction(last_page[-1]["signature"])
+    if not tx:
+        return None
+
+    try:
+        keys = tx["transaction"]["message"]["accountKeys"]
+        for key in keys:
+            if isinstance(key, dict) and key.get("signer") and key.get("writable"):
+                return key["pubkey"]
+        # fallback: first key is always the fee payer
+        if keys:
+            k = keys[0]
+            return k["pubkey"] if isinstance(k, dict) else k
+    except Exception as e:
+        log.debug("sol_get_token_creator parse failed: %s", e)
+    return None
+
+
+PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+
+
+def sol_detect_new_tokens(dev_wallet: str,
+                           after_sig: str = "") -> tuple[list[str], str]:
+    """
+    Detect new pump.fun token launches by a Solana dev wallet.
+    Returns (list_of_new_mint_addresses, latest_sig_seen).
+    """
+    sigs = sol_get_recent_signatures(dev_wallet, limit=20)
+    if not sigs:
+        return [], after_sig
+
+    latest_sig = sigs[0]["signature"]
+    new_mints: list[str] = []
+
+    for sig_info in sigs:
+        sig = sig_info["signature"]
+        if sig == after_sig:
+            break
+        tx = sol_get_transaction(sig)
+        if not tx:
+            continue
+        try:
+            keys = tx["transaction"]["message"].get("accountKeys", [])
+            prog_ids = {k["pubkey"] if isinstance(k, dict) else k for k in keys}
+            if PUMPFUN_PROGRAM not in prog_ids:
+                continue
+            meta = tx.get("meta", {})
+            pre_mints = {b["mint"] for b in meta.get("preTokenBalances", [])}
+            for tb in meta.get("postTokenBalances", []):
+                mint = tb.get("mint")
+                if mint and mint not in pre_mints and mint not in new_mints:
+                    new_mints.append(mint)
+        except Exception:
+            continue
+
+    return new_mints, latest_sig
+
+
+def bscscan_get_contract_creator(token_address: str,
+                                  api_key: str = "") -> Optional[str]:
+    """Get the deployer wallet of a BSC token contract."""
+    params = {
+        "module": "contract",
+        "action": "getcontractcreation",
+        "contractaddresses": token_address,
+    }
+    if api_key:
+        params["apikey"] = api_key
+    data = _get(CHAINS["bsc"]["bscscan_api"], params=params)
+    if not data or data.get("status") != "1":
+        return None
+    results = data.get("result", [])
+    return results[0].get("contractCreator") if results else None
+
+
+def bscscan_detect_new_contracts(dev_wallet: str, api_key: str = "",
+                                  start_block: int = 0) -> tuple[list[dict], int]:
+    """
+    Detect new token contract deployments by a BSC dev wallet.
+    Returns (list of {contract_address, block}, latest_block_seen).
+    """
+    params = {
+        "module": "account",
+        "action": "txlist",
+        "address": dev_wallet,
+        "startblock": start_block + 1,
+        "endblock": 99999999,
+        "sort": "desc",
+        "page": 1,
+        "offset": 20,
+    }
+    if api_key:
+        params["apikey"] = api_key
+    data = _get(CHAINS["bsc"]["bscscan_api"], params=params)
+    if not data or data.get("status") != "1":
+        return [], start_block
+
+    contracts: list[dict] = []
+    latest_block = start_block
+    for tx in data.get("result", []):
+        block = int(tx.get("blockNumber", 0))
+        latest_block = max(latest_block, block)
+        if tx.get("to") == "" and tx.get("contractAddress"):
+            contracts.append({
+                "contract_address": tx["contractAddress"].lower(),
+                "block": block,
+            })
+    return contracts, latest_block
+
+
 def honeypot_bsc(token_address: str) -> Optional[dict]:
     """Check if a BSC token is a honeypot."""
     url = CHAINS["bsc"]["honeypot_url"].format(address=token_address)

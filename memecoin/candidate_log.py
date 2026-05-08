@@ -5,8 +5,12 @@ Two-tier signal logging:
 """
 
 import csv
+import logging
+import threading
 import time
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from memecoin.config import CANDIDATES_FILE, WINNERS_FILE
 
@@ -102,6 +106,14 @@ def log_signal_candidate(sig):
     _append_csv(CANDIDATES_FILE, _SIGNAL_FIELDS, _sig_to_row(sig))
 
 
+def _register_dev_bg(chain, token_address, token_symbol, pnl_pct, pnl_usd, signal_id):
+    try:
+        from memecoin.dev_tracker import register_winner_dev
+        register_winner_dev(chain, token_address, token_symbol, pnl_pct, pnl_usd, signal_id)
+    except Exception as e:
+        log.debug("register_winner_dev failed: %s", e)
+
+
 def promote_to_winners(pos):
     """Promote a closed, profitable position to the permanent winners journal."""
     if pos.pnl_usd <= 0:
@@ -159,3 +171,10 @@ def promote_to_winners(pos):
         "peak_price":          pos.peak_price,
     }
     _append_csv(WINNERS_FILE, _WINNERS_FIELDS, row)
+    # find and register the dev in the background — involves RPC calls
+    threading.Thread(
+        target=_register_dev_bg,
+        args=(pos.chain, pos.token_address, pos.token_symbol,
+              pos.pnl_pct * 100, pos.pnl_usd, pos.signal_id),
+        daemon=True,
+    ).start()
