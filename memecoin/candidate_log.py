@@ -1,7 +1,7 @@
 """
 Two-tier signal logging:
-  signal_candidates.csv  — every trade that passes the filter, logged at entry
-  winners_journal.csv    — only profitable closes, promoted from candidates
+  signal_candidates.csv  — every signal that passes the filter (all types, all strengths)
+  winners_journal.csv    — only profitable closed positions, promoted at exit
 """
 
 import csv
@@ -10,23 +10,24 @@ from pathlib import Path
 
 from memecoin.config import CANDIDATES_FILE, WINNERS_FILE
 
-# Fields captured at entry time (snapshot of market conditions)
-_ENTRY_FIELDS = [
-    "id", "signal_id", "chain", "token_address", "token_symbol",
+# Captured at signal time — full market snapshot
+_SIGNAL_FIELDS = [
+    "signal_id", "signal_time", "chain", "token_address", "token_symbol",
     "signal_type", "strength",
-    "entry_price", "entry_time", "size_usd",
     # scores
     "safety_score", "momentum_score", "composite_score",
-    # whale context
+    # whale context (copy_trade only; blank for others)
     "whale_count", "whale_tiers",
-    # price action at entry
+    # price at signal time
+    "price_usd",
+    # price action
     "price_change_5m", "price_change_1h", "price_change_6h",
-    # buy pressure at entry
+    # buy pressure
     "buys_5m", "sells_5m", "buys_h1", "sells_h1",
     "buy_sell_ratio_5m", "buy_sell_ratio_h1",
-    # volume at entry
+    # volume
     "volume_5m", "volume_h1", "volume_h6",
-    # market at entry
+    # market
     "liquidity_usd", "mcap_usd", "fdv", "age_minutes",
     # token info
     "dex_id", "dexscreener_url",
@@ -35,30 +36,91 @@ _ENTRY_FIELDS = [
     "notes",
 ]
 
-# Winners journal adds exit outcome columns
-_WINNERS_FIELDS = _ENTRY_FIELDS + [
+# Winners journal: signal snapshot + exit outcome
+_WINNERS_FIELDS = _SIGNAL_FIELDS + [
+    "position_id", "entry_price", "entry_time", "size_usd",
     "exit_price", "exit_time", "exit_reason",
     "pnl_usd", "pnl_pct", "peak_price",
 ]
 
 
-def _pos_to_entry_row(pos) -> dict:
+def _sig_to_row(sig) -> dict:
     return {
-        "id":                  pos.id,
+        "signal_id":           sig.id,
+        "signal_time":         time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(sig.timestamp)),
+        "chain":               sig.chain,
+        "token_address":       sig.token_address,
+        "token_symbol":        sig.token_symbol,
+        "signal_type":         sig.signal_type,
+        "strength":            sig.strength,
+        "safety_score":        sig.safety_score,
+        "momentum_score":      sig.momentum_score,
+        "composite_score":     sig.composite_score,
+        "whale_count":         getattr(sig, "whale_count", 0),
+        "whale_tiers":         ",".join(str(t) for t in getattr(sig, "whale_tiers", [])),
+        "price_usd":           sig.price_usd,
+        "price_change_5m":     getattr(sig, "price_change_5m", 0.0),
+        "price_change_1h":     getattr(sig, "price_change_1h", 0.0),
+        "price_change_6h":     getattr(sig, "price_change_6h", 0.0),
+        "buys_5m":             getattr(sig, "buys_5m", 0),
+        "sells_5m":            getattr(sig, "sells_5m", 0),
+        "buys_h1":             getattr(sig, "buys_h1", 0),
+        "sells_h1":            getattr(sig, "sells_h1", 0),
+        "buy_sell_ratio_5m":   getattr(sig, "buy_sell_ratio_5m", 0.0),
+        "buy_sell_ratio_h1":   getattr(sig, "buy_sell_ratio_h1", 0.0),
+        "volume_5m":           getattr(sig, "volume_5m", 0.0),
+        "volume_h1":           sig.volume_h1,
+        "volume_h6":           getattr(sig, "volume_h6", 0.0),
+        "liquidity_usd":       sig.liquidity_usd,
+        "mcap_usd":            sig.mcap_usd,
+        "fdv":                 getattr(sig, "fdv", 0.0),
+        "age_minutes":         round(sig.age_minutes, 1),
+        "dex_id":              getattr(sig, "dex_id", ""),
+        "dexscreener_url":     getattr(sig, "dexscreener_url", ""),
+        "has_twitter":         getattr(sig, "has_twitter", False),
+        "has_telegram":        getattr(sig, "has_telegram", False),
+        "has_website":         getattr(sig, "has_website", False),
+        "rugcheck_score":      getattr(sig, "rugcheck_score", ""),
+        "buy_tax":             getattr(sig, "buy_tax", ""),
+        "sell_tax":            getattr(sig, "sell_tax", ""),
+        "notes":               sig.notes,
+    }
+
+
+def _append_csv(path: Path, fields: list[str], row: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists()
+    with open(path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def log_signal_candidate(sig):
+    """Log every signal that passes the filter — all types, all strengths."""
+    _append_csv(CANDIDATES_FILE, _SIGNAL_FIELDS, _sig_to_row(sig))
+
+
+def promote_to_winners(pos):
+    """Promote a closed, profitable position to the permanent winners journal."""
+    if pos.pnl_usd <= 0:
+        return
+    # Reconstruct signal-level row from position fields
+    row = {
         "signal_id":           pos.signal_id,
+        "signal_time":         time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
         "chain":               pos.chain,
         "token_address":       pos.token_address,
         "token_symbol":        pos.token_symbol,
         "signal_type":         pos.signal_type,
         "strength":            pos.strength,
-        "entry_price":         pos.entry_price,
-        "entry_time":          time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
-        "size_usd":            pos.size_usd,
         "safety_score":        pos.safety_score,
         "momentum_score":      pos.momentum_score,
         "composite_score":     pos.composite_score,
         "whale_count":         pos.whale_count,
         "whale_tiers":         ",".join(str(t) for t in pos.whale_tiers),
+        "price_usd":           pos.entry_price,
         "price_change_5m":     pos.price_change_5m,
         "price_change_1h":     pos.price_change_1h,
         "price_change_6h":     pos.price_change_6h,
@@ -84,33 +146,16 @@ def _pos_to_entry_row(pos) -> dict:
         "buy_tax":             pos.buy_tax,
         "sell_tax":            pos.sell_tax,
         "notes":               pos.notes,
+        # exit outcome
+        "position_id":         pos.id,
+        "entry_price":         pos.entry_price,
+        "entry_time":          time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
+        "size_usd":            pos.size_usd,
+        "exit_price":          pos.exit_price,
+        "exit_time":           time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.exit_time)) if pos.exit_time else "",
+        "exit_reason":         pos.exit_reason,
+        "pnl_usd":             round(pos.pnl_usd, 4),
+        "pnl_pct":             round(pos.pnl_pct * 100, 2),
+        "peak_price":          pos.peak_price,
     }
-
-
-def _append_csv(path: Path, fields: list[str], row: dict):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not path.exists()
-    with open(path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
-
-
-def log_candidate(pos):
-    """Log every position that passes the filter at the moment it opens."""
-    _append_csv(CANDIDATES_FILE, _ENTRY_FIELDS, _pos_to_entry_row(pos))
-
-
-def promote_to_winners(pos):
-    """Promote a closed, profitable position to the permanent winners journal."""
-    if pos.pnl_usd <= 0:
-        return
-    row = _pos_to_entry_row(pos)
-    row["exit_price"]  = pos.exit_price
-    row["exit_time"]   = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.exit_time)) if pos.exit_time else ""
-    row["exit_reason"] = pos.exit_reason
-    row["pnl_usd"]     = round(pos.pnl_usd, 4)
-    row["pnl_pct"]     = round(pos.pnl_pct * 100, 2)
-    row["peak_price"]  = pos.peak_price
     _append_csv(WINNERS_FILE, _WINNERS_FIELDS, row)

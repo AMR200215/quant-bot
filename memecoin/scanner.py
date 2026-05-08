@@ -37,6 +37,7 @@ from memecoin.wallet_tracker import (
     poll_sol_wallets_batch, poll_bnb_wallets_batch, WalletEvent,
 )
 from memecoin.portfolio import Portfolio
+from memecoin.candidate_log import log_signal_candidate
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +86,12 @@ def _add_signal(sig: Optional[Signal]):
         return
     with _lock:
         _signals.appendleft(sig)
-    # auto-open paper position for medium/strong signals
+    # log every signal that passes the filter, regardless of strength
+    try:
+        log_signal_candidate(sig)
+    except Exception as e:
+        log.debug("log_signal_candidate failed: %s", e)
+    # auto-open paper position for medium/strong signals only
     if sig.strength in ("medium", "strong"):
         try:
             portfolio.open_position(sig)
