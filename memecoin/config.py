@@ -14,7 +14,9 @@ BNB_WALLETS_FILE  = DATA_DIR / "whale_wallets_bnb.json"
 SIGNALS_FILE      = DATA_DIR / "memecoin_signals.json"
 POSITIONS_FILE    = DATA_DIR / "memecoin_positions.json"
 WHALE_STATS_FILE  = DATA_DIR / "whale_stats.json"
-JOURNAL_FILE      = LOGS_DIR / "memecoin_journal.csv"
+JOURNAL_FILE           = LOGS_DIR / "memecoin_journal.csv"
+CANDIDATES_FILE        = LOGS_DIR / "signal_candidates.csv"
+WINNERS_FILE           = LOGS_DIR / "winners_journal.csv"
 
 # ---------------------------------------------------------------------------
 # Trade sizing  (change this one number to adjust all trade sizes)

@@ -22,6 +22,7 @@ from memecoin.config import (
     get_signal_settings,
 )
 from memecoin.data_client import dex_get_token
+from memecoin.candidate_log import log_candidate, promote_to_winners
 
 log = logging.getLogger(__name__)
 
@@ -271,6 +272,7 @@ class Portfolio:
         )
         self._positions[pos.id] = pos
         _save_positions(self._positions)
+        log_candidate(pos)
         log.info("Opened paper position %s  %s/%s @ $%.8f",
                  pos.id, pos.chain, pos.token_symbol, pos.entry_price)
         return pos
@@ -287,6 +289,7 @@ class Portfolio:
         pos.exit_reason = reason
         pos.status = "closed"
         _append_journal(pos)
+        promote_to_winners(pos)
         del self._positions[pos_id]
         _save_positions(self._positions)
         log.info("Closed position %s  reason=%s  pnl=%.1f%%",
