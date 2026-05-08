@@ -86,11 +86,12 @@ def _add_signal(sig: Optional[Signal]):
         return
     with _lock:
         _signals.appendleft(sig)
-    # log every signal that passes the filter, regardless of strength
-    try:
-        log_signal_candidate(sig)
-    except Exception as e:
-        log.debug("log_signal_candidate failed: %s", e)
+    # log copy trade signals to temp candidates for strategy research
+    if sig.signal_type == "copy_trade":
+        try:
+            log_signal_candidate(sig)
+        except Exception as e:
+            log.debug("log_signal_candidate failed: %s", e)
     # auto-open paper position for medium/strong signals only
     if sig.strength in ("medium", "strong"):
         try:
