@@ -1,12 +1,17 @@
 """Fetch external consensus probabilities from Manifold, Metaculus, X,
-Kalshi, and The Odds API (sportsbook lines).
+Kalshi, The Odds API (sportsbook lines), and GPT web search.
 
 Signal weights by sharpness:
   sportsbook  3.0  — professional bookmaker lines (Pinnacle etc.)
   kalshi      2.0  — regulated US real-money prediction market
+  gpt         2.0  — GPT-4o web search estimate (non-sports only, independent)
   manifold    1.0  — play-money but large forecasting community
   metaculus   1.0  — structured forecasting community
   x_sentiment 0.5  — noisy directional signal, dampened toward 0.5
+
+GPT is only called for non-sports markets (sportsbook_p is None). Sports
+markets are already priced by sportsbooks which incorporate all public
+information in real time — GPT adds no confirmed value there.
 
 Match quality is measured by string similarity against the market question.
 A match below MATCH_THRESHOLD is discarded — a wrong signal is worse than none.
@@ -41,6 +46,7 @@ REQUEST_TIMEOUT = 6
 _SIGNAL_WEIGHTS = {
     "sportsbook": 3.0,
     "kalshi":     2.0,
+    "gpt":        2.0,
     "manifold":   1.0,
     "metaculus":  1.0,
     "x":          0.5,
@@ -459,6 +465,8 @@ def get_external_consensus(
     odds_api_key: str = "",
     kalshi_api_key: str = "",
     kalshi_key_id: str = "",
+    openai_api_key: str = "",
+    yes_price: float = 0.5,
 ) -> dict:
     """Return a weighted external probability consensus for a question.
 
@@ -468,10 +476,15 @@ def get_external_consensus(
       sportsbook_p  — Implied probability from sportsbook odds (float or None)
       kalshi_p      — Kalshi market midpoint probability (float or None)
       x_sentiment   — X/Twitter sentiment probability (float or None)
+      gpt_p         — GPT web search probability estimate (float or None)
+      gpt_verdict   — GPT derived verdict: confirm_yes/confirm_no/neutral/news_alert
+      gpt_reasoning — GPT evidence summary
       consensus_p   — Weighted average of available signals (float or None)
       sources       — number of sources that returned a valid probability
     """
-    cache_key = _question_hash(question + odds_api_key[:8] + kalshi_api_key[:8] + kalshi_key_id[:8])
+    cache_key = _question_hash(
+        question + odds_api_key[:8] + kalshi_api_key[:8] + kalshi_key_id[:8] + openai_api_key[:8]
+    )
     if cache_key in _CACHE:
         return _CACHE[cache_key]
 
@@ -483,6 +496,24 @@ def get_external_consensus(
         fetch_x_sentiment(question, twitter_bearer_token)
         if twitter_bearer_token else None
     )
+
+    # GPT signal — behaviour depends on whether Odds API has coverage:
+    #   No sportsbook_p → full probability estimate (weight 2.0 in consensus)
+    #   Has sportsbook_p → news_check only (breaking news alert, no probability)
+    gpt_p         = None
+    gpt_verdict   = "skipped"
+    gpt_reasoning = ""
+
+    if openai_api_key and sportsbook_p is None:
+        # Non-sports only: GPT gives independent probability estimate.
+        # Sports markets are already priced by sportsbooks (weight 3.0) which
+        # incorporate all public information in real time — GPT news_check adds
+        # nothing on top and is confirmed by data to not improve accuracy.
+        from app.gpt_analyst import estimate_probability
+        gpt_result    = estimate_probability(question, yes_price)
+        gpt_p         = gpt_result.get("gpt_p")
+        gpt_verdict   = gpt_result.get("verdict", "neutral")
+        gpt_reasoning = gpt_result.get("reasoning", "")
 
     # Weighted consensus — each signal contributes weight × probability
     weighted_sum   = 0.0
@@ -502,6 +533,7 @@ def get_external_consensus(
 
     _add(sportsbook_p, "sportsbook")
     _add(kalshi_p,     "kalshi")
+    _add(gpt_p,        "gpt")        # only non-None for non-sports markets
     _add(manifold_p,   "manifold")
     _add(metaculus_p,  "metaculus")
     _add(x_sentiment,  "x")
@@ -509,13 +541,16 @@ def get_external_consensus(
     consensus_p = _clamp(weighted_sum / total_weight) if total_weight > 0 else None
 
     result = {
-        "manifold_p":   manifold_p,
-        "metaculus_p":  metaculus_p,
-        "sportsbook_p": sportsbook_p,
-        "kalshi_p":     kalshi_p,
-        "x_sentiment":  x_sentiment,
-        "consensus_p":  consensus_p,
-        "sources":      source_count,
+        "manifold_p":    manifold_p,
+        "metaculus_p":   metaculus_p,
+        "sportsbook_p":  sportsbook_p,
+        "kalshi_p":      kalshi_p,
+        "x_sentiment":   x_sentiment,
+        "gpt_p":         gpt_p,
+        "gpt_verdict":   gpt_verdict,
+        "gpt_reasoning": gpt_reasoning,
+        "consensus_p":   consensus_p,
+        "sources":       source_count,
     }
     _CACHE[cache_key] = result
     return result

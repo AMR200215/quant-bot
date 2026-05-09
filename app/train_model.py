@@ -47,8 +47,9 @@ def build_features(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, list[str]]
     ------
     y = 1 if actual_outcome == "yes", 0 otherwise.
     """
-    # Detect whether the dataset contains momentum data
+    # Detect optional features present in this dataset build
     has_momentum = any("momentum_7d" in row and row["momentum_7d"] not in ("", None) for row in rows)
+    has_days     = any("days_to_resolution" in row and row["days_to_resolution"] not in ("", None) for row in rows)
 
     X, y = [], []
     for row in rows:
@@ -70,6 +71,16 @@ def build_features(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, list[str]]
             except (TypeError, ValueError):
                 feats.append(0.0)
 
+        if has_days:
+            raw_days = row.get("days_to_resolution", "")
+            try:
+                d = float(raw_days) if raw_days not in ("", None) else 30.0
+                # Log-scale: 1d and 60d markets behave very differently,
+                # log compresses the tail and prevents large values from dominating
+                feats.append(math.log(max(d, 0.5) + 1))
+            except (TypeError, ValueError):
+                feats.append(math.log(31))  # fallback: 30-day market
+
         # category one-hot (omit "other" → baseline)
         for c in KNOWN_CATEGORIES:
             feats.append(1.0 if cat == c else 0.0)
@@ -80,6 +91,8 @@ def build_features(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, list[str]]
     cont_names = ["yes_price", "yes_price_sq", "log_volume", "dist_from_half"]
     if has_momentum:
         cont_names.append("momentum_7d")
+    if has_days:
+        cont_names.append("log_days_to_resolution")
     feature_names = cont_names + [f"cat_{c}" for c in KNOWN_CATEGORIES]
 
     return np.array(X), np.array(y), feature_names
@@ -103,8 +116,8 @@ def train(verbose: bool = True) -> dict:
     X, y, feature_names = build_features(rows)
 
     # Number of continuous features to scale; one-hot cols left untouched.
-    # 4 base + 1 optional momentum_7d
-    N_CONT = 5 if "momentum_7d" in feature_names else 4
+    # 4 base + optional momentum_7d + optional log_days_to_resolution
+    N_CONT = 4 + ("momentum_7d" in feature_names) + ("log_days_to_resolution" in feature_names)
     scaler = StandardScaler()
     X[:, :N_CONT] = scaler.fit_transform(X[:, :N_CONT])
 

@@ -66,7 +66,7 @@ def _is_trivial(question: str) -> bool:
     return any(pat in q for pat in SKIP_PATTERNS)
 
 
-def fetch_midlife_price(token_id: str, created_ts: int, end_ts: int) -> Optional[float]:
+def fetch_midlife_price(token_id: str, created_ts: int, end_ts: int) -> tuple[Optional[float], Optional[str]]:
     """Fetch the YES-token price from the middle of the market's lifetime.
 
     Uses a 12-hour window centred at the market's midpoint (50% through its
@@ -82,11 +82,14 @@ def fetch_midlife_price(token_id: str, created_ts: int, end_ts: int) -> Optional
     """
     lifetime = end_ts - created_ts
     if lifetime <= 0:
-        return None
+        return None, None
 
     mid_ts = created_ts + lifetime // 2
     window_start = mid_ts - 21600  # 6 h before midpoint
     window_end   = mid_ts + 21600  # 6 h after midpoint
+
+    # snapshot_date = ISO timestamp of the midlife point (what the model sees at inference)
+    snapshot_date = datetime.fromtimestamp(mid_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     try:
         response = requests.get(
@@ -100,22 +103,22 @@ def fetch_midlife_price(token_id: str, created_ts: int, end_ts: int) -> Optional
             timeout=20,
         )
     except requests.RequestException:
-        return None
+        return None, snapshot_date
 
     if response.status_code != 200:
-        return None
+        return None, snapshot_date
 
     history = response.json().get("history", [])
     if not history:
-        return None
+        return None, snapshot_date
 
     prices = [entry["p"] for entry in history if "p" in entry]
     if not prices:
-        return None
+        return None, snapshot_date
 
     # Median of the window to smooth noise
     prices.sort()
-    return prices[len(prices) // 2]
+    return prices[len(prices) // 2], snapshot_date
 
 
 def fetch_closed_markets(limit: int = DEFAULT_LIMIT) -> List[Dict[str, Any]]:
@@ -229,7 +232,7 @@ def enrich_with_prices(
     total = len(markets)
 
     for i, market in enumerate(markets):
-        price = fetch_midlife_price(
+        price, snapshot_date = fetch_midlife_price(
             market["yes_token_id"], market["created_ts"], market["end_ts"]
         )
 
@@ -238,6 +241,7 @@ def enrich_with_prices(
             price = None
 
         market["snapshot_yes_price"] = price
+        market["snapshot_date"]      = snapshot_date
 
         if (i + 1) % 50 == 0 or (i + 1) == total:
             found = sum(1 for m in enriched if m.get("snapshot_yes_price") is not None)

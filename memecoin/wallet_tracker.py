@@ -22,6 +22,7 @@ from memecoin.config import (
     SOL_WALLETS_FILE, BNB_WALLETS_FILE, WHALE_STATS_FILE,
     TIER1_TOP_N, TIER2_TOP_N,
     SOL_WALLET_POLL_SEC, BNB_WALLET_POLL_SEC,
+    TIER1_COPY_MULTIPLIER,
 )
 from memecoin.data_client import (
     sol_get_recent_signatures, sol_get_transaction, sol_parse_swap,
@@ -116,34 +117,45 @@ def build_wallet_ranks(wallets: dict) -> dict[str, int]:
     Returns: { wallet_address: rank }
     """
     stats_path = WHALE_STATS_FILE
-    cached: dict = {}
+    # whale_stats.json is a ranked list: [{wallet: addr, score: N, win_rate: N, ...}, ...]
+    # Convert to addr → stats dict for fast lookup
+    cached: dict[str, dict] = {}
     if stats_path.exists():
         try:
-            cached = json.loads(stats_path.read_text())
+            entries = json.loads(stats_path.read_text())
+            if isinstance(entries, list):
+                for entry in entries:
+                    addr = entry.get("wallet", "")
+                    if addr:
+                        cached[addr] = entry
+            elif isinstance(entries, dict):
+                cached = entries  # legacy format
         except Exception:
             pass
 
     ranks: dict[str, int] = {}
 
-    # Solana: try to use cached win-rate order
+    # Solana: sort by score (pre-ranked list already sorted, but re-sort to be safe)
     sol_wallets = wallets.get("solana", [])
     sol_win_rates: list[tuple[str, float]] = []
     for addr in sol_wallets:
-        wr = cached.get(addr, {}).get("win_rate", None)
-        if wr is not None:
-            sol_win_rates.append((addr, float(wr)))
+        score = cached.get(addr, {}).get("score", None)
+        if score is not None:
+            sol_win_rates.append((addr, float(score)))
         else:
-            sol_win_rates.append((addr, -1.0))  # unknown → sort last
+            sol_win_rates.append((addr, -1.0))  # unranked → sort last
 
     sol_win_rates.sort(key=lambda x: x[1], reverse=True)
     for i, (addr, _) in enumerate(sol_win_rates):
         ranks[addr] = i
 
-    # BSC: file order (no GMGN stats available for BSC yet)
+    # BSC: no ranking data yet — assign all to Tier 2 by default
+    # (rank = TIER1_TOP_N so they just enter Tier 2, not Tier 1)
+    # This ensures BSC wallets actually fire copy_trade signals instead of
+    # being silently dropped as Tier 3.
     bnb_wallets = wallets.get("bsc", [])
-    offset = len(sol_wallets)
-    for i, addr in enumerate(bnb_wallets):
-        ranks[addr] = offset + i
+    for addr in bnb_wallets:
+        ranks[addr] = TIER1_TOP_N  # first slot of Tier 2
 
     return ranks
 

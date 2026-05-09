@@ -16,6 +16,8 @@ from typing import Optional
 from memecoin.config import (
     VOLUME_SPIKE_MULTIPLIER, TIER1_TOP_N, TIER2_TOP_N,
     CONFLUENCE_STRONG, CONFLUENCE_MEDIUM,
+    MIN_LIQUIDITY_NEW_LAUNCH, MAX_PRICE_CHANGE_1H_NEW_LAUNCH, MIN_COMPOSITE_NEW_LAUNCH,
+    TIER1_COPY_MULTIPLIER, get_signal_settings,
 )
 from memecoin.screener import compute_safety_score
 
@@ -146,6 +148,7 @@ def make_copy_trade_signal(
 
     tiers = [_tier_for_rank(wallet_ranks.get(w, 999)) for w in whale_wallets]
     strength = _confluence_strength(tiers)
+    is_tier1 = min(tiers) == 1 if tiers else False
 
     pair = screen["pair"] or {}
     base = pair.get("baseToken") or {}
@@ -177,11 +180,20 @@ def make_copy_trade_signal(
         safety_score=round(safety, 3),
         momentum_score=round(momentum, 3),
         composite_score=composite,
-        notes=f"{len(whale_wallets)} whale(s) tier={min(tiers)}",
+        notes=f"{len(whale_wallets)} whale(s) tier={min(tiers)}"
+              + (" [TIER1-3x]" if is_tier1 else ""),
     )
     sig.paper_entry_price = screen["price_usd"]
     sig.paper_entry_time  = sig.timestamp
     _enrich_signal(sig, screen)
+
+    # Tier 1 wallets get 3x trade size — higher conviction, proven win rate
+    if is_tier1:
+        base_size = get_signal_settings("copy_trade")["trade_size_usd"]
+        sig.notes = sig.notes  # already set above
+        # Store multiplied size in notes for portfolio to pick up
+        sig._tier1_size = round(base_size * TIER1_COPY_MULTIPLIER, 2)
+
     return sig
 
 
@@ -247,12 +259,31 @@ def make_new_launch_signal(
     if screen["volume_h1"] <= 0:
         return None
 
+    # --- Data-derived entry filters (see journal analysis 2026-05-05) ---
+    # Liquidity < $25K: avg PnL -15%, above $25K significantly better
+    if screen["liquidity_usd"] < MIN_LIQUIDITY_NEW_LAUNCH:
+        log.debug("new_launch skipped %s: low liquidity $%.0f", token_address, screen["liquidity_usd"])
+        return None
+    # Already pumped 250%+ in last hour → likely late entry, dumps shortly after
+    if screen["price_change_1h"] > MAX_PRICE_CHANGE_1H_NEW_LAUNCH:
+        log.debug("new_launch skipped %s: already pumped %.0f%% in 1h", token_address, screen["price_change_1h"])
+        return None
+    # Falling in last 5 min → momentum gone, avg PnL -27% vs -5% when positive
+    if screen["price_change_5m"] <= 0:
+        log.debug("new_launch skipped %s: negative 5m price change %.1f%%", token_address, screen["price_change_5m"])
+        return None
+
     pair = screen["pair"] or {}
     base = pair.get("baseToken") or {}
 
     safety   = compute_safety_score(screen)
     momentum = _momentum_score(screen)
     composite = round(0.3 * safety + 0.7 * momentum, 3)
+
+    if composite < MIN_COMPOSITE_NEW_LAUNCH:
+        log.debug("new_launch skipped %s: composite score %.2f below minimum", token_address, composite)
+        return None
+
     strength = "strong" if composite >= 0.65 else "medium" if composite >= 0.45 else "weak"
 
     sig = Signal(

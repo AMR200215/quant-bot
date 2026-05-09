@@ -64,9 +64,11 @@ def _trained_posterior(market: Market, w: dict) -> tuple[float, str, float]:
     intercept     = w["intercept"]
     feature_names = w.get("feature_names", [])
     has_momentum  = "momentum_7d" in feature_names
+    has_days      = "log_days_to_resolution" in feature_names
 
     # Build raw feature vector (same order as train_model.py)
     momentum = getattr(market, "momentum_7d", None) or 0.0
+    days     = getattr(market, "days_to_resolution", None) or 30.0
     base = [
         yp,
         yp ** 2,
@@ -75,6 +77,8 @@ def _trained_posterior(market: Market, w: dict) -> tuple[float, str, float]:
     ]
     if has_momentum:
         base.append(momentum)
+    if has_days:
+        base.append(math.log(max(float(days), 0.5) + 1))
 
     raw = base + [1.0 if cat == c else 0.0 for c in known_cats]
 

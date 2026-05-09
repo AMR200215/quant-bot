@@ -7,6 +7,7 @@ backtesting.
 
 import csv
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,8 @@ DATASET_HEADER = [
     "actual_outcome",
     "end_date",
     "category",
+    "snapshot_date",    # ISO timestamp of when this market was fetched
+    "days_to_resolution", # days from snapshot to end_date (for model training)
 ]
 
 # Price range we consider "informative" (not already nearly resolved)
@@ -94,12 +97,27 @@ def normalize_outcome(raw: str, outcomes: List[str]) -> Optional[str]:
     return None
 
 
+def _compute_days_to_resolution(snapshot_date: str, end_date: str) -> str:
+    """Compute days from snapshot_date to end_date. Returns '' on any parse error."""
+    try:
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        snap = datetime.strptime(snapshot_date, fmt).replace(tzinfo=timezone.utc)
+        end  = datetime.strptime(end_date[:19] + "Z", fmt).replace(tzinfo=timezone.utc)
+        days = max(0.0, (end - snap).total_seconds() / 86400)
+        return str(round(days, 1))
+    except Exception:
+        return ""
+
+
 def build_records(raw_markets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Convert raw market records into clean dataset rows."""
     records = []
     skipped_no_price = 0
     skipped_extreme = 0
     skipped_outcome = 0
+
+    # Use build time as fallback snapshot_date for legacy records without one
+    build_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for item in raw_markets:
         price = item.get("snapshot_yes_price")
@@ -125,19 +143,24 @@ def build_records(raw_markets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             skipped_outcome += 1
             continue
 
-        question = item.get("question", "")
-        category = item.get("category") or infer_category(question)
+        question      = item.get("question", "")
+        category      = item.get("category") or infer_category(question)
+        end_date      = item.get("end_date", "")
+        snapshot_date = item.get("snapshot_date", build_time)
+        days_to_res   = _compute_days_to_resolution(snapshot_date, end_date)
 
         records.append(
             {
-                "market_id": item.get("market_id", ""),
-                "question": question,
-                "yes_price": round(price, 4),
-                "volume": round(float(item.get("volume") or 0), 2),
-                "liquidity_depth": round(float(item.get("liquidity") or 0), 2),
-                "actual_outcome": normalized,
-                "end_date": item.get("end_date", ""),
-                "category": category,
+                "market_id":        item.get("market_id", ""),
+                "question":         question,
+                "yes_price":        round(price, 4),
+                "volume":           round(float(item.get("volume") or 0), 2),
+                "liquidity_depth":  round(float(item.get("liquidity") or 0), 2),
+                "actual_outcome":   normalized,
+                "end_date":         end_date,
+                "category":         category,
+                "snapshot_date":    snapshot_date,
+                "days_to_resolution": days_to_res,
             }
         )
 

@@ -248,6 +248,47 @@ def _market_thread():
 
 
 # ---------------------------------------------------------------------------
+# Real-time Pump.fun WebSocket thread (replaces polling for new launches)
+# ---------------------------------------------------------------------------
+
+def _pumpfun_thread():
+    """
+    Listens to Pump.fun WebSocket for new token creation events.
+    Pushes them directly to the screener — no 2-min poll delay.
+    Falls back gracefully if websocket-client is not installed.
+    """
+    try:
+        from sniper.listener import PumpListener, PumpEvent
+    except ImportError:
+        log.info("sniper module not available — skipping Pump.fun WebSocket")
+        return
+
+    log.info("Pump.fun real-time listener started (memecoin new_launch feed)")
+    listener = PumpListener(strategies=["launch"])
+    listener.start(daemon=True)
+
+    while True:
+        event: PumpEvent = listener.get(timeout=2.0)
+        if not event:
+            continue
+        if event.event_type != "new_token":
+            continue
+
+        # Quick age gate — only process truly new tokens
+        # (event arrives within seconds of creation, so age_minutes ≈ 0)
+        try:
+            screen = screen_token("solana", event.mint)
+            if not screen["passed"]:
+                continue
+            if screen["age_minutes"] > MAX_AGE_MINUTES_NEW:
+                continue
+            sig = make_new_launch_signal("solana", event.mint, screen)
+            _add_signal(sig)
+        except Exception as e:
+            log.debug("Pump.fun token screen error %s: %s", event.mint[:8], e)
+
+
+# ---------------------------------------------------------------------------
 # Portfolio monitor thread
 # ---------------------------------------------------------------------------
 
@@ -294,6 +335,7 @@ def start(daemon: bool = True):
         (_wallet_thread,    {"wallets": wallets, "ranks": ranks}),
         (_market_thread,    {}),
         (_portfolio_thread, {}),
+        (_pumpfun_thread,   {}),
     ]:
         t = threading.Thread(target=target, kwargs=kwargs, daemon=daemon)
         t.start()

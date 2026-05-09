@@ -14,8 +14,7 @@ import sys
 
 from app.data_client import enrich_with_momentum, fetch_markets_by_days
 from app.edge import estimate_edge
-from app.external_signals import get_external_consensus
-from app.gpt_analyst import GPT_MIN_EDGE, analyze as gpt_analyze
+from app.external_signals import get_external_consensus, _detect_sport
 from app.market_classifier import get_topic_category
 from app.market_journal import append_journal_record, is_already_logged
 from app.model import estimate_probability
@@ -31,7 +30,14 @@ FETCH_LIMIT = 500
 LOG_LIMIT = 75
 CATEGORY_CAP = 5
 
+# Sports categories subject to the aggregate cap
+_SPORTS_CATEGORIES = {"tennis", "soccer", "basketball", "baseball", "hockey",
+                      "cricket", "esports", "sports"}
+# Max sports markets across all sports categories combined (40% of LOG_LIMIT)
+SPORTS_CAP = int(LOG_LIMIT * 0.40)  # 30
+
 # Max GPT calls per scan run (controls cost — ~$0.03-0.05 each)
+# GPT is now called inside get_external_consensus() for top candidates only.
 GPT_CAP = 10
 
 # Paper trading logs everything above this edge — lower than MIN_EV so we
@@ -141,26 +147,43 @@ def main(
         estimate = estimate_probability(market)
         posterior = estimate.posterior
 
-        # Blend with external consensus when available
+        # Blend with external consensus when available.
+        # GPT is called inside get_external_consensus() only for top candidates
+        # once the gpt_calls budget allows — handled below after sorting.
         external = get_external_consensus(
             market.question,
             twitter_bearer_token=settings.twitter_bearer_token,
             odds_api_key=settings.odds_api_key,
             kalshi_api_key=settings.kalshi_api_key,
             kalshi_key_id=settings.kalshi_key_id,
+            yes_price=market.yes_price,
+            # openai_api_key passed later (post-sort) to respect GPT_CAP
         )
-        if external.get("consensus_p") is not None:
-            # Weight external consensus higher when sharp markets (sportsbook/kalshi) contribute
-            has_sharp = external.get("sportsbook_p") is not None or external.get("kalshi_p") is not None
-            ext_sources = external.get("sources", 1)
+
+        has_sharp    = external.get("sportsbook_p") is not None or external.get("kalshi_p") is not None
+        has_external = external.get("consensus_p") is not None
+        ext_sources  = external.get("sources", 0)
+
+        if has_external:
+            # External signals present — blend, trusting sharp signals heavily.
+            # Sharp (sportsbook/kalshi): they are professionally priced, trust more.
+            # Multiple soft sources: corroboration adds confidence.
+            # Single soft source: modest pull only.
             if has_sharp:
-                weight = 0.45  # sharp market — trust it heavily
+                weight = 0.45
             elif ext_sources >= 2:
-                weight = 0.35  # multiple soft sources
+                weight = 0.35
             else:
-                weight = 0.20  # single soft source
+                weight = 0.20
             posterior = round(weight * external["consensus_p"] + (1 - weight) * posterior, 4)
-            posterior = max(0.02, min(0.98, posterior))
+        else:
+            # No external signals — model is the only input.
+            # Shrink posterior 65% toward the market price to prevent the model
+            # from making aggressive contrarian calls it can't back up.
+            # Data shows solo contrarian calls are right only 32.6% of the time.
+            posterior = round(0.35 * posterior + 0.65 * market.yes_price, 4)
+
+        posterior = max(0.02, min(0.98, posterior))
 
         edge = estimate_edge(market, posterior, logit=estimate.logit)
 
@@ -170,6 +193,12 @@ def main(
         else:
             signal_edge = edge.final_signal_no
             adjusted_edge = edge.adjusted_edge_no
+
+        # Contrarian detection: model disagrees with market price direction.
+        # buy_no on a yes_price > 0.5 market, or buy_yes on a yes_price < 0.5 market.
+        market_says_yes  = market.yes_price >= 0.5
+        model_says_yes   = edge.preferred_side == "buy_yes"
+        is_contrarian    = market_says_yes != model_says_yes
 
         # Paper trade threshold — log everything above 1% edge
         # regardless of whether it passes the strict real-trade filter
@@ -182,6 +211,9 @@ def main(
                     or (edge.preferred_side == "buy_no" and market.momentum_7d > 0.05)
                 )
             )
+            # Contrarian calls require a sharp external signal to back them up.
+            # Without sportsbook or kalshi confirmation, contrarian = paper only.
+            and not (is_contrarian and not has_sharp)
         )
 
         if adjusted_edge < PAPER_TRADE_MIN_EDGE:
@@ -207,13 +239,20 @@ def main(
 
     # Apply diversity cap: walk ranked candidates and keep at most
     # CATEGORY_CAP entries per topic category, up to LOG_LIMIT total.
+    # Additionally, sports categories combined are capped at SPORTS_CAP (40%
+    # of LOG_LIMIT) so non-sports markets get fair representation.
     category_counts: dict[str, int] = {}
+    sports_total = 0
     selected: list[dict] = []
     for c in candidates:
         cat = c["category"]
         if category_counts.get(cat, 0) >= CATEGORY_CAP:
             continue
+        if cat in _SPORTS_CATEGORIES and sports_total >= SPORTS_CAP:
+            continue
         category_counts[cat] = category_counts.get(cat, 0) + 1
+        if cat in _SPORTS_CATEGORIES:
+            sports_total += 1
         selected.append(c)
         if len(selected) >= LOG_LIMIT:
             break
@@ -231,7 +270,7 @@ def main(
     )
     print(
         f"Markets in window: {total_scanned}  |  "
-        f"Selected: {len(selected)} (cap {CATEGORY_CAP}/category)  |  "
+        f"Selected: {len(selected)} (cap {CATEGORY_CAP}/category, sports cap {sports_total}/{SPORTS_CAP})  |  "
         f"Real signals: {len(real_signals)}  |  "
         f"Paper-only: {len(paper_only)}"
     )
@@ -241,7 +280,59 @@ def main(
         print("No opportunities found above paper trade threshold (1%).")
         return
 
+    # Second pass: run GPT for top candidates (respects GPT_CAP budget).
+    # GPT is called here, post-sort, so credits go to the highest-edge markets.
+    # get_external_consensus() caches by question, so re-calling with the
+    # openai_api_key just fills in the gpt_p / gpt_verdict fields.
+    openai_key = settings.openai_api_key if hasattr(settings, "openai_api_key") else ""
+    import os as _os
+    if not openai_key:
+        openai_key = _os.getenv("OPENAI_API_KEY", "")
+
+    # Prioritize non-sports for GPT — they get full probability estimates vs
+    # sports which only get news_check. Sort so non-sports go first within
+    # the cap, then sports by edge descending.
+    gpt_candidates = [
+        c for c in selected
+        if not is_already_logged(c["market"].market_id)
+        and c["adjusted_edge"] >= 0.02
+    ]
+    gpt_candidates.sort(key=lambda c: (
+        1 if _detect_sport(c["market"].question) else 0,  # non-sports first
+        -c["adjusted_edge"]                                # then by edge desc
+    ))
+
     gpt_calls = 0
+    for c in gpt_candidates:
+        if gpt_calls >= GPT_CAP:
+            break
+        # Re-call consensus with openai_api_key — cache miss on the new key
+        # fills gpt_p / gpt_verdict; everything else comes from cache.
+        enriched = get_external_consensus(
+            c["market"].question,
+            twitter_bearer_token=settings.twitter_bearer_token,
+            odds_api_key=settings.odds_api_key,
+            kalshi_api_key=settings.kalshi_api_key,
+            kalshi_key_id=settings.kalshi_key_id,
+            openai_api_key=openai_key,
+            yes_price=c["market"].yes_price,
+        )
+        c["external"] = enriched
+        # Also re-blend posterior with updated consensus if gpt_p contributed
+        if enriched.get("consensus_p") is not None:
+            has_sharp = enriched.get("sportsbook_p") is not None or enriched.get("kalshi_p") is not None
+            ext_sources = enriched.get("sources", 1)
+            if has_sharp:
+                weight = 0.45
+            elif ext_sources >= 2:
+                weight = 0.35
+            else:
+                weight = 0.20
+            c["posterior"] = round(weight * enriched["consensus_p"] + (1 - weight) * c["posterior"], 4)
+            c["posterior"] = max(0.02, min(0.98, c["posterior"]))
+        if enriched.get("gpt_verdict") not in ("skipped", ""):
+            gpt_calls += 1
+
     newly_logged = 0
     for rank, c in enumerate(selected, start=1):
         market = c["market"]
@@ -249,22 +340,12 @@ def main(
         label  = "REAL SIGNAL" if c["is_real_signal"] else "paper trade"
         risk_tag = " | HIGH RISK: match-fixing" if c["high_risk"] else ""
 
-        # Skip markets already in the journal BEFORE burning a GPT slot
         if is_already_logged(market.market_id):
             continue
 
-        # GPT web search — only for markets above the edge threshold, up to GPT_CAP
-        gpt = {"verdict": "skipped", "reasoning": ""}
-        if gpt_calls < GPT_CAP and c["adjusted_edge"] >= GPT_MIN_EDGE:
-            gpt = gpt_analyze(
-                question=market.question,
-                yes_price=market.yes_price,
-                posterior=c["posterior"],
-                preferred_side=edge.preferred_side,
-                adjusted_edge=c["adjusted_edge"],
-            )
-            if gpt["verdict"] not in ("skipped", "error"):
-                gpt_calls += 1
+        ext        = c["external"]
+        gpt_verdict   = ext.get("gpt_verdict", "skipped") or "skipped"
+        gpt_reasoning = ext.get("gpt_reasoning", "") or ""
 
         written = append_journal_record(
             market_id=market.market_id,
@@ -280,10 +361,10 @@ def main(
             days_to_resolution=c["days"],
             maturity_score=edge.maturity_score,
             resolution_quality_score=edge.resolution_quality_score,
-            gpt_verdict=gpt["verdict"],
-            gpt_reasoning=gpt["reasoning"],
-            sportsbook_p=str(round(c["external"]["sportsbook_p"], 4)) if c["external"].get("sportsbook_p") is not None else "",
-            kalshi_p=str(round(c["external"]["kalshi_p"], 4)) if c["external"].get("kalshi_p") is not None else "",
+            gpt_verdict=gpt_verdict,
+            gpt_reasoning=gpt_reasoning,
+            sportsbook_p=str(round(ext["sportsbook_p"], 4)) if ext.get("sportsbook_p") is not None else "",
+            kalshi_p=str(round(ext["kalshi_p"], 4)) if ext.get("kalshi_p") is not None else "",
             notes=f"{label} | scan: {min_days:.0f}-{max_days:.0f}d window{risk_tag}",
         )
         if written:
@@ -312,23 +393,29 @@ def main(
         if market.momentum_7d is not None:
             direction = "up" if market.momentum_7d > 0 else "down"
             print(f"Momentum (7d): {market.momentum_7d:+.4f}  [{direction}]")
-        ext = c["external"]
         if ext.get("consensus_p") is not None:
             parts = [f"consensus={ext['consensus_p']:.4f}"]
             if ext.get("sportsbook_p") is not None:
                 parts.append(f"Sportsbook={ext['sportsbook_p']:.4f}")
             if ext.get("kalshi_p") is not None:
                 parts.append(f"Kalshi={ext['kalshi_p']:.4f}")
+            if ext.get("gpt_p") is not None:
+                parts.append(f"GPT={ext['gpt_p']:.4f}")
             if ext.get("manifold_p") is not None:
                 parts.append(f"Manifold={ext['manifold_p']:.4f}")
             if ext.get("metaculus_p") is not None:
                 parts.append(f"Metaculus={ext['metaculus_p']:.4f}")
             if ext.get("x_sentiment") is not None:
                 parts.append(f"X={ext['x_sentiment']:.4f}")
-            print(f"External:  {  '  '.join(parts)}")
-        if gpt["verdict"] not in ("skipped", "error"):
-            verdict_icon = "✓" if gpt["verdict"] == "confirm" else ("✗" if gpt["verdict"] == "reject" else "~")
-            print(f"GPT:       [{verdict_icon} {gpt['verdict'].upper()}] {gpt['reasoning']}")
+            print(f"External:  {'  '.join(parts)}")
+        gv = ext.get("gpt_verdict", "skipped") or "skipped"
+        gr = ext.get("gpt_reasoning", "") or ""
+        if gv not in ("skipped", "error", ""):
+            if gv == "news_alert" or (gv == "reject" and ext.get("sportsbook_p") is not None):
+                print(f"GPT News:  [! ALERT] {gr}")
+            else:
+                icon = "✓" if "confirm" in gv else ("~" if gv == "neutral" else "✗")
+                print(f"GPT:       [{icon} {gv.upper()}] {gr}")
         print()
 
     already_known = len(selected) - newly_logged

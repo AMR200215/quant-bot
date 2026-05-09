@@ -51,7 +51,12 @@ JOURNAL_FIELDS = [
     "has_twitter", "has_telegram", "has_website",
     "rugcheck_score", "buy_tax", "sell_tax",
     "notes",
+    # session tag — blank = legacy (pre-2026-05-05), otherwise "v2_YYYY-MM-DD"
+    "config_tag",
 ]
+
+# Stamp applied to every trade written from this session onward
+CONFIG_TAG = "v2_2026-05-05"
 
 
 @dataclass
@@ -151,9 +156,29 @@ def _save_positions(positions: dict[str, Position]):
     POSITIONS_FILE.write_text(json.dumps(data, indent=2))
 
 
+def _ensure_journal_header():
+    """Rewrite the journal header if it is stale (schema changed since file was created)."""
+    if not JOURNAL_FILE.exists() or JOURNAL_FILE.stat().st_size == 0:
+        return
+    with open(JOURNAL_FILE, newline="") as f:
+        current_header = next(csv.reader(f), [])
+    if current_header == JOURNAL_FIELDS:
+        return
+    # Header is stale — read all rows, rewrite with correct header
+    log.warning("Journal header mismatch — migrating %s", JOURNAL_FILE)
+    with open(JOURNAL_FILE, newline="") as f:
+        rows = list(csv.DictReader(f))
+    with open(JOURNAL_FILE, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    log.info("Journal header migrated (%d rows preserved)", len(rows))
+
+
 def _append_journal(pos: Position):
     JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not JOURNAL_FILE.exists()
+    _ensure_journal_header()
+    write_header = not JOURNAL_FILE.exists() or JOURNAL_FILE.stat().st_size == 0
     with open(JOURNAL_FILE, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
         if write_header:
@@ -205,6 +230,7 @@ def _append_journal(pos: Position):
             "buy_tax": pos.buy_tax,
             "sell_tax": pos.sell_tax,
             "notes": pos.notes,
+            "config_tag": CONFIG_TAG,
         })
 
 
@@ -233,7 +259,8 @@ class Portfolio:
             whales_involved=list(getattr(signal, "whales_involved", [])),
             entry_price=signal.price_usd,
             entry_time=time.time(),
-            size_usd=get_signal_settings(signal.signal_type)["trade_size_usd"],
+            size_usd=getattr(signal, "_tier1_size", None)
+                     or get_signal_settings(signal.signal_type)["trade_size_usd"],
             hard_stop_pct=get_signal_settings(signal.signal_type)["hard_stop_pct"],
             trailing_stop_pct=get_signal_settings(signal.signal_type)["trailing_stop_pct"],
             trail_activates_pct=get_signal_settings(signal.signal_type)["trail_activates_pct"],
