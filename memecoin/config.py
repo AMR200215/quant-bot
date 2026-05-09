@@ -14,7 +14,11 @@ BNB_WALLETS_FILE  = DATA_DIR / "whale_wallets_bnb.json"
 SIGNALS_FILE      = DATA_DIR / "memecoin_signals.json"
 POSITIONS_FILE    = DATA_DIR / "memecoin_positions.json"
 WHALE_STATS_FILE  = DATA_DIR / "whale_stats.json"
-JOURNAL_FILE      = LOGS_DIR / "memecoin_journal.csv"
+JOURNAL_FILE           = LOGS_DIR / "memecoin_journal.csv"
+CANDIDATES_FILE        = LOGS_DIR / "signal_candidates.csv"
+WINNERS_FILE           = LOGS_DIR / "winners_journal.csv"
+DEV_WALLETS_FILE       = DATA_DIR / "dev_wallets.json"
+DEV_LAST_SEEN_FILE     = DATA_DIR / "dev_last_seen.json"
 
 # ---------------------------------------------------------------------------
 # Capital & trade sizing
@@ -145,6 +149,13 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "trailing_stop_pct":   -0.40,
         "trail_activates_pct": 1.00,
         "time_stop_minutes":   20,
+    },
+    "dev_launch": {
+        "trade_size_usd":      40,
+        "hard_stop_pct":       -0.35,
+        "trailing_stop_pct":   -0.35,
+        "trail_activates_pct": 0.75,
+        "time_stop_minutes":   45,
     },
     "manual": {
         "trade_size_usd":      _SIZES["manual"],

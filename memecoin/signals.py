@@ -310,3 +310,58 @@ def make_new_launch_signal(
     sig.paper_entry_time  = sig.timestamp
     _enrich_signal(sig, screen)
     return sig
+
+
+def make_dev_launch_signal(
+    chain: str,
+    token_address: str,
+    screen: dict,
+    dev_address: str,
+    dev_entry: dict,
+    strength: str,
+) -> Optional[Signal]:
+    """
+    Signal fired when a tracked winner dev deploys a new token.
+    Strength is pre-computed by dev_tracker.dev_signal_strength() based on
+    that dev's historical win count and average PnL.
+    """
+    if not screen["passed"]:
+        return None
+
+    pair = screen["pair"] or {}
+    base = pair.get("baseToken") or {}
+
+    safety    = compute_safety_score(screen)
+    momentum  = _momentum_score(screen)
+    dev_score = dev_entry.get("score", 0.0)
+    composite = round(0.25 * safety + 0.25 * momentum + 0.50 * dev_score, 3)
+
+    sig = Signal(
+        id=str(uuid.uuid4())[:8],
+        timestamp=time.time(),
+        chain=chain,
+        token_address=token_address,
+        token_name=base.get("name", ""),
+        token_symbol=base.get("symbol", ""),
+        signal_type="dev_launch",
+        strength=strength,
+        price_usd=screen["price_usd"],
+        liquidity_usd=screen["liquidity_usd"],
+        mcap_usd=screen["mcap_usd"],
+        volume_h1=screen["volume_h1"],
+        volume_h24=screen["volume_h24"],
+        age_minutes=round(screen["age_minutes"], 1),
+        safety_score=round(safety, 3),
+        momentum_score=round(momentum, 3),
+        composite_score=composite,
+        notes=(
+            f"dev:{dev_address[:8]}"
+            f" wins={dev_entry['win_count']}"
+            f" avg_pnl={dev_entry['avg_pnl_pct']:.0f}%"
+            f" score={dev_score:.2f}"
+        ),
+    )
+    sig.paper_entry_price = screen["price_usd"]
+    sig.paper_entry_time  = sig.timestamp
+    _enrich_signal(sig, screen)
+    return sig

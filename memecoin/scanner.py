@@ -28,15 +28,17 @@ from memecoin.data_client import (
     dex_get_token,
 )
 from memecoin.screener import screen_token
-from memecoin.signals import (
-    Signal, make_copy_trade_signal, make_volume_breakout_signal,
-    make_new_launch_signal,
-)
 from memecoin.wallet_tracker import (
     load_all_wallets, build_wallet_ranks, tier_for_wallet,
     poll_sol_wallets_batch, poll_bnb_wallets_batch, WalletEvent,
 )
 from memecoin.portfolio import Portfolio
+from memecoin.candidate_log import log_signal_candidate
+from memecoin.dev_tracker import poll_all_devs, dev_signal_strength
+from memecoin.signals import (
+    Signal, make_copy_trade_signal, make_volume_breakout_signal,
+    make_new_launch_signal, make_dev_launch_signal,
+)
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +87,13 @@ def _add_signal(sig: Optional[Signal]):
         return
     with _lock:
         _signals.appendleft(sig)
-    # auto-open paper position for medium/strong signals
+    # log copy trade signals to temp candidates for strategy research
+    if sig.signal_type == "copy_trade":
+        try:
+            log_signal_candidate(sig)
+        except Exception as e:
+            log.debug("log_signal_candidate failed: %s", e)
+    # auto-open paper position for medium/strong signals only
     if sig.strength in ("medium", "strong"):
         try:
             portfolio.open_position(sig)
@@ -216,6 +224,31 @@ def _scan_volume_breakouts(chain: str, candidates: list[dict]):
         time.sleep(0.2)
 
 
+def _scan_dev_launches():
+    """Check all tracked dev wallets for new token deployments."""
+    findings = poll_all_devs()
+    for f in findings:
+        chain   = f["chain"]
+        addr    = f["token_address"]
+        entry   = f["dev_entry"]
+        dev_addr = f["dev_address"]
+        screen = screen_token(chain, addr)
+        if not screen["passed"]:
+            log.debug("Dev launch %s failed safety: %s", addr[:8], screen["reason"])
+            continue
+        strength = dev_signal_strength(entry)
+        sig = make_dev_launch_signal(
+            chain=chain,
+            token_address=addr,
+            screen=screen,
+            dev_address=dev_addr,
+            dev_entry=entry,
+            strength=strength,
+        )
+        _add_signal(sig)
+        time.sleep(0.3)
+
+
 def _market_thread():
     """Background thread: scans DexScreener + GMGN every 2 min."""
     log.info("Market scanner started (interval=%ds)", DEXSCREENER_POLL_SEC)
@@ -240,6 +273,12 @@ def _market_thread():
             bsc_boosted  = [b for b in boosted if b.get("chainId") == "bsc"]
             _scan_volume_breakouts("solana", sol_boosted)
             _scan_volume_breakouts("bsc",    bsc_boosted)
+
+            # Dev wallet polling — check known devs for new launches
+            try:
+                _scan_dev_launches()
+            except Exception as e:
+                log.debug("Dev scan error: %s", e)
 
         except Exception as e:
             log.warning("Market scan error: %s", e)
