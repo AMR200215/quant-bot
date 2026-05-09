@@ -202,6 +202,7 @@ def main(
 
         # Paper trade threshold — log everything above 1% edge
         # regardless of whether it passes the strict real-trade filter
+        cat = get_topic_category(market.question)
         is_real_signal = (
             adjusted_edge >= max(threshold, settings.min_ev, MIN_REAL_SIGNAL_EDGE)
             and not (
@@ -214,6 +215,16 @@ def main(
             # Contrarian calls require a sharp external signal to back them up.
             # Without sportsbook or kalshi confirmation, contrarian = paper only.
             and not (is_contrarian and not has_sharp)
+            # Extreme probability markets (yes_price <20% or >80%) have 35.3%
+            # accuracy — below coin flip. Skip as real signals entirely.
+            and not (market.yes_price < 0.20 or market.yes_price > 0.80)
+            # Sports markets in the 20-35% zone without sportsbook data are 50-65%
+            # accurate — not reliable enough for real signals without sharp data.
+            and not (
+                cat in _SPORTS_CATEGORIES
+                and not has_sharp
+                and (0.20 <= market.yes_price <= 0.35 or 0.65 <= market.yes_price <= 0.80)
+            )
         )
 
         if adjusted_edge < PAPER_TRADE_MIN_EDGE:
@@ -231,7 +242,7 @@ def main(
                 "external": external,
                 "is_real_signal": is_real_signal,
                 "high_risk": is_high_risk(market.question),
-                "category": get_topic_category(market.question),
+                "category": cat,
             }
         )
 
