@@ -623,6 +623,57 @@ def memecoin_manual_trade():
 
 
 # ---------------------------------------------------------------------------
+# Sniper
+# ---------------------------------------------------------------------------
+
+_sniper = None
+try:
+    import sniper.scanner as _sniper
+    _sniper.start(daemon=True)
+except Exception as _e:
+    import logging as _logging
+    _logging.getLogger(__name__).warning("Sniper module failed to start: %s", _e)
+    _sniper = None
+
+
+@app.route("/sniper")
+def sniper_page():
+    summary   = _sniper.get_summary()       if _sniper else {}
+    positions = _sniper.get_open_positions() if _sniper else []
+    journal   = _sniper.get_journal(100)    if _sniper else []
+    from sniper.config import ACTIVE_STRATEGY, CAPITAL_USD, SNIPE_SIZE_LAUNCH, SNIPE_SIZE_MIGRATION
+    return render_template(
+        "sniper.html", active="sniper",
+        summary=summary, positions=positions, journal=journal,
+        strategy=ACTIVE_STRATEGY, capital=CAPITAL_USD,
+        size_launch=SNIPE_SIZE_LAUNCH, size_migration=SNIPE_SIZE_MIGRATION,
+    )
+
+
+@app.route("/sniper/api/positions")
+def sniper_api_positions():
+    return jsonify(_sniper.get_open_positions() if _sniper else [])
+
+
+@app.route("/sniper/api/summary")
+def sniper_api_summary():
+    return jsonify(_sniper.get_summary() if _sniper else {})
+
+
+@app.route("/sniper/api/journal")
+def sniper_api_journal():
+    return jsonify(_sniper.get_journal(200) if _sniper else [])
+
+
+@app.route("/sniper/api/position/<pos_id>/close", methods=["POST"])
+def sniper_close_position(pos_id):
+    result = _sniper.manual_close(pos_id) if _sniper else None
+    if result:
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "position not found"}), 404
+
+
+# ---------------------------------------------------------------------------
 # IBKR Day Trading (placeholder)
 # ---------------------------------------------------------------------------
 
@@ -636,8 +687,8 @@ def ibkr():
 # ---------------------------------------------------------------------------
 
 def main():
-    print("Starting Quant Bot UI at http://localhost:8080")
-    app.run(debug=False, port=8080)
+    print("Starting Quant Bot UI at http://0.0.0.0:8080")
+    app.run(debug=False, host="0.0.0.0", port=8080)
 
 
 if __name__ == "__main__":
