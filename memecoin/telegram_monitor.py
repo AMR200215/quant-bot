@@ -108,14 +108,23 @@ class TelegramMonitor:
             @client.on(events.NewMessage(chats=CHANNELS))
             async def handler(event):
                 text = event.raw_text or ""
-                addresses = _extract_addresses(text)
+                # Also collect URLs from hyperlink entities — pump.fun links embed
+                # the token address in the URL, not the visible text
+                extra_urls = []
+                if event.message and event.message.entities:
+                    for ent in event.message.entities:
+                        url = getattr(ent, "url", None)
+                        if url:
+                            extra_urls.append(url)
+                combined = text + " " + " ".join(extra_urls)
+                addresses = _extract_addresses(combined)
                 for chain, address in addresses:
                     log.warning(
                         "TG signal: %s address=%s from channel=%s",
                         chain, address[:12], event.chat.username or "?"
                     )
                     try:
-                        self.signal_callback(chain, address, text)
+                        self.signal_callback(chain, address, combined)
                     except Exception as e:
                         log.warning("TG signal callback error: %s", e)
 
