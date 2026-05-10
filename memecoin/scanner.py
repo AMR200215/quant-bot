@@ -37,7 +37,7 @@ from memecoin.candidate_log import log_signal_candidate
 from memecoin.dev_tracker import poll_all_devs, dev_signal_strength
 from memecoin.signals import (
     Signal, make_copy_trade_signal, make_volume_breakout_signal,
-    make_new_launch_signal, make_dev_launch_signal,
+    make_new_launch_signal, make_dev_launch_signal, make_social_alert_signal,
 )
 
 log = logging.getLogger(__name__)
@@ -328,6 +328,25 @@ def _pumpfun_thread():
 
 
 # ---------------------------------------------------------------------------
+# Telegram social signal callback
+# ---------------------------------------------------------------------------
+
+def _on_telegram_signal(chain: str, address: str, message_text: str):
+    """Called by TelegramMonitor when a token address is found in a channel message."""
+    try:
+        screen = screen_token(chain, address)
+        if not screen["passed"]:
+            log.debug("TG token %s failed safety: %s", address[:8], screen["reason"])
+            return
+        # Extract channel from message context (best effort)
+        channel = "pumpdotfunalert"
+        sig = make_social_alert_signal(chain, address, screen, source="telegram", channel=channel)
+        _add_signal(sig)
+    except Exception as e:
+        log.warning("TG signal processing error %s: %s", address[:8], e)
+
+
+# ---------------------------------------------------------------------------
 # Portfolio monitor thread
 # ---------------------------------------------------------------------------
 
@@ -378,6 +397,23 @@ def start(daemon: bool = True):
     ]:
         t = threading.Thread(target=target, kwargs=kwargs, daemon=daemon)
         t.start()
+
+    # Telegram monitor — start if credentials are configured
+    tg_api_id   = os.getenv("TELEGRAM_API_ID")
+    tg_api_hash = os.getenv("TELEGRAM_API_HASH")
+    if tg_api_id and tg_api_hash:
+        try:
+            from memecoin.telegram_monitor import TelegramMonitor
+            tg = TelegramMonitor(
+                api_id=int(tg_api_id),
+                api_hash=tg_api_hash,
+                signal_callback=_on_telegram_signal,
+            )
+            tg.start(daemon=daemon)
+        except Exception as e:
+            log.warning("Telegram monitor failed to start: %s", e)
+    else:
+        log.info("Telegram monitor disabled — set TELEGRAM_API_ID and TELEGRAM_API_HASH to enable")
 
     log.info("Memecoin scanner started.")
 

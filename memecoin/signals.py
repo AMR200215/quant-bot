@@ -312,6 +312,59 @@ def make_new_launch_signal(
     return sig
 
 
+def make_social_alert_signal(
+    chain: str,
+    token_address: str,
+    screen: dict,
+    source: str = "telegram",
+    channel: str = "",
+) -> Optional[Signal]:
+    """
+    Signal fired when a token address is found in a Telegram/social channel.
+    Uses minimal filters — purpose is data collection, not trading.
+    Tagged signal_type='social_alert' for separate analysis.
+    Trade size is $1 regardless of capital stage.
+    """
+    if not screen["passed"]:
+        return None
+
+    pair = screen["pair"] or {}
+    base = pair.get("baseToken") or {}
+
+    safety    = compute_safety_score(screen)
+    momentum  = _momentum_score(screen)
+    composite = round(0.3 * safety + 0.7 * momentum, 3)
+
+    # Strength based on age — fresher = stronger (we want early entries)
+    age = screen["age_minutes"]
+    strength = "strong" if age < 10 else "medium" if age < 30 else "weak"
+
+    sig = Signal(
+        id=str(uuid.uuid4())[:8],
+        timestamp=time.time(),
+        chain=chain,
+        token_address=token_address,
+        token_name=base.get("name", ""),
+        token_symbol=base.get("symbol", ""),
+        signal_type="social_alert",
+        strength=strength,
+        price_usd=screen["price_usd"],
+        liquidity_usd=screen["liquidity_usd"],
+        mcap_usd=screen["mcap_usd"],
+        volume_h1=screen["volume_h1"],
+        volume_h24=screen["volume_h24"],
+        age_minutes=round(age, 1),
+        safety_score=round(safety, 3),
+        momentum_score=round(momentum, 3),
+        composite_score=composite,
+        notes=f"social:{source} channel={channel} age={age:.0f}min",
+    )
+    sig.paper_entry_price = screen["price_usd"]
+    sig.paper_entry_time  = sig.timestamp
+    _enrich_signal(sig, screen)
+    return sig
+
+
 def make_dev_launch_signal(
     chain: str,
     token_address: str,
