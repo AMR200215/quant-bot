@@ -80,7 +80,7 @@ class TelegramMonitor:
             target=self._run_loop, daemon=daemon, name="tg-monitor"
         )
         self._thread.start()
-        log.info("Telegram monitor thread started — channels: %s", CHANNELS)
+        log.warning("Telegram monitor thread started — channels: %s", CHANNELS)
 
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()
@@ -102,7 +102,7 @@ class TelegramMonitor:
         )
 
         async with TelegramClient(session_file, self.api_id, self.api_hash) as client:
-            log.info("Telegram client connected")
+            log.warning("Telegram client connected")
 
             # Register handler for new messages in monitored channels
             @client.on(events.NewMessage(chats=CHANNELS))
@@ -110,7 +110,7 @@ class TelegramMonitor:
                 text = event.raw_text or ""
                 addresses = _extract_addresses(text)
                 for chain, address in addresses:
-                    log.info(
+                    log.warning(
                         "TG signal: %s address=%s from channel=%s",
                         chain, address[:12], event.chat.username or "?"
                     )
