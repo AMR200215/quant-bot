@@ -26,6 +26,7 @@ JOURNAL_HEADER = [
     "gpt_reasoning",
     "sportsbook_p",
     "kalshi_p",
+    "ob_imbalance",
     "notes",
 ]
 
@@ -67,6 +68,7 @@ def append_journal_record(
     gpt_reasoning: str = "",
     sportsbook_p: str = "",
     kalshi_p: str = "",
+    ob_imbalance: str = "",
     notes: str = "",
 ) -> bool:
     """Append a new market analysis record to the journal.
@@ -105,6 +107,7 @@ def append_journal_record(
                 gpt_reasoning,
                 sportsbook_p,
                 kalshi_p,
+                ob_imbalance,
                 notes,
             ]
         )

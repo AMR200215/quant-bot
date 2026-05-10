@@ -14,7 +14,7 @@ import sys
 
 from app.data_client import enrich_with_momentum, fetch_markets_by_days
 from app.edge import estimate_edge
-from app.external_signals import get_external_consensus, _detect_sport
+from app.external_signals import get_external_consensus, fetch_order_book_imbalance, _detect_sport
 from app.market_classifier import get_topic_category
 from app.market_journal import append_journal_record, is_already_logged
 from app.model import estimate_probability
@@ -230,6 +230,23 @@ def main(
         if adjusted_edge < PAPER_TRADE_MIN_EDGE:
             continue
 
+        # Order book imbalance — fetch only for real signal candidates to save time.
+        # Imbalance > 0.3 = smart money buying YES (confirms buy_yes, contradicts buy_no)
+        # Imbalance < -0.3 = smart money selling YES (confirms buy_no, contradicts buy_yes)
+        ob_imbalance = None
+        if is_real_signal and market.clob_token_id:
+            ob_imbalance = fetch_order_book_imbalance(
+                market.clob_token_id, market.yes_price
+            )
+            # If order book strongly contradicts our preferred side → paper only
+            if ob_imbalance is not None:
+                contradicts = (
+                    (edge.preferred_side == "buy_yes" and ob_imbalance < -0.3)
+                    or (edge.preferred_side == "buy_no" and ob_imbalance > 0.3)
+                )
+                if contradicts:
+                    is_real_signal = False
+
         candidates.append(
             {
                 "market": market,
@@ -243,6 +260,7 @@ def main(
                 "is_real_signal": is_real_signal,
                 "high_risk": is_high_risk(market.question),
                 "category": cat,
+                "ob_imbalance": ob_imbalance,
             }
         )
 
@@ -376,6 +394,7 @@ def main(
             gpt_reasoning=gpt_reasoning,
             sportsbook_p=str(round(ext["sportsbook_p"], 4)) if ext.get("sportsbook_p") is not None else "",
             kalshi_p=str(round(ext["kalshi_p"], 4)) if ext.get("kalshi_p") is not None else "",
+            ob_imbalance=str(round(c["ob_imbalance"], 3)) if c.get("ob_imbalance") is not None else "",
             notes=f"{label} | scan: {min_days:.0f}-{max_days:.0f}d window{risk_tag}",
         )
         if written:
@@ -427,6 +446,11 @@ def main(
             else:
                 icon = "✓" if "confirm" in gv else ("~" if gv == "neutral" else "✗")
                 print(f"GPT:       [{icon} {gv.upper()}] {gr}")
+        if c.get("ob_imbalance") is not None:
+            ob = c["ob_imbalance"]
+            direction = "↑ buyers" if ob > 0 else "↓ sellers"
+            flag = " [CONTRADICTS SIGNAL → paper]" if not c["is_real_signal"] and abs(ob) > 0.3 else ""
+            print(f"OrderBook: {ob:+.3f} ({direction}){flag}")
         print()
 
     already_known = len(selected) - newly_logged

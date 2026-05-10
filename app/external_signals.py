@@ -35,6 +35,7 @@ METACULUS_SEARCH_URL = "https://www.metaculus.com/api2/questions/"
 TWITTER_SEARCH_URL   = "https://api.twitter.com/2/tweets/search/recent"
 ODDS_API_BASE        = "https://api.the-odds-api.com/v4"
 KALSHI_API_BASE      = "https://api.elections.kalshi.com/trade-api/v2"
+CLOB_API_BASE        = "https://clob.polymarket.com"
 
 # Minimum text similarity (0–1) to accept an external match
 MATCH_THRESHOLD = 0.55
@@ -457,6 +458,67 @@ def fetch_x_sentiment(question: str, bearer_token: str) -> Optional[float]:
 
 # ---------------------------------------------------------------------------
 # Public API
+# ---------------------------------------------------------------------------
+# Polymarket CLOB order book imbalance
+# ---------------------------------------------------------------------------
+
+def fetch_order_book_imbalance(
+    clob_token_id: str,
+    yes_price: float,
+    depth: float = 0.08,
+    min_volume: float = 500.0,
+) -> Optional[float]:
+    """Return order book imbalance for a Polymarket YES token.
+
+    Measures buy vs sell pressure within `depth` of the current price.
+
+    imbalance = (bid_volume - ask_volume) / (bid_volume + ask_volume)
+      +1.0 → all buyers, no sellers → smart money accumulating YES
+      -1.0 → all sellers, no buyers → smart money dumping YES (buy NO)
+       0.0 → balanced
+
+    Returns None if insufficient liquidity or API unavailable.
+
+    Args:
+        clob_token_id: YES token ID from Polymarket market data.
+        yes_price: Current YES price (0-1) to anchor the depth window.
+        depth: Price window around yes_price to consider (default ±0.08).
+        min_volume: Minimum total volume required to return a signal.
+    """
+    try:
+        resp = requests.get(
+            f"{CLOB_API_BASE}/book",
+            params={"token_id": clob_token_id},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+    bids = data.get("bids", [])  # buyers of YES (bullish)
+    asks = data.get("asks", [])  # sellers of YES (bearish)
+
+    lo = yes_price - depth
+    hi = yes_price + depth
+
+    bid_vol = sum(
+        float(b["size"]) for b in bids
+        if lo <= float(b["price"]) <= hi
+    )
+    ask_vol = sum(
+        float(a["size"]) for a in asks
+        if lo <= float(a["price"]) <= hi
+    )
+
+    total = bid_vol + ask_vol
+    if total < min_volume:
+        return None  # insufficient data, don't signal
+
+    return round((bid_vol - ask_vol) / total, 3)
+
+
 # ---------------------------------------------------------------------------
 
 def get_external_consensus(
