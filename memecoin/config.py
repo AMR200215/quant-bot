@@ -78,7 +78,7 @@ MAX_AGE_MINUTES_NEW = 60      # "new launch" window
 
 # new_launch-specific entry filters (tighter than global — data-derived)
 MIN_LIQUIDITY_NEW_LAUNCH   = 25_000   # $25K+ liq: win avg goes from -15% → ~-5%
-MAX_PRICE_CHANGE_1H_NEW_LAUNCH = 250  # skip already-pumped tokens (winners avg +151% vs losers +412%)
+MAX_PRICE_CHANGE_1H_NEW_LAUNCH = 150  # skip already-pumped tokens (winners avg +140% vs losers +407%)
 MIN_COMPOSITE_NEW_LAUNCH   = 0.50     # skip the bottom-tier signals
 
 # ---------------------------------------------------------------------------
@@ -104,8 +104,8 @@ CONFLUENCE_STRONG = 2   # 2+ tier-1 OR 5+ any tier
 # ---------------------------------------------------------------------------
 HARD_STOP_PCT        = -0.35   # -35% from entry → immediate exit
 TRAILING_STOP_PCT    = -0.40   # -40% from peak once in profit
-TRAIL_ACTIVATES_PCT  =  1.00   # trailing stop activates at +100%
-TIME_STOP_MINUTES    =  45     # exit if flat >45 min with < +30% gain
+TRAIL_ACTIVATES_PCT  =  0.75   # trailing stop activates at +75% (was +100%)
+TIME_STOP_MINUTES    =  90     # exit if flat >90 min with < +30% gain (was 45)
 TIME_STOP_MIN_GAIN   =  0.30   # if gain > 30% don't apply time stop
 
 # Take-profit ladder (only when no whale exit signal)
