@@ -335,10 +335,19 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     """Called by TelegramMonitor when a token address is found in a channel message."""
     try:
         screen = screen_token(chain, address)
-        if not screen["passed"]:
-            log.debug("TG token %s failed safety: %s", address[:8], screen["reason"])
+        reason = screen.get("reason", "")
+
+        # Hard reject: no data or confirmed rug/honeypot
+        if reason == "no_dex_data":
             return
-        # Extract channel from message context (best effort)
+        if any(r in reason for r in ("rugcheck_fail", "honeypot", "rug_detector")):
+            log.debug("TG token %s rejected (rug): %s", address[:8], reason)
+            return
+
+        # Social alerts bypass the liquidity gate — data collection mode.
+        # We still want the DexScreener snapshot even for low-liq tokens.
+        screen["passed"] = True
+
         channel = "pumpdotfunalert"
         sig = make_social_alert_signal(chain, address, screen, source="telegram", channel=channel)
         _add_signal(sig)
