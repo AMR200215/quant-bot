@@ -66,9 +66,15 @@ def median(vals: list[float]) -> float:
     return clean[mid] if n % 2 else (clean[mid - 1] + clean[mid]) / 2
 
 
-def analyze(min_pnl_pct: float = 0.0):
+def analyze(min_pnl_pct: float = 0.0, since: str = ""):
     candidates = load_csv(CANDIDATES_FILE)
     winners    = load_csv(WINNERS_FILE)
+
+    # Filter to signals after a cutoff date (e.g. "2026-05-11" to exclude pre-fix data)
+    if since:
+        candidates = [c for c in candidates if c.get("signal_time", "") >= since]
+        winners    = [w for w in winners    if w.get("signal_time", "") >= since]
+        print(f"Filtered to signal_time >= {since}")
 
     print(f"\nLoaded {len(candidates)} candidates, {len(winners)} winner records")
 
@@ -177,5 +183,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--min-pnl", type=float, default=0.0,
                         help="Minimum winner PnL%% to include (default: 0 = any profit)")
+    parser.add_argument("--since", type=str, default="",
+                        help="Only include signals on or after this date, e.g. 2026-05-11")
     args = parser.parse_args()
-    analyze(args.min_pnl)
+    analyze(args.min_pnl, args.since)
