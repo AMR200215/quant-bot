@@ -66,6 +66,8 @@ class Signal:
     has_telegram: bool = False
     has_website: bool = False
     rugcheck_score: float = 0.0
+    mint_disabled: bool = True
+    freeze_disabled: bool = True
     buy_tax: float = 0.0
     sell_tax: float = 0.0
     # paper-trade tracking
@@ -128,6 +130,8 @@ def _enrich_signal(sig: Signal, screen: dict):
     sig.has_telegram       = screen.get("has_telegram", False)
     sig.has_website        = screen.get("has_website", False)
     sig.rugcheck_score     = screen.get("rugcheck_score") or 0.0
+    sig.mint_disabled      = screen.get("mint_disabled") if screen.get("mint_disabled") is not None else True
+    sig.freeze_disabled    = screen.get("freeze_disabled") if screen.get("freeze_disabled") is not None else True
     sig.buy_tax            = screen.get("buy_tax") or 0.0
     sig.sell_tax           = screen.get("sell_tax") or 0.0
 

@@ -67,6 +67,8 @@ def screen_token(chain: str, token_address: str) -> dict:
         "has_website": False,
         # safety
         "rugcheck_score": None,     # Solana: 0-1000, lower = safer
+        "mint_disabled": None,      # Solana: True = mint authority revoked
+        "freeze_disabled": None,    # Solana: True = freeze authority revoked
         "buy_tax": None,            # BSC
         "sell_tax": None,           # BSC
         "is_honeypot": None,        # BSC
@@ -154,7 +156,9 @@ def screen_token(chain: str, token_address: str) -> dict:
         safety = rugcheck_sol(token_address)
         result["safety"] = safety
         if safety is not None:
-            result["rugcheck_score"] = safety.get("score")
+            result["rugcheck_score"]  = safety.get("score")
+            result["mint_disabled"]   = safety.get("mint_disabled")
+            result["freeze_disabled"] = safety.get("freeze_disabled")
             if not safety["is_safe"]:
                 risky = ", ".join(safety["risks"][:3])
                 result["reason"] = f"rugcheck_fail:{risky}"

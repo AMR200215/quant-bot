@@ -36,7 +36,7 @@ _SIGNAL_FIELDS = [
     # token info
     "dex_id", "dexscreener_url",
     "has_twitter", "has_telegram", "has_website",
-    "rugcheck_score", "buy_tax", "sell_tax",
+    "rugcheck_score", "mint_disabled", "freeze_disabled", "buy_tax", "sell_tax",
     "notes",
 ]
 
@@ -85,6 +85,8 @@ def _sig_to_row(sig) -> dict:
         "has_telegram":        getattr(sig, "has_telegram", False),
         "has_website":         getattr(sig, "has_website", False),
         "rugcheck_score":      getattr(sig, "rugcheck_score", ""),
+        "mint_disabled":       getattr(sig, "mint_disabled", ""),
+        "freeze_disabled":     getattr(sig, "freeze_disabled", ""),
         "buy_tax":             getattr(sig, "buy_tax", ""),
         "sell_tax":            getattr(sig, "sell_tax", ""),
         "notes":               sig.notes,

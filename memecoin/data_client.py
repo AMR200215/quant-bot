@@ -295,10 +295,20 @@ def rugcheck_sol(token_address: str) -> Optional[dict]:
         return None
     score = data.get("score", 500)
     risks = data.get("risks", [])
+    risk_names  = [r.get("name", "") for r in risks]
+    danger_names = [r.get("name", "") for r in risks if r.get("level") == "danger"]
+
+    # Mint / freeze authority flags
+    mint_disabled   = not any("Mint"   in n for n in risk_names)
+    freeze_disabled = not any("Freeze" in n for n in risk_names)
+
     # rugcheck score: lower = safer (0-1000)
     return {
-        "score": score,
-        "risks": [r.get("name", "") for r in risks],
+        "score":          score,
+        "risks":          risk_names,
+        "danger_risks":   danger_names,
+        "mint_disabled":  mint_disabled,    # True = mint authority revoked (safer)
+        "freeze_disabled": freeze_disabled, # True = freeze authority revoked (safer)
         "is_safe": score < 300 and not any(
             r.get("level") == "danger" for r in risks
         ),
