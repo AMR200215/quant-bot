@@ -39,6 +39,7 @@ from memecoin.signals import (
     Signal, make_copy_trade_signal, make_volume_breakout_signal,
     make_new_launch_signal, make_dev_launch_signal, make_social_alert_signal,
 )
+from app import alerts
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +97,11 @@ def _add_signal(sig: Optional[Signal]):
     # auto-open paper position for medium/strong signals only
     if sig.strength in ("medium", "strong"):
         try:
-            portfolio.open_position(sig)
+            pos = portfolio.open_position(sig)
+            try:
+                alerts.alert_position_open(sig, pos)
+            except Exception:
+                pass
         except Exception as e:
             log.warning("open_position failed for %s: %s", sig.token_symbol, e)
     _persist_signals()
@@ -424,6 +429,7 @@ def start(daemon: bool = True):
     else:
         log.info("Telegram monitor disabled — set TELEGRAM_API_ID and TELEGRAM_API_HASH to enable")
 
+    alerts.init()
     log.info("Memecoin scanner started.")
 
 

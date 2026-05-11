@@ -32,6 +32,7 @@ from memecoin.config import (
 )
 from memecoin.data_client import dex_get_token
 from memecoin.candidate_log import promote_to_winners
+from app import alerts
 
 log = logging.getLogger(__name__)
 
@@ -336,6 +337,10 @@ class Portfolio:
         _save_positions(self._positions)
         log.info("Closed position %s  reason=%s  pnl=%.1f%%",
                  pos_id, reason, pos.pnl_pct * 100)
+        try:
+            alerts.alert_position_close(pos)
+        except Exception:
+            pass
         return pos
 
     # ---- update prices & evaluate exit conditions ----
@@ -456,6 +461,10 @@ class Portfolio:
                             pos.id, pos.token_symbol, gain * 100,
                             tp_fraction * 100, partial_usd,
                         )
+                        try:
+                            alerts.alert_tp_hit(pos, tp_pct, partial_usd)
+                        except Exception:
+                            pass
 
         _save_positions(self._positions)
         return exits
