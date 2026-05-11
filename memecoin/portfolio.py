@@ -14,6 +14,15 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Optional
 
+T10_VELOCITY_FILE = Path(__file__).parent.parent / "logs" / "t10_velocity.csv"
+_T10_FIELDS = [
+    "position_id", "signal_id", "token_symbol", "chain", "dex_id",
+    "signal_type", "strength", "entry_price", "entry_time",
+    "t10_time", "age_at_t10_min",
+    "buys_5m_t10", "sells_5m_t10", "buy_sell_ratio_5m_t10",
+    "volume_5m_t10", "price_usd_t10", "price_change_5m_t10",
+]
+
 from memecoin.config import (
     POSITIONS_FILE, JOURNAL_FILE,
     HARD_STOP_PCT, TRAILING_STOP_PCT, TRAIL_ACTIVATES_PCT,
@@ -119,6 +128,7 @@ class Position:
     rugcheck_score: float = 0.0
     buy_tax: float = 0.0
     sell_tax: float = 0.0
+    t10_logged: bool = False   # True once T+10 buy-velocity snapshot is written
 
     @property
     def pnl_pct(self) -> float:
@@ -297,10 +307,16 @@ class Portfolio:
             buy_tax=getattr(signal, "buy_tax", 0.0),
             sell_tax=getattr(signal, "sell_tax", 0.0),
         )
+        # Pre-graduation tokens on pumpswap experience more jitter before breakout.
+        # Widen hard stop to -40% so normal price oscillation doesn't stop us out early.
+        if pos.dex_id.lower() == "pumpswap":
+            pos.hard_stop_pct = -0.40
+
         self._positions[pos.id] = pos
         _save_positions(self._positions)
-        log.info("Opened paper position %s  %s/%s @ $%.8f",
-                 pos.id, pos.chain, pos.token_symbol, pos.entry_price)
+        log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s  hard_stop=%.0f%%",
+                 pos.id, pos.chain, pos.token_symbol, pos.entry_price,
+                 pos.dex_id, pos.hard_stop_pct * 100)
         return pos
 
     # ---- close ----
@@ -347,6 +363,44 @@ class Portfolio:
                 if price > 0:
                     pos.current_price = price
                     pos.peak_price = max(pos.peak_price, price)
+
+            # T+10 buy-velocity snapshot (8–12 min window, logged once per position)
+            age_min = (time.time() - pos.entry_time) / 60
+            if not pos.t10_logged and 8 <= age_min <= 12 and pair:
+                txns = pair.get("txns") or {}
+                m5   = txns.get("m5") or {}
+                vol  = pair.get("volume") or {}
+                pc   = pair.get("priceChange") or {}
+                b5   = int(m5.get("buys") or 0)
+                s5   = int(m5.get("sells") or 0)
+                bsr5 = round(b5 / (b5 + s5), 3) if (b5 + s5) else 0.0
+                T10_VELOCITY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                write_hdr = not T10_VELOCITY_FILE.exists()
+                with open(T10_VELOCITY_FILE, "a", newline="") as fv:
+                    wv = csv.DictWriter(fv, fieldnames=_T10_FIELDS)
+                    if write_hdr:
+                        wv.writeheader()
+                    wv.writerow({
+                        "position_id":          pos.id,
+                        "signal_id":            pos.signal_id,
+                        "token_symbol":         pos.token_symbol,
+                        "chain":                pos.chain,
+                        "dex_id":               pos.dex_id,
+                        "signal_type":          pos.signal_type,
+                        "strength":             pos.strength,
+                        "entry_price":          pos.entry_price,
+                        "entry_time":           time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
+                        "t10_time":             time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                        "age_at_t10_min":       round(age_min, 1),
+                        "buys_5m_t10":          b5,
+                        "sells_5m_t10":         s5,
+                        "buy_sell_ratio_5m_t10": bsr5,
+                        "volume_5m_t10":        float(vol.get("m5") or 0),
+                        "price_usd_t10":        pos.current_price,
+                        "price_change_5m_t10":  float(pc.get("m5") or 0),
+                    })
+                pos.t10_logged = True
+                log.debug("T+10 velocity logged for %s  bsr5m=%.2f  buys=%d", pos.id, bsr5, b5)
 
             gain = pos.pnl_pct
             reason = None

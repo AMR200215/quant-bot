@@ -78,7 +78,7 @@ MAX_AGE_MINUTES_NEW = 60      # "new launch" window
 
 # new_launch-specific entry filters (tighter than global — data-derived)
 MIN_LIQUIDITY_NEW_LAUNCH   = 25_000   # $25K+ liq: win avg goes from -15% → ~-5%
-MAX_PRICE_CHANGE_1H_NEW_LAUNCH = 150  # skip already-pumped tokens (winners avg +140% vs losers +407%)
+MAX_PRICE_CHANGE_1H_NEW_LAUNCH = 250  # reverted — 150% filter proven harmful in stress test
 MIN_COMPOSITE_NEW_LAUNCH   = 0.50     # skip the bottom-tier signals
 
 # ---------------------------------------------------------------------------
