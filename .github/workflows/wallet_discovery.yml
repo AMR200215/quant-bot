@@ -28,8 +28,22 @@ jobs:
       - name: Install dependencies
         run: pip install requests psycopg2-binary python-dotenv
 
-      - name: Init DB schema
-        run: python3 -m wallet_db.db
+      - name: Init DB schema + seed wallets (first run only)
+        run: |
+          python3 -m wallet_db.db
+          python3 -c "
+          from wallet_db.db import get_conn
+          conn = get_conn()
+          n = conn.execute('SELECT COUNT(*) as n FROM wallets').fetchone()['n']
+          conn.close()
+          print(f'Wallets in DB: {n}')
+          if n == 0:
+              import subprocess, sys
+              result = subprocess.run([sys.executable, '-m', 'wallet_db.seed'], capture_output=False)
+              sys.exit(result.returncode)
+          else:
+              print('DB already seeded, skipping.')
+          "
 
       - name: Token outcome tracker (Phase 2b)
         run: python3 -m wallet_db.outcome_tracker
