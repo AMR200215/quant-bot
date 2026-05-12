@@ -14,6 +14,7 @@ import argparse
 import json
 import logging
 import os
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -125,6 +126,83 @@ def _parse_swap(tx: dict, wallet: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Price integrity verification gate
+# ---------------------------------------------------------------------------
+
+def _verify_price_integrity(trades: list[dict], wallet: str) -> bool:
+    """
+    Sample up to 5 trades from a freshly-ingested batch. Re-fetch each from
+    Helius and re-parse the swap. Compare stored native_amount and token_amount
+    to on-chain reality. Log a warning if any trade drifts > 5%.
+
+    This runs on every ingest batch so price corruption can never silently
+    accumulate across scoring runs.
+
+    Returns True if all sampled trades are clean (or sample is empty).
+    """
+    if not trades or not HELIUS_KEY:
+        return True
+
+    sample    = random.sample(trades, min(5, len(trades)))
+    drift_any = False
+
+    for t in sample:
+        tx_hash = t["tx_hash"]
+        try:
+            r = requests.post(
+                f"{HELIUS_BASE}/transactions",
+                params={"api-key": HELIUS_KEY},
+                json={"transactions": [tx_hash]},
+                timeout=15,
+            )
+            if r.status_code != 200:
+                log.debug("Helius re-fetch %s: HTTP %d", tx_hash[:12], r.status_code)
+                continue
+            data = r.json()
+            if not data:
+                continue
+
+            reparsed = _parse_swap(data[0], wallet)
+            if not reparsed:
+                continue
+
+            stored_native = t["native_amount"]
+            actual_native = reparsed["native_amount"]
+            stored_token  = t["token_amount"]
+            actual_token  = reparsed["token_amount"]
+
+            native_drift = abs(stored_native - actual_native) / max(actual_native, 1e-9)
+            token_drift  = abs(stored_token  - actual_token)  / max(actual_token,  1e-9)
+
+            if native_drift > 0.05 or token_drift > 0.05:
+                log.warning(
+                    "PRICE INTEGRITY ALERT tx=%s  "
+                    "native stored=%.6f actual=%.6f drift=%.1f%%  "
+                    "token stored=%.6f actual=%.6f drift=%.1f%%",
+                    tx_hash[:16],
+                    stored_native, actual_native, native_drift * 100,
+                    stored_token,  actual_token,  token_drift  * 100,
+                )
+                drift_any = True
+            else:
+                log.debug("Price integrity OK tx=%s", tx_hash[:12])
+
+            time.sleep(CALL_DELAY)
+        except Exception as e:
+            log.debug("Verification error for %s: %s", tx_hash[:12], e)
+
+    if drift_any:
+        log.warning(
+            "PRICE INTEGRITY: drift detected in batch for wallet %s — "
+            "review _parse_swap before trusting scores", wallet[:12]
+        )
+        return False
+
+    log.info("Price integrity check passed (%d trades sampled)", len(sample))
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Ingest one wallet
 # ---------------------------------------------------------------------------
 
@@ -168,6 +246,10 @@ def ingest_wallet(wallet: str, chain: str, since_ts: int) -> dict:
 
     conn.commit()
     conn.close()
+
+    # Verify price integrity on freshly inserted trades
+    if inserted > 0:
+        _verify_price_integrity(trades, wallet)
 
     return {"inserted": inserted, "skipped_dup": skipped, "trades_found": len(trades)}
 
