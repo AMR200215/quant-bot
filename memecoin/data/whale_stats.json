@@ -1,0 +1,1653 @@
+[
+  {
+    "wallet": "3NtxeVw1TUKM5i6o7SMx8pnbnwq7q6qoXN5WHAfnHmWJ",
+    "trades": 3,
+    "closed_trades_n": 3,
+    "win_rate": 1.0,
+    "avg_roi": 16156.86,
+    "avg_win": 16156.86,
+    "avg_loss": 0,
+    "score": 16156.8567,
+    "closed_trades": [
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.393359,
+        "pnl_pct": 19567.96,
+        "win": true
+      },
+      {
+        "mint": "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r",
+        "cost_sol": 0.006,
+        "recv_sol": 1.104795,
+        "pnl_pct": 18313.25,
+        "win": true
+      },
+      {
+        "mint": "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r",
+        "cost_sol": 0.011,
+        "recv_sol": 1.175829,
+        "pnl_pct": 10589.36,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1778022427,
+    "newest_trade": 1778027075,
+    "source": "helius",
+    "name": "mined_3NtxeVw1"
+  },
+  {
+    "wallet": "7nt58K2KF8HwBiCcRprCYP7civVifXP59fE4x229gAuv",
+    "trades": 6,
+    "closed_trades_n": 6,
+    "win_rate": 1.0,
+    "avg_roi": 8048.41,
+    "avg_win": 8048.41,
+    "avg_loss": 0,
+    "score": 8048.4133,
+    "closed_trades": [
+      {
+        "mint": "Gr9StSsowuK6NGvUAgJszz8HBw4383CnveZb94e4pump",
+        "cost_sol": 0.032,
+        "recv_sol": 0.971928,
+        "pnl_pct": 2937.27,
+        "win": true
+      },
+      {
+        "mint": "3fbw4ipxrdU4aV7tcchrfMVTjZm3sKYukqg98w3Mpump",
+        "cost_sol": 0.032,
+        "recv_sol": 7.890116,
+        "pnl_pct": 24556.61,
+        "win": true
+      },
+      {
+        "mint": "9kB6EzMmgUnw8CmCJZwhMSUgK2NqDjwwdaV2uYJ4pump",
+        "cost_sol": 0.124,
+        "recv_sol": 3.153589,
+        "pnl_pct": 2443.22,
+        "win": true
+      },
+      {
+        "mint": "9kB6EzMmgUnw8CmCJZwhMSUgK2NqDjwwdaV2uYJ4pump",
+        "cost_sol": 0.062,
+        "recv_sol": 5.262908,
+        "pnl_pct": 8388.56,
+        "win": true
+      },
+      {
+        "mint": "zi87E9xtFPRQ2o9qqerFxUDQLZgEkHrhpHDxxZhYi9a",
+        "cost_sol": 0.065,
+        "recv_sol": 5.102658,
+        "pnl_pct": 7750.24,
+        "win": true
+      },
+      {
+        "mint": "QFAomDRbvvjHDier1dggBk4bb8MjAA9HZogGUajpump",
+        "cost_sol": 0.105,
+        "recv_sol": 2.430304,
+        "pnl_pct": 2214.58,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1738797401,
+    "newest_trade": 1746244256,
+    "source": "helius",
+    "name": "bloom (potion)"
+  },
+  {
+    "wallet": "GGXbncYcpx5qhUx47Rey8hTGJjmXWF133cN8C4hN9Vc1",
+    "trades": 4,
+    "closed_trades_n": 4,
+    "win_rate": 1.0,
+    "avg_roi": 6157.7,
+    "avg_win": 6157.7,
+    "avg_loss": 0,
+    "score": 6157.7,
+    "closed_trades": [
+      {
+        "mint": "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r",
+        "cost_sol": 0.002,
+        "recv_sol": 0.116369,
+        "pnl_pct": 5718.43,
+        "win": true
+      },
+      {
+        "mint": "AzeNfRi7DX5HndH7dUgCxMD5sQPV7FPFH1cwDkoqpump",
+        "cost_sol": 0.004,
+        "recv_sol": 0.253116,
+        "pnl_pct": 6227.9,
+        "win": true
+      },
+      {
+        "mint": "DyhgWtTeAE2UYEfLwpAZ4441eaCWFedRMoxUYM9ypump",
+        "cost_sol": 0.0011,
+        "recv_sol": 0.060876,
+        "pnl_pct": 5434.2,
+        "win": true
+      },
+      {
+        "mint": "25XNzUz9spyy8W4KFeH6CugVotzLE3iAueNyRxBQpump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.147005,
+        "pnl_pct": 7250.27,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1777922725,
+    "newest_trade": 1778028593,
+    "source": "helius",
+    "name": "mined_GGXbncYc"
+  },
+  {
+    "wallet": "EcJWNtETrzdbj8s2dXpaE4Tu4r7fxALD6TNw9H8S6ksz",
+    "trades": 6,
+    "closed_trades_n": 6,
+    "win_rate": 1.0,
+    "avg_roi": 6005.76,
+    "avg_win": 6005.76,
+    "avg_loss": 0,
+    "score": 6005.7583,
+    "closed_trades": [
+      {
+        "mint": "CeaQMKNFp9L88owxhMU1dttLgqS1Na2ABwbpYnK7pump",
+        "cost_sol": 0.034,
+        "recv_sol": 2.20893,
+        "pnl_pct": 6396.85,
+        "win": true
+      },
+      {
+        "mint": "F6Zny8y1F48cymsaFmk2Sr9jjQJJnsHZAcnWyUWULcm2",
+        "cost_sol": 0.058,
+        "recv_sol": 3.269491,
+        "pnl_pct": 5537.05,
+        "win": true
+      },
+      {
+        "mint": "FFcNfVPv9GGQwCCJdxCqsiyYEZDtEhtwNKZ9cVBjpump",
+        "cost_sol": 0.03,
+        "recv_sol": 2.257494,
+        "pnl_pct": 7424.98,
+        "win": true
+      },
+      {
+        "mint": "FFcNfVPv9GGQwCCJdxCqsiyYEZDtEhtwNKZ9cVBjpump",
+        "cost_sol": 0.055,
+        "recv_sol": 2.224027,
+        "pnl_pct": 3943.68,
+        "win": true
+      },
+      {
+        "mint": "D57n9cPe41vsJTwHaoXYi9WwpLcJtbzntD9fYgw8pump",
+        "cost_sol": 0.07,
+        "recv_sol": 4.663075,
+        "pnl_pct": 6561.54,
+        "win": true
+      },
+      {
+        "mint": "D57n9cPe41vsJTwHaoXYi9WwpLcJtbzntD9fYgw8pump",
+        "cost_sol": 0.05,
+        "recv_sol": 3.135227,
+        "pnl_pct": 6170.45,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1776618629,
+    "newest_trade": 1776640834,
+    "source": "helius",
+    "name": "nothing (shocked)"
+  },
+  {
+    "wallet": "9K18MstUaXmSFSBoa9qDTqWTnYhTZqdgEhuKRTVRgh6g",
+    "trades": 7,
+    "closed_trades_n": 7,
+    "win_rate": 1.0,
+    "avg_roi": 4767.31,
+    "avg_win": 4767.31,
+    "avg_loss": 0,
+    "score": 4767.3086,
+    "closed_trades": [
+      {
+        "mint": "2akXpuyFXAVN5YofZpZMfBp2Vxognpmv9NooBMuHpump",
+        "cost_sol": 0.02,
+        "recv_sol": 0.724655,
+        "pnl_pct": 3523.28,
+        "win": true
+      },
+      {
+        "mint": "8Jx8AAHj86wbQgUTjGuj6GTTL5Ps3cqxKRTvpaJApump",
+        "cost_sol": 0.055,
+        "recv_sol": 2.545618,
+        "pnl_pct": 4528.4,
+        "win": true
+      },
+      {
+        "mint": "rrNNJPsVnmhgHR33oXSEstjsKx9mfb4Vim4MuDtpump",
+        "cost_sol": 0.035,
+        "recv_sol": 1.331938,
+        "pnl_pct": 3705.54,
+        "win": true
+      },
+      {
+        "mint": "Hoi9Lo8s2PP7EM9mv9bZjQ3aSB7ijyS238sTqQjbpump",
+        "cost_sol": 0.025,
+        "recv_sol": 0.98081,
+        "pnl_pct": 3823.24,
+        "win": true
+      },
+      {
+        "mint": "8Jx8AAHj86wbQgUTjGuj6GTTL5Ps3cqxKRTvpaJApump",
+        "cost_sol": 0.065,
+        "recv_sol": 1.003442,
+        "pnl_pct": 1443.76,
+        "win": true
+      },
+      {
+        "mint": "rrNNJPsVnmhgHR33oXSEstjsKx9mfb4Vim4MuDtpump",
+        "cost_sol": 0.035,
+        "recv_sol": 0.711107,
+        "pnl_pct": 1931.73,
+        "win": true
+      },
+      {
+        "mint": "Hoi9Lo8s2PP7EM9mv9bZjQ3aSB7ijyS238sTqQjbpump",
+        "cost_sol": 0.015,
+        "recv_sol": 2.177281,
+        "pnl_pct": 14415.21,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1769357288,
+    "newest_trade": 1770266317,
+    "source": "helius",
+    "name": "Sabby"
+  },
+  {
+    "wallet": "8MaVa9kdt3NW4Q5HyNAm1X5LbR8PQRVDc1W8NMVK88D5",
+    "trades": 3,
+    "closed_trades_n": 3,
+    "win_rate": 0.6667,
+    "avg_roi": 1850.13,
+    "avg_win": 2789.73,
+    "avg_loss": -29.08,
+    "score": 1233.4178,
+    "closed_trades": [
+      {
+        "mint": "FJtB7uHWLDJA92vv2zdTyGRzMDQ227vivWhEjaeEpump",
+        "cost_sol": 9.2091,
+        "recv_sol": 6.531316,
+        "pnl_pct": -29.08,
+        "win": false
+      },
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.1131,
+        "recv_sol": 6.41338,
+        "pnl_pct": 5570.54,
+        "win": true
+      },
+      {
+        "mint": "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+        "cost_sol": 5.052,
+        "recv_sol": 5.502678,
+        "pnl_pct": 8.92,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1778002284,
+    "newest_trade": 1778027456,
+    "source": "helius",
+    "name": "Daumen"
+  },
+  {
+    "wallet": "DsqRyTUh1R37asYcVf1KdX4CNnz5DKEFmnXvgT4NfTPE",
+    "trades": 5,
+    "closed_trades_n": 5,
+    "win_rate": 0.6,
+    "avg_roi": 281.58,
+    "avg_win": 478.93,
+    "avg_loss": -14.44,
+    "score": 168.9504,
+    "closed_trades": [
+      {
+        "mint": "J5pCZFA2yFW3yatMKwtVUQsHXcrPyvFn3oworv8Rpump",
+        "cost_sol": 1.605114,
+        "recv_sol": 2.272838,
+        "pnl_pct": 41.6,
+        "win": true
+      },
+      {
+        "mint": "J5pCZFA2yFW3yatMKwtVUQsHXcrPyvFn3oworv8Rpump",
+        "cost_sol": 2.40352,
+        "recv_sol": 2.218153,
+        "pnl_pct": -7.71,
+        "win": false
+      },
+      {
+        "mint": "9dDtqQ5JNNYviBA9SbtVgyLw6sxTuAUMDAXjDTBaXrXh",
+        "cost_sol": 2.00176,
+        "recv_sol": 1.578137,
+        "pnl_pct": -21.16,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 0.4,
+        "recv_sol": 5.781565,
+        "pnl_pct": 1345.39,
+        "win": true
+      },
+      {
+        "mint": "7fTMb6uz78kaFzecNrZbYQbSgezCSYCTufNkBVfjwhhu",
+        "cost_sol": 1.001,
+        "recv_sol": 1.49946,
+        "pnl_pct": 49.8,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1776729185,
+    "newest_trade": 1777985268,
+    "source": "helius",
+    "name": "Classic"
+  },
+  {
+    "wallet": "DwtF6KdjB9xgzKhCvcxKQLGU1NezdFFdVo8tLzSb7C8W",
+    "trades": 3,
+    "closed_trades_n": 3,
+    "win_rate": 0.6667,
+    "avg_roi": 41.29,
+    "avg_win": 106.78,
+    "avg_loss": -89.67,
+    "score": 27.5289,
+    "closed_trades": [
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 20.0,
+        "recv_sol": 60.250599,
+        "pnl_pct": 201.25,
+        "win": true
+      },
+      {
+        "mint": "Eg2ymQ2aQqjMcibnmTt8erC6Tvk9PVpJZCxvVPJz2agu",
+        "cost_sol": 201.07,
+        "recv_sol": 20.77021,
+        "pnl_pct": -89.67,
+        "win": false
+      },
+      {
+        "mint": "BczxV3jjYYH4kTWTVjiTFUU9Ni44yjCVLrF1Gcy4pump",
+        "cost_sol": 5.01,
+        "recv_sol": 5.626282,
+        "pnl_pct": 12.3,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1774563192,
+    "newest_trade": 1778021150,
+    "source": "helius",
+    "name": "Pow Alt2"
+  },
+  {
+    "wallet": "9jyqFiLnruggwNn4EQwBNFXwpbLM9hrA4hV59ytyAVVz",
+    "trades": 4,
+    "closed_trades_n": 4,
+    "win_rate": 0.5,
+    "avg_roi": 51.5,
+    "avg_win": 180.19,
+    "avg_loss": -77.2,
+    "score": 25.7487,
+    "closed_trades": [
+      {
+        "mint": "HXzqEEUjQ6JevbrJiMBAwoiCVikZb93XHmYtde4iCA3G",
+        "cost_sol": 35.018933,
+        "recv_sol": 13.230693,
+        "pnl_pct": -62.22,
+        "win": false
+      },
+      {
+        "mint": "HXzqEEUjQ6JevbrJiMBAwoiCVikZb93XHmYtde4iCA3G",
+        "cost_sol": 19.04745,
+        "recv_sol": 1.489569,
+        "pnl_pct": -92.18,
+        "win": false
+      },
+      {
+        "mint": "2Fiut5a3s7vBkGFKXd7kH2v8W1idJ9g7CWAvMEdVpump",
+        "cost_sol": 8.018795,
+        "recv_sol": 11.561426,
+        "pnl_pct": 44.18,
+        "win": true
+      },
+      {
+        "mint": "9HHw2d8NzfrewaPhJJny68HRYfBrMFZZkKQWEqMNpump",
+        "cost_sol": 2.327024,
+        "recv_sol": 9.68529,
+        "pnl_pct": 316.21,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1777677920,
+    "newest_trade": 1777915268,
+    "source": "helius",
+    "name": "nach"
+  },
+  {
+    "wallet": "784wcFWsiNH9e48joMZYyMcBupdy5sU31UaVZotmucAy",
+    "trades": 13,
+    "closed_trades_n": 13,
+    "win_rate": 0.6154,
+    "avg_roi": 17.21,
+    "avg_win": 38.76,
+    "avg_loss": -17.28,
+    "score": 10.5889,
+    "closed_trades": [
+      {
+        "mint": "6Ufgz7Ny2foDzwC4hNuA5fD5TR5hcEzu2XkjKoaBWeaj",
+        "cost_sol": 0.444783,
+        "recv_sol": 0.396863,
+        "pnl_pct": -10.77,
+        "win": false
+      },
+      {
+        "mint": "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+        "cost_sol": 0.608747,
+        "recv_sol": 0.425166,
+        "pnl_pct": -30.16,
+        "win": false
+      },
+      {
+        "mint": "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+        "cost_sol": 0.576594,
+        "recv_sol": 0.742539,
+        "pnl_pct": 28.78,
+        "win": true
+      },
+      {
+        "mint": "48kvjZzEpsJCNfd3jWWYKKY4pNhhiHdSuvYW6tzTpump",
+        "cost_sol": 0.696261,
+        "recv_sol": 0.628326,
+        "pnl_pct": -9.76,
+        "win": false
+      },
+      {
+        "mint": "E4XuY6S53A5dsNackvJVVBduCka17ZGAKciaQHrGpump",
+        "cost_sol": 0.368899,
+        "recv_sol": 0.600767,
+        "pnl_pct": 62.85,
+        "win": true
+      },
+      {
+        "mint": "124Yn3UCD4YBb8JcyW6A2g9jjgG4Ykp8VBp7XQNQpump",
+        "cost_sol": 0.305501,
+        "recv_sol": 0.320028,
+        "pnl_pct": 4.75,
+        "win": true
+      },
+      {
+        "mint": "5DKpFABHrtepo2NxR4B4TM3FfngtSN6L8mYkFU5epump",
+        "cost_sol": 0.493578,
+        "recv_sol": 0.533591,
+        "pnl_pct": 8.11,
+        "win": true
+      },
+      {
+        "mint": "6Ufgz7Ny2foDzwC4hNuA5fD5TR5hcEzu2XkjKoaBWeaj",
+        "cost_sol": 0.388568,
+        "recv_sol": 0.601643,
+        "pnl_pct": 54.84,
+        "win": true
+      },
+      {
+        "mint": "Gv2i54czMSYbkygCKhLRYc59JNVtfrofFwd9mPqZpump",
+        "cost_sol": 0.253157,
+        "recv_sol": 0.513137,
+        "pnl_pct": 102.7,
+        "win": true
+      },
+      {
+        "mint": "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump",
+        "cost_sol": 0.38213,
+        "recv_sol": 0.373461,
+        "pnl_pct": -2.27,
+        "win": false
+      },
+      {
+        "mint": "FyKukDrSyFH8byBiV7Z7vq5d9V6XHNpXsSqhCx9spump",
+        "cost_sol": 0.350041,
+        "recv_sol": 0.481535,
+        "pnl_pct": 37.57,
+        "win": true
+      },
+      {
+        "mint": "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+        "cost_sol": 0.678153,
+        "recv_sol": 0.451228,
+        "pnl_pct": -33.46,
+        "win": false
+      },
+      {
+        "mint": "6Ufgz7Ny2foDzwC4hNuA5fD5TR5hcEzu2XkjKoaBWeaj",
+        "cost_sol": 0.529316,
+        "recv_sol": 0.584923,
+        "pnl_pct": 10.51,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1778026372,
+    "newest_trade": 1778028645,
+    "source": "helius",
+    "name": "mined_784wcFWs"
+  },
+  {
+    "wallet": "7SDs3PjT2mswKQ7Zo4FTucn9gJdtuW4jaacPA65BseHS",
+    "trades": 4,
+    "closed_trades_n": 4,
+    "win_rate": 0.75,
+    "avg_roi": 12.68,
+    "avg_win": 27.11,
+    "avg_loss": -30.61,
+    "score": 9.5119,
+    "closed_trades": [
+      {
+        "mint": "GmJHvKWmZQtDDGHH4BYpZbBsQfy614YxLFUPrvHRpump",
+        "cost_sol": 2.164051,
+        "recv_sol": 1.501725,
+        "pnl_pct": -30.61,
+        "win": false
+      },
+      {
+        "mint": "GmJHvKWmZQtDDGHH4BYpZbBsQfy614YxLFUPrvHRpump",
+        "cost_sol": 1.669767,
+        "recv_sol": 1.676917,
+        "pnl_pct": 0.43,
+        "win": true
+      },
+      {
+        "mint": "4coieoRS7vBBek5UxDjzAuazkxUPMVihT6oj4o7Ypump",
+        "cost_sol": 0.930312,
+        "recv_sol": 1.573368,
+        "pnl_pct": 69.12,
+        "win": true
+      },
+      {
+        "mint": "4coieoRS7vBBek5UxDjzAuazkxUPMVihT6oj4o7Ypump",
+        "cost_sol": 1.7848,
+        "recv_sol": 1.995167,
+        "pnl_pct": 11.79,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1777498346,
+    "newest_trade": 1777595246,
+    "source": "helius",
+    "name": "insentos grandfnf"
+  },
+  {
+    "wallet": "4wncaMtsKxfnGK4PC6EMfZGQ6YQtLMt61dAsMRaXrte9",
+    "trades": 12,
+    "closed_trades_n": 12,
+    "win_rate": 0.5833,
+    "avg_roi": 13.23,
+    "avg_win": 33.64,
+    "avg_loss": -15.35,
+    "score": 7.717,
+    "closed_trades": [
+      {
+        "mint": "Bnc6YCYMTacnh1xXbMsGeLWHMmEJRUbo8wU8BgdZqeyP",
+        "cost_sol": 0.384696,
+        "recv_sol": 0.621298,
+        "pnl_pct": 61.5,
+        "win": true
+      },
+      {
+        "mint": "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+        "cost_sol": 0.413371,
+        "recv_sol": 0.827618,
+        "pnl_pct": 100.21,
+        "win": true
+      },
+      {
+        "mint": "4G6KAs7Rp81vta3i5XpqeYCBWAcKrahXqmvECLFMpump",
+        "cost_sol": 0.460663,
+        "recv_sol": 0.503399,
+        "pnl_pct": 9.28,
+        "win": true
+      },
+      {
+        "mint": "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+        "cost_sol": 0.518999,
+        "recv_sol": 0.582152,
+        "pnl_pct": 12.17,
+        "win": true
+      },
+      {
+        "mint": "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+        "cost_sol": 0.715133,
+        "recv_sol": 0.624303,
+        "pnl_pct": -12.7,
+        "win": false
+      },
+      {
+        "mint": "7N9LXfiFK2Je8XB17Ls6iXtMeCN6BJubFATggjQrpump",
+        "cost_sol": 0.566589,
+        "recv_sol": 0.646072,
+        "pnl_pct": 14.03,
+        "win": true
+      },
+      {
+        "mint": "124Yn3UCD4YBb8JcyW6A2g9jjgG4Ykp8VBp7XQNQpump",
+        "cost_sol": 0.641233,
+        "recv_sol": 0.471009,
+        "pnl_pct": -26.55,
+        "win": false
+      },
+      {
+        "mint": "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+        "cost_sol": 0.533947,
+        "recv_sol": 0.625478,
+        "pnl_pct": 17.14,
+        "win": true
+      },
+      {
+        "mint": "Gv2i54czMSYbkygCKhLRYc59JNVtfrofFwd9mPqZpump",
+        "cost_sol": 0.45604,
+        "recv_sol": 0.421531,
+        "pnl_pct": -7.57,
+        "win": false
+      },
+      {
+        "mint": "GtXvZ85zmcYr5p6uccMiL4jfKv2Hs7RoH8f2Sg8Vkua6",
+        "cost_sol": 0.631912,
+        "recv_sol": 0.765759,
+        "pnl_pct": 21.18,
+        "win": true
+      },
+      {
+        "mint": "4hsxz9UDR7kt9HRvpe6GUvMVx1RL6U4U8gMAFDG4pump",
+        "cost_sol": 0.509927,
+        "recv_sol": 0.414831,
+        "pnl_pct": -18.65,
+        "win": false
+      },
+      {
+        "mint": "Gv2i54czMSYbkygCKhLRYc59JNVtfrofFwd9mPqZpump",
+        "cost_sol": 0.439394,
+        "recv_sol": 0.389806,
+        "pnl_pct": -11.29,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1778027035,
+    "newest_trade": 1778028670,
+    "source": "helius",
+    "name": "mined_4wncaMts"
+  },
+  {
+    "wallet": "4w1NEBWKEHAEba3q6yPMrJnSaRY5t7AmdHGmV7n8tvzf",
+    "trades": 26,
+    "closed_trades_n": 26,
+    "win_rate": 0.5385,
+    "avg_roi": 9.09,
+    "avg_win": 22.42,
+    "avg_loss": -6.45,
+    "score": 4.8957,
+    "closed_trades": [
+      {
+        "mint": "FJtB7uHWLDJA92vv2zdTyGRzMDQ227vivWhEjaeEpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002394,
+        "pnl_pct": -14.49,
+        "win": false
+      },
+      {
+        "mint": "FJtB7uHWLDJA92vv2zdTyGRzMDQ227vivWhEjaeEpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.00415,
+        "pnl_pct": 48.23,
+        "win": true
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002595,
+        "pnl_pct": -7.31,
+        "win": false
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002624,
+        "pnl_pct": -6.27,
+        "win": false
+      },
+      {
+        "mint": "HopMHHPfSV2kWQLghKt6xR1oWbPRLA2UyxnKGoPpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002518,
+        "pnl_pct": -10.06,
+        "win": false
+      },
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.004468,
+        "pnl_pct": 59.58,
+        "win": true
+      },
+      {
+        "mint": "FJtB7uHWLDJA92vv2zdTyGRzMDQ227vivWhEjaeEpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002816,
+        "pnl_pct": 0.57,
+        "win": true
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002562,
+        "pnl_pct": -8.5,
+        "win": false
+      },
+      {
+        "mint": "Gv2i54czMSYbkygCKhLRYc59JNVtfrofFwd9mPqZpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002996,
+        "pnl_pct": 7.0,
+        "win": true
+      },
+      {
+        "mint": "13i7SfDDzg3t4MQnfZNtFKptHpv8HR2eaGRMfetSpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002665,
+        "pnl_pct": -4.81,
+        "win": false
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.003018,
+        "pnl_pct": 7.8,
+        "win": true
+      },
+      {
+        "mint": "4pvPqQak1oZZXhSph5zkw8KwxXSJkVHBFAthRDMFaj2W",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002471,
+        "pnl_pct": -11.74,
+        "win": false
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.0036,
+        "pnl_pct": 28.57,
+        "win": true
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002711,
+        "pnl_pct": -3.16,
+        "win": false
+      },
+      {
+        "mint": "5DKpFABHrtepo2NxR4B4TM3FfngtSN6L8mYkFU5epump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.003063,
+        "pnl_pct": 9.39,
+        "win": true
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.003536,
+        "pnl_pct": 26.3,
+        "win": true
+      },
+      {
+        "mint": "5DKpFABHrtepo2NxR4B4TM3FfngtSN6L8mYkFU5epump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.003649,
+        "pnl_pct": 30.33,
+        "win": true
+      },
+      {
+        "mint": "4hEV6nQMhPBRJq9tGgrgmx2vSW6zfx9258LJDBZTpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002871,
+        "pnl_pct": 2.55,
+        "win": true
+      },
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002683,
+        "pnl_pct": -4.18,
+        "win": false
+      },
+      {
+        "mint": "E4XuY6S53A5dsNackvJVVBduCka17ZGAKciaQHrGpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.003471,
+        "pnl_pct": 23.97,
+        "win": true
+      },
+      {
+        "mint": "5DKpFABHrtepo2NxR4B4TM3FfngtSN6L8mYkFU5epump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.003419,
+        "pnl_pct": 22.11,
+        "win": true
+      },
+      {
+        "mint": "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002783,
+        "pnl_pct": -0.6,
+        "win": false
+      },
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.003712,
+        "pnl_pct": 32.58,
+        "win": true
+      },
+      {
+        "mint": "5DKpFABHrtepo2NxR4B4TM3FfngtSN6L8mYkFU5epump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002637,
+        "pnl_pct": -5.83,
+        "win": false
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.002786,
+        "pnl_pct": -0.51,
+        "win": false
+      },
+      {
+        "mint": "5DKpFABHrtepo2NxR4B4TM3FfngtSN6L8mYkFU5epump",
+        "cost_sol": 0.0028,
+        "recv_sol": 0.003216,
+        "pnl_pct": 14.87,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1778025446,
+    "newest_trade": 1778028452,
+    "source": "helius",
+    "name": "mined_4w1NEBWK"
+  },
+  {
+    "wallet": "871tRQoN73bwb4zsdXAsGEaZeF45DEFQZVsa4ic8bpwC",
+    "trades": 9,
+    "closed_trades_n": 9,
+    "win_rate": 0.3333,
+    "avg_roi": 2.91,
+    "avg_win": 28.46,
+    "avg_loss": -9.87,
+    "score": 0.9696,
+    "closed_trades": [
+      {
+        "mint": "4uneHhw6CtxmK6AWU4wULD3tYH7wcarcyAcT6cxRpump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.00333,
+        "pnl_pct": 66.52,
+        "win": true
+      },
+      {
+        "mint": "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.001725,
+        "pnl_pct": -13.75,
+        "win": false
+      },
+      {
+        "mint": "H3Vhs8M6qDQN9XBfXgx5CB1StBNqtNry62G3oZrWpump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.00198,
+        "pnl_pct": -0.99,
+        "win": false
+      },
+      {
+        "mint": "Gv2i54czMSYbkygCKhLRYc59JNVtfrofFwd9mPqZpump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.001825,
+        "pnl_pct": -8.77,
+        "win": false
+      },
+      {
+        "mint": "2fiN8Xkyi7XrdpwcZEVoCsiDAan522WjnrTHnr8Jpump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.00201,
+        "pnl_pct": 0.51,
+        "win": true
+      },
+      {
+        "mint": "3o6RF4XvSAyVavD1JWNqwasBi4L69ZJUhy9Pm8Tfpump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.001839,
+        "pnl_pct": -8.05,
+        "win": false
+      },
+      {
+        "mint": "13i7SfDDzg3t4MQnfZNtFKptHpv8HR2eaGRMfetSpump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.001613,
+        "pnl_pct": -19.34,
+        "win": false
+      },
+      {
+        "mint": "DEEu4U5JHY6KJtZZ9J6iSw6vwXTx4Rr9J3S3e1FBpump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.001834,
+        "pnl_pct": -8.3,
+        "win": false
+      },
+      {
+        "mint": "reaaHQZfKRiL6U7CpjitAS2GAi88MpUbzyfSCkepump",
+        "cost_sol": 0.002,
+        "recv_sol": 0.002367,
+        "pnl_pct": 18.35,
+        "win": true
+      }
+    ],
+    "oldest_trade": 1778013111,
+    "newest_trade": 1778025501,
+    "source": "helius",
+    "name": "mined_871tRQoN"
+  },
+  {
+    "wallet": "Ar2Y6o1QmrRAskjii1cRfijeKugHH13ycxW5cd7rro1x",
+    "trades": 20,
+    "closed_trades_n": 20,
+    "win_rate": 0.45,
+    "avg_roi": 0.44,
+    "avg_win": 12.46,
+    "avg_loss": -9.39,
+    "score": 0.1994,
+    "closed_trades": [
+      {
+        "mint": "FJtB7uHWLDJA92vv2zdTyGRzMDQ227vivWhEjaeEpump",
+        "cost_sol": 1.096341,
+        "recv_sol": 1.063114,
+        "pnl_pct": -3.03,
+        "win": false
+      },
+      {
+        "mint": "FJtB7uHWLDJA92vv2zdTyGRzMDQ227vivWhEjaeEpump",
+        "cost_sol": 1.272716,
+        "recv_sol": 1.284687,
+        "pnl_pct": 0.94,
+        "win": true
+      },
+      {
+        "mint": "8xm5yjBpV1jzCahm1CgshVg5HZtRDbVZZWhTccv5pump",
+        "cost_sol": 0.401367,
+        "recv_sol": 0.460761,
+        "pnl_pct": 14.8,
+        "win": true
+      },
+      {
+        "mint": "5yz7bUHQoDZ65zWa3d6f7TTfq9n5Vt4PXeXJx3Yzpump",
+        "cost_sol": 0.9032,
+        "recv_sol": 0.901022,
+        "pnl_pct": -0.24,
+        "win": false
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.534606,
+        "recv_sol": 0.471126,
+        "pnl_pct": -11.87,
+        "win": false
+      },
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.630419,
+        "recv_sol": 0.502684,
+        "pnl_pct": -20.26,
+        "win": false
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.509755,
+        "recv_sol": 0.487934,
+        "pnl_pct": -4.28,
+        "win": false
+      },
+      {
+        "mint": "HopMHHPfSV2kWQLghKt6xR1oWbPRLA2UyxnKGoPpump",
+        "cost_sol": 1.2383,
+        "recv_sol": 1.045985,
+        "pnl_pct": -15.53,
+        "win": false
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.524083,
+        "recv_sol": 0.583011,
+        "pnl_pct": 11.24,
+        "win": true
+      },
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.430884,
+        "recv_sol": 0.451572,
+        "pnl_pct": 4.8,
+        "win": true
+      },
+      {
+        "mint": "FJtB7uHWLDJA92vv2zdTyGRzMDQ227vivWhEjaeEpump",
+        "cost_sol": 0.847019,
+        "recv_sol": 0.966385,
+        "pnl_pct": 14.09,
+        "win": true
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.602891,
+        "recv_sol": 0.576796,
+        "pnl_pct": -4.33,
+        "win": false
+      },
+      {
+        "mint": "Gv2i54czMSYbkygCKhLRYc59JNVtfrofFwd9mPqZpump",
+        "cost_sol": 1.45019,
+        "recv_sol": 1.875862,
+        "pnl_pct": 29.35,
+        "win": true
+      },
+      {
+        "mint": "4hEV6nQMhPBRJq9tGgrgmx2vSW6zfx9258LJDBZTpump",
+        "cost_sol": 0.281533,
+        "recv_sol": 0.225659,
+        "pnl_pct": -19.85,
+        "win": false
+      },
+      {
+        "mint": "13i7SfDDzg3t4MQnfZNtFKptHpv8HR2eaGRMfetSpump",
+        "cost_sol": 0.4165,
+        "recv_sol": 0.378476,
+        "pnl_pct": -9.13,
+        "win": false
+      },
+      {
+        "mint": "Gv2i54czMSYbkygCKhLRYc59JNVtfrofFwd9mPqZpump",
+        "cost_sol": 1.703695,
+        "recv_sol": 1.755938,
+        "pnl_pct": 3.07,
+        "win": true
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.632187,
+        "recv_sol": 0.683303,
+        "pnl_pct": 8.09,
+        "win": true
+      },
+      {
+        "mint": "4pvPqQak1oZZXhSph5zkw8KwxXSJkVHBFAthRDMFaj2W",
+        "cost_sol": 0.494572,
+        "recv_sol": 0.431418,
+        "pnl_pct": -12.77,
+        "win": false
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.635912,
+        "recv_sol": 0.799956,
+        "pnl_pct": 25.8,
+        "win": true
+      },
+      {
+        "mint": "De1HDC3ppBuggSon5C7y7sqfcntQqNwzhagXTB4upump",
+        "cost_sol": 0.571208,
+        "recv_sol": 0.559635,
+        "pnl_pct": -2.03,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1778026271,
+    "newest_trade": 1778028452,
+    "source": "helius",
+    "name": "mined_Ar2Y6o1Q"
+  },
+  {
+    "wallet": "HkFt55P3PhRWHXoTFeuvkKEE4ab26xZ1bk6UmXV88Pwz",
+    "trades": 3,
+    "closed_trades_n": 3,
+    "win_rate": 0.0,
+    "avg_roi": -39.37,
+    "avg_win": 0,
+    "avg_loss": -39.37,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "CsFbdZvPSWe1Esy24YHhrKXKCfqfbBynjGe2aRBV4KAb",
+        "cost_sol": 0.517,
+        "recv_sol": 0.450287,
+        "pnl_pct": -12.9,
+        "win": false
+      },
+      {
+        "mint": "FfYZkaULHesDus1JQQH7B9KH1b8wcd7CHnQFaKcfpump",
+        "cost_sol": 0.517,
+        "recv_sol": 0.077289,
+        "pnl_pct": -85.05,
+        "win": false
+      },
+      {
+        "mint": "2ra5idczuCQhDe1U5D52G8Rms6hzHuHeTqP51fdHpump",
+        "cost_sol": 8.4285,
+        "recv_sol": 6.728257,
+        "pnl_pct": -20.17,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1777003516,
+    "newest_trade": 1777952777,
+    "source": "helius",
+    "name": "Terp"
+  },
+  {
+    "wallet": "DKgvpfttzmJqZXdavDwTxwSVkajibjzJnN2FA99dyciK",
+    "trades": 5,
+    "closed_trades_n": 5,
+    "win_rate": 0.2,
+    "avg_roi": -9.59,
+    "avg_win": 111.02,
+    "avg_loss": -39.74,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "33xDbZM2bUHF841LKJauRZFrDtBJiUKhCH5yVh2KDWH2",
+        "cost_sol": 25.28,
+        "recv_sol": 23.972726,
+        "pnl_pct": -5.17,
+        "win": false
+      },
+      {
+        "mint": "33xDbZM2bUHF841LKJauRZFrDtBJiUKhCH5yVh2KDWH2",
+        "cost_sol": 25.28,
+        "recv_sol": 18.650524,
+        "pnl_pct": -26.22,
+        "win": false
+      },
+      {
+        "mint": "33xDbZM2bUHF841LKJauRZFrDtBJiUKhCH5yVh2KDWH2",
+        "cost_sol": 24.019125,
+        "recv_sol": 50.686176,
+        "pnl_pct": 111.02,
+        "win": true
+      },
+      {
+        "mint": "DQa4mxFws6WsXMwn8gpEBXqMsGfDn4Uopi8W2Zvopump",
+        "cost_sol": 50.58,
+        "recv_sol": 18.197653,
+        "pnl_pct": -64.02,
+        "win": false
+      },
+      {
+        "mint": "4y1gkKzCb4qAiH8pH8ft2xvezf6sazurmYDajWXwpump",
+        "cost_sol": 50.6,
+        "recv_sol": 18.437005,
+        "pnl_pct": -63.56,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1777435794,
+    "newest_trade": 1778017058,
+    "source": "helius",
+    "name": "Rowdy"
+  },
+  {
+    "wallet": "4CqecFud362LKgALvChyhj6276he3Sy8yKim1uvFNV1m",
+    "trades": 3,
+    "closed_trades_n": 3,
+    "win_rate": 0.0,
+    "avg_roi": -72.88,
+    "avg_win": 0,
+    "avg_loss": -72.88,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "8m9ska6uPw1xoFskyAWKaHnVqobC37F1okjve6L5pump",
+        "cost_sol": 14.950572,
+        "recv_sol": 7.512954,
+        "pnl_pct": -49.75,
+        "win": false
+      },
+      {
+        "mint": "8m9ska6uPw1xoFskyAWKaHnVqobC37F1okjve6L5pump",
+        "cost_sol": 7.778316,
+        "recv_sol": 1.281213,
+        "pnl_pct": -83.53,
+        "win": false
+      },
+      {
+        "mint": "3QQQxazHaMb72d7N9iftT26vuk6A4Re31fYmkwA2pump",
+        "cost_sol": 10.958,
+        "recv_sol": 1.602852,
+        "pnl_pct": -85.37,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1777563083,
+    "newest_trade": 1777938899,
+    "source": "helius",
+    "name": "P89 TT3"
+  },
+  {
+    "wallet": "5mtbmPwj2SMkxPP9c93s9oD9bmMdByTqepNarM9Y7u7e",
+    "trades": 5,
+    "closed_trades_n": 5,
+    "win_rate": 0.2,
+    "avg_roi": -31.03,
+    "avg_win": 75.31,
+    "avg_loss": -57.61,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "E6ifp2mJy8cYQehUGUtFvrXriRKxRuonLmrvTFypump",
+        "cost_sol": 10.016635,
+        "recv_sol": 3.58678,
+        "pnl_pct": -64.19,
+        "win": false
+      },
+      {
+        "mint": "9XeizW4yMfUqfGmqF3niSL9zkWwGJQ8EY9EQopWQmM7S",
+        "cost_sol": 5.032618,
+        "recv_sol": 3.727893,
+        "pnl_pct": -25.93,
+        "win": false
+      },
+      {
+        "mint": "VXnX59zHN7j8FrA971nJij7q2RvPSPa3TioV236pump",
+        "cost_sol": 3.259301,
+        "recv_sol": 1.409868,
+        "pnl_pct": -56.74,
+        "win": false
+      },
+      {
+        "mint": "VXnX59zHN7j8FrA971nJij7q2RvPSPa3TioV236pump",
+        "cost_sol": 1.367527,
+        "recv_sol": 2.39746,
+        "pnl_pct": 75.31,
+        "win": true
+      },
+      {
+        "mint": "VXnX59zHN7j8FrA971nJij7q2RvPSPa3TioV236pump",
+        "cost_sol": 2.562276,
+        "recv_sol": 0.420653,
+        "pnl_pct": -83.58,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1775944729,
+    "newest_trade": 1777999988,
+    "source": "helius",
+    "name": "RyxnH"
+  },
+  {
+    "wallet": "fLTnN43bDb5h8Shf5TjSD51FUL5XXvrZ8kFqLzAqJ32",
+    "trades": 4,
+    "closed_trades_n": 4,
+    "win_rate": 0.5,
+    "avg_roi": -23.9,
+    "avg_win": 4.44,
+    "avg_loss": -52.24,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "6oo2hGUxNzwBbTGVrXdraYt2j3evrRuN9vSBEPaFfomo",
+        "cost_sol": 0.039839,
+        "recv_sol": 0.041284,
+        "pnl_pct": 3.63,
+        "win": true
+      },
+      {
+        "mint": "G9Z4t4Vam9zBzonwKobGGig9sQdkjxUYtnQ1H2oYpump",
+        "cost_sol": 0.181226,
+        "recv_sol": 0.190725,
+        "pnl_pct": 5.24,
+        "win": true
+      },
+      {
+        "mint": "HLHyVt7opcaBoV9ECiLyqAe8QHYihvDQ2YPCCJ4Vpump",
+        "cost_sol": 1.224482,
+        "recv_sol": 1.16647,
+        "pnl_pct": -4.74,
+        "win": false
+      },
+      {
+        "mint": "AhbbkmC4moSJWfKyje5gY8VD4Rdv3kt9GXXnNchnpump",
+        "cost_sol": 1.994324,
+        "recv_sol": 0.00524,
+        "pnl_pct": -99.74,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1776481608,
+    "newest_trade": 1777587011,
+    "source": "helius",
+    "name": "opus tt"
+  },
+  {
+    "wallet": "7rbxsXchaL1Jz46BXbF88k1hBYoWHLaKo8YbofMndW46",
+    "trades": 7,
+    "closed_trades_n": 7,
+    "win_rate": 0.1429,
+    "avg_roi": -37.53,
+    "avg_win": 17.39,
+    "avg_loss": -46.68,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "BSHEgfgRczQx3vrxUJgkU51q384bXxe8WkVA9D6upump",
+        "cost_sol": 0.077478,
+        "recv_sol": 0.04001,
+        "pnl_pct": -48.36,
+        "win": false
+      },
+      {
+        "mint": "oXaEf8gHTbPRQBWG8mJGTMcmmNux8jVGkeXDU7Cpump",
+        "cost_sol": 0.122595,
+        "recv_sol": 0.048074,
+        "pnl_pct": -60.79,
+        "win": false
+      },
+      {
+        "mint": "2tXpgu2DLTsPUf9zFmuZmA4xrYxXKBTpVq9wAM7hzs9y",
+        "cost_sol": 0.160123,
+        "recv_sol": 0.047265,
+        "pnl_pct": -70.48,
+        "win": false
+      },
+      {
+        "mint": "AzeNfRi7DX5HndH7dUgCxMD5sQPV7FPFH1cwDkoqpump",
+        "cost_sol": 0.040185,
+        "recv_sol": 0.047173,
+        "pnl_pct": 17.39,
+        "win": true
+      },
+      {
+        "mint": "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+        "cost_sol": 0.081359,
+        "recv_sol": 0.040805,
+        "pnl_pct": -49.85,
+        "win": false
+      },
+      {
+        "mint": "FJtB7uHWLDJA92vv2zdTyGRzMDQ227vivWhEjaeEpump",
+        "cost_sol": 0.040069,
+        "recv_sol": 0.039708,
+        "pnl_pct": -0.9,
+        "win": false
+      },
+      {
+        "mint": "Gv2i54czMSYbkygCKhLRYc59JNVtfrofFwd9mPqZpump",
+        "cost_sol": 0.080482,
+        "recv_sol": 0.040468,
+        "pnl_pct": -49.72,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1778028323,
+    "newest_trade": 1778028629,
+    "source": "helius",
+    "name": "mined_7rbxsXch"
+  },
+  {
+    "wallet": "BqwX75ayLPyprL6Lx5KYESmfUditNT4hUcrXfybFD5hx",
+    "trades": 11,
+    "closed_trades_n": 11,
+    "win_rate": 0.0,
+    "avg_roi": -65.76,
+    "avg_win": 0,
+    "avg_loss": -65.76,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 2.886489,
+        "recv_sol": 1.315848,
+        "pnl_pct": -54.41,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 1.195678,
+        "recv_sol": 0.007374,
+        "pnl_pct": -99.38,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 1.468892,
+        "recv_sol": 1.13315,
+        "pnl_pct": -22.86,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 4.661836,
+        "recv_sol": 1.773316,
+        "pnl_pct": -61.96,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 4.177218,
+        "recv_sol": 1.312213,
+        "pnl_pct": -68.59,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 8.586746,
+        "recv_sol": 1.132483,
+        "pnl_pct": -86.81,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 7.385874,
+        "recv_sol": 1.791376,
+        "pnl_pct": -75.75,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 12.032912,
+        "recv_sol": 1.138031,
+        "pnl_pct": -90.54,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 1.281463,
+        "recv_sol": 1.13935,
+        "pnl_pct": -11.09,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 3.812748,
+        "recv_sol": 1.410739,
+        "pnl_pct": -63.0,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 1.122678,
+        "recv_sol": 0.123703,
+        "pnl_pct": -88.98,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1778006213,
+    "newest_trade": 1778023507,
+    "source": "helius",
+    "name": "mined_BqwX75ay"
+  },
+  {
+    "wallet": "9S2VqBf7haR2ps3APpErDEyDt689ggq4mRXVLq5ABfxZ",
+    "trades": 8,
+    "closed_trades_n": 8,
+    "win_rate": 0.25,
+    "avg_roi": -67.45,
+    "avg_win": 3.8,
+    "avg_loss": -91.2,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 0.882505,
+        "recv_sol": 0.911913,
+        "pnl_pct": 3.33,
+        "win": true
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 5.505945,
+        "recv_sol": 1.004381,
+        "pnl_pct": -81.76,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 4.747281,
+        "recv_sol": 0.752665,
+        "pnl_pct": -84.15,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 0.965117,
+        "recv_sol": 1.006351,
+        "pnl_pct": 4.27,
+        "win": true
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 2.31185,
+        "recv_sol": 0.007438,
+        "pnl_pct": -99.68,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 10.491713,
+        "recv_sol": 1.015351,
+        "pnl_pct": -90.32,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 3.639094,
+        "recv_sol": 0.007583,
+        "pnl_pct": -99.79,
+        "win": false
+      },
+      {
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "cost_sol": 7.46333,
+        "recv_sol": 0.636594,
+        "pnl_pct": -91.47,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1778003066,
+    "newest_trade": 1778023507,
+    "source": "helius",
+    "name": "mined_9S2VqBf7"
+  },
+  {
+    "wallet": "4jkL4dNkY2UbpYrTgLA3u5FqKwKs1LM46RcE6FQU3qXi",
+    "trades": 10,
+    "closed_trades_n": 10,
+    "win_rate": 0.1,
+    "avg_roi": -54.54,
+    "avg_win": 17.84,
+    "avg_loss": -62.58,
+    "score": 0.0,
+    "closed_trades": [
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.030459,
+        "recv_sol": 0.035892,
+        "pnl_pct": 17.84,
+        "win": true
+      },
+      {
+        "mint": "124Yn3UCD4YBb8JcyW6A2g9jjgG4Ykp8VBp7XQNQpump",
+        "cost_sol": 0.103457,
+        "recv_sol": 0.074123,
+        "pnl_pct": -28.35,
+        "win": false
+      },
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.017324,
+        "recv_sol": 0.001879,
+        "pnl_pct": -89.15,
+        "win": false
+      },
+      {
+        "mint": "31CfJ2VjwHNmWHcKNDm3taCEU4VbiV4Jj7eqYBaTpump",
+        "cost_sol": 0.00235,
+        "recv_sol": 0.001909,
+        "pnl_pct": -18.78,
+        "win": false
+      },
+      {
+        "mint": "124Yn3UCD4YBb8JcyW6A2g9jjgG4Ykp8VBp7XQNQpump",
+        "cost_sol": 0.075963,
+        "recv_sol": 0.025837,
+        "pnl_pct": -65.99,
+        "win": false
+      },
+      {
+        "mint": "6Ufgz7Ny2foDzwC4hNuA5fD5TR5hcEzu2XkjKoaBWeaj",
+        "cost_sol": 0.015528,
+        "recv_sol": 0.009611,
+        "pnl_pct": -38.11,
+        "win": false
+      },
+      {
+        "mint": "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+        "cost_sol": 0.076733,
+        "recv_sol": 0.015265,
+        "pnl_pct": -80.11,
+        "win": false
+      },
+      {
+        "mint": "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+        "cost_sol": 0.115123,
+        "recv_sol": 0.028686,
+        "pnl_pct": -75.08,
+        "win": false
+      },
+      {
+        "mint": "124Yn3UCD4YBb8JcyW6A2g9jjgG4Ykp8VBp7XQNQpump",
+        "cost_sol": 0.03497,
+        "recv_sol": 0.005169,
+        "pnl_pct": -85.22,
+        "win": false
+      },
+      {
+        "mint": "2ssMotVbTUfRJev2UnibHzHsoeszPzgwbfsTZPSHpump",
+        "cost_sol": 0.030631,
+        "recv_sol": 0.005388,
+        "pnl_pct": -82.41,
+        "win": false
+      }
+    ],
+    "oldest_trade": 1778025018,
+    "newest_trade": 1778028610,
+    "source": "helius",
+    "name": "mined_4jkL4dNk"
+  }
+]
