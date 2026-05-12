@@ -1,0 +1,31 @@
+name: Wallet Trade Ingestion (Phase 2a/2e)
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"     # every 10 min — pull fresh trades for tiered wallets
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    env:
+      DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+      HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install requests psycopg2-binary python-dotenv
+
+      - name: Ingest latest trades for tiered wallets
+        run: python3 -m wallet_db.ingest --days 1

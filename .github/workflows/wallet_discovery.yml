@@ -1,0 +1,42 @@
+name: Wallet Discovery Pipeline
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"      # every 4 hours — outcome tracker + winner backtrace
+    - cron: "0 3 * * *"        # daily 03:00 UTC — multi-winner promotion
+  workflow_dispatch:
+
+jobs:
+  discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+      HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install requests psycopg2-binary python-dotenv
+
+      - name: Init DB schema
+        run: python3 -m wallet_db.db
+
+      - name: Token outcome tracker (Phase 2b)
+        run: python3 -m wallet_db.outcome_tracker
+
+      - name: Winner backtrace discovery (Phase 2c)
+        run: python3 -m wallet_db.discovery backtrace
+
+      - name: Multi-winner promotion (Phase 2d)
+        if: github.event.schedule == '0 3 * * *' || github.event_name == 'workflow_dispatch'
+        run: python3 -m wallet_db.discovery promote

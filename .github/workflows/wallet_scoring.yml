@@ -1,0 +1,39 @@
+name: Wallet Scoring & Tiering
+
+on:
+  schedule:
+    - cron: "0 4 * * *"        # daily 04:00 UTC — scoring
+    - cron: "0 5 * * 1"        # Monday 05:00 UTC — tiering (after scoring)
+  workflow_dispatch:             # manual trigger for testing
+
+jobs:
+  score-and-tier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+      HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install requests psycopg2-binary python-dotenv
+
+      - name: Init DB schema
+        run: python3 -m wallet_db.db
+
+      - name: Run scoring engine
+        run: python3 -m wallet_db.score
+
+      - name: Run tiering job
+        if: github.event.schedule == '0 5 * * 1' || github.event_name == 'workflow_dispatch'
+        run: python3 -m wallet_db.tier
