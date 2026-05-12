@@ -16,7 +16,7 @@ import time
 from datetime import date
 from pathlib import Path
 
-from wallet_db.db import init_db, get_conn, DB_PATH
+from wallet_db.db import init_db, get_conn, SQLITE_PATH as DB_PATH
 
 ROOT        = Path(__file__).parent.parent
 SOL_FILE    = ROOT / "memecoin" / "data" / "whale_wallets_sol.json"
