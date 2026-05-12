@@ -22,7 +22,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from wallet_db.db import get_conn, init_db
+from wallet_db.db import get_conn, init_db, _USE_POSTGRES
 
 load_dotenv()
 
@@ -239,8 +239,9 @@ def ingest_wallet(wallet: str, chain: str, since_ts: int) -> dict:
     # Update last_trade_ts on wallet
     if trades:
         newest = max(t["block_time"] for t in trades)
+        fn = "GREATEST" if _USE_POSTGRES else "MAX"
         conn.execute(
-            "UPDATE wallets SET last_trade_ts = MAX(COALESCE(last_trade_ts,0), ?) WHERE address = ? AND chain = ?",
+            f"UPDATE wallets SET last_trade_ts = {fn}(COALESCE(last_trade_ts,0), ?) WHERE address = ? AND chain = ?",
             (newest, wallet, chain),
         )
 

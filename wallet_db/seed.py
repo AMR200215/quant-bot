@@ -148,9 +148,10 @@ def seed(dry_run: bool = False):
         if history_rows:
             conn.executemany(
                 """
-                INSERT OR IGNORE INTO wallet_scores_history
+                INSERT INTO wallet_scores_history
                     (wallet_address, chain, score_date, tier, hit_rate, median_return, trade_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (wallet_address, chain, score_date) DO NOTHING
                 """,
                 history_rows,
             )
