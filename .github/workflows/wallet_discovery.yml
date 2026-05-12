@@ -28,21 +28,23 @@ jobs:
       - name: Install dependencies
         run: pip install requests psycopg2-binary python-dotenv
 
-      - name: Init DB schema + seed wallets (first run only)
+      - name: Init DB schema + seed wallets (first run or when no tiers assigned)
         run: |
           python3 -m wallet_db.db
           python3 -c "
           from wallet_db.db import get_conn
+          import subprocess, sys
           conn = get_conn()
-          n = conn.execute('SELECT COUNT(*) as n FROM wallets').fetchone()['n']
+          n_total  = conn.execute('SELECT COUNT(*) as n FROM wallets').fetchone()['n']
+          n_tiered = conn.execute(\"SELECT COUNT(*) as n FROM wallets WHERE current_tier IS NOT NULL\").fetchone()['n']
           conn.close()
-          print(f'Wallets in DB: {n}')
-          if n == 0:
-              import subprocess, sys
+          print(f'Wallets in DB: {n_total}, tiered: {n_tiered}')
+          if n_total == 0 or n_tiered == 0:
+              print('Seeding: no tiered wallets found.')
               result = subprocess.run([sys.executable, '-m', 'wallet_db.seed'], capture_output=False)
               sys.exit(result.returncode)
           else:
-              print('DB already seeded, skipping.')
+              print('Tiered wallets already exist, skipping seed.')
           "
 
       - name: Token outcome tracker (Phase 2b)
