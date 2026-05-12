@@ -334,9 +334,10 @@ def _update_tier(wallet: str, chain: str, score: float,
             (wallet, chain),
         )
         conn.execute(
-            """INSERT OR IGNORE INTO wallet_scores_history
+            """INSERT INTO wallet_scores_history
                (wallet_address, chain, score_date, tier, trade_count)
-               VALUES (?, ?, ?, 'dormant', ?)""",
+               VALUES (?, ?, ?, 'dormant', ?)
+               ON CONFLICT (wallet_address, chain, score_date) DO NOTHING""",
             (wallet, chain, today, trade_count),
         )
         conn.commit()
@@ -440,9 +441,14 @@ def run_phase2a(days: int = 30, single_wallet: str = ""):
             (tier, r["address"], "solana"),
         )
         conn.execute(
-            """INSERT OR REPLACE INTO wallet_scores_history
+            """INSERT INTO wallet_scores_history
                (wallet_address, chain, score_date, tier, hit_rate, median_return, trade_count)
-               VALUES (?, 'solana', ?, ?, ?, ?, ?)""",
+               VALUES (?, 'solana', ?, ?, ?, ?, ?)
+               ON CONFLICT (wallet_address, chain, score_date) DO UPDATE SET
+                   tier          = excluded.tier,
+                   hit_rate      = excluded.hit_rate,
+                   median_return = excluded.median_return,
+                   trade_count   = excluded.trade_count""",
             (r["address"], today, tier, r["win_rate"], r["avg_roi"], r["trades_30d"]),
         )
     conn.commit()
