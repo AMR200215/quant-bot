@@ -15,6 +15,7 @@ import os
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -59,14 +60,39 @@ portfolio = Portfolio()
 # de-duplicate signals: don't fire same token+type within 15 min
 _seen: dict[str, float] = {}   # f"{chain}:{address}:{type}" → timestamp
 
+# per-token-per-day blacklist: once a position is opened on a token today, block all
+# re-entries for the rest of the day — prevents re-entering dying tokens after close
+_traded_today: dict[str, str] = {}   # f"{chain}:{address}" → ISO date string
+
+
+def _mark_traded(chain: str, address: str):
+    """Record that we've opened a position on this token today."""
+    if address:
+        _traded_today[f"{chain}:{address}"] = date.today().isoformat()
+
 
 def _is_duplicate(chain: str, address: str, sig_type: str) -> bool:
+    # Per-type cooldown: same signal type on same token within 15 min
     key = f"{chain}:{address}:{sig_type}"
     now = time.time()
     last = _seen.get(key, 0)
     if now - last < 900:   # 15 min cooldown
         return True
     _seen[key] = now
+
+    # Cross-type dedup: if we already have an open position in this token,
+    # skip regardless of signal type. Prevents new_launch + social_alert +
+    # copy_trade all opening positions on the same token simultaneously.
+    open_addrs = {p.token_address for p in portfolio.open_positions()}
+    if address in open_addrs:
+        return True
+
+    # Per-token-per-day blacklist: skip tokens we've already traded today,
+    # even after the prior position closed. Prevents re-entry on dying tokens.
+    today = date.today().isoformat()
+    if _traded_today.get(f"{chain}:{address}") == today:
+        return True
+
     return False
 
 
@@ -98,6 +124,7 @@ def _add_signal(sig: Optional[Signal]):
     if sig.strength in ("medium", "strong"):
         try:
             pos = portfolio.open_position(sig)
+            _mark_traded(sig.chain, sig.token_address)
             try:
                 alerts.alert_position_open(sig, pos)
             except Exception:
@@ -198,6 +225,15 @@ def _scan_new_launches(chain: str, candidates: list[dict]):
         if not screen["passed"]:
             continue
         if screen["age_minutes"] > MAX_AGE_MINUTES_NEW:
+            continue
+        # Fix 3: 5m momentum filter — historical data shows flat-5m entries
+        # average -$4.99/trade vs +$2.57 for hot-5m. No rescue rule needed.
+        if screen["price_change_5m"] < 20:
+            log.debug("new_launch %s skipped: 5m=%.1f%% < 20%%", addr[:8], screen["price_change_5m"])
+            continue
+        # Block meteora for new_launch — 22 trades at -29.6% avg win rate 18%
+        if screen["dex_id"] == "meteora":
+            log.debug("new_launch %s skipped: meteora dex", addr[:8])
             continue
         sig = make_new_launch_signal(chain, addr, screen)
         _add_signal(sig)
@@ -325,6 +361,10 @@ def _pumpfun_thread():
             if not screen["passed"]:
                 continue
             if screen["age_minutes"] > MAX_AGE_MINUTES_NEW:
+                continue
+            if screen["price_change_5m"] < 20:
+                continue
+            if screen["dex_id"] == "meteora":
                 continue
             sig = make_new_launch_signal("solana", event.mint, screen)
             _add_signal(sig)

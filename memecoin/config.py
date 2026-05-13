@@ -147,7 +147,7 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "trade_size_usd":      _SIZES["new_launch"],
         "hard_stop_pct":       -0.30,
         "trailing_stop_pct":   -0.40,
-        "trail_activates_pct": 1.00,
+        "trail_activates_pct": 0.40,   # was 1.00 — tokens peaking 1.4x then dumping now exit near breakeven
         "time_stop_minutes":   20,
     },
     "dev_launch": {
