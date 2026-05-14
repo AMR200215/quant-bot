@@ -67,7 +67,7 @@ JOURNAL_FIELDS = [
 ]
 
 # Stamp applied to every trade written from this session onward
-CONFIG_TAG = "v3_2026-05-11"
+CONFIG_TAG = "v4_2026-05-13"
 
 
 @dataclass
