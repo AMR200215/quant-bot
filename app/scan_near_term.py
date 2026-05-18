@@ -203,6 +203,18 @@ def main(
         # Paper trade threshold — log everything above 1% edge
         # regardless of whether it passes the strict real-trade filter
         cat = get_topic_category(market.question)
+        # Sportsbook disagreement gate: when sportsbook_p is available and
+        # disagrees with our preferred side, win rate drops to 43.3% (vs 57.4%
+        # when aligned). Data: 98 resolved rows, 14-point gap. Demote to paper.
+        sportsbook_p = external.get("sportsbook_p")
+        sportsbook_disagrees = (
+            sportsbook_p is not None
+            and (
+                (edge.preferred_side == "buy_yes" and sportsbook_p < market.yes_price)
+                or (edge.preferred_side == "buy_no" and sportsbook_p > market.yes_price)
+            )
+        )
+
         is_real_signal = (
             adjusted_edge >= max(threshold, settings.min_ev, MIN_REAL_SIGNAL_EDGE)
             and not (
@@ -225,6 +237,9 @@ def main(
                 and not has_sharp
                 and (0.20 <= market.yes_price <= 0.35 or 0.65 <= market.yes_price <= 0.80)
             )
+            # Sportsbook disagreement: 43.3% win rate vs 57.4% when aligned.
+            # Block as real signal until meta-model is trained (~200 samples).
+            and not sportsbook_disagrees
         )
 
         if adjusted_edge < PAPER_TRADE_MIN_EDGE:
@@ -259,6 +274,7 @@ def main(
                 "external": external,
                 "is_real_signal": is_real_signal,
                 "high_risk": is_high_risk(market.question),
+                "sportsbook_disagrees": sportsbook_disagrees,
                 "category": cat,
                 "ob_imbalance": ob_imbalance,
             }
@@ -368,6 +384,8 @@ def main(
         edge   = c["edge"]
         label  = "REAL SIGNAL" if c["is_real_signal"] else "paper trade"
         risk_tag = " | HIGH RISK: match-fixing" if c["high_risk"] else ""
+        if c.get("sportsbook_disagrees"):
+            risk_tag += " | sportsbook-disagree"
 
         if is_already_logged(market.market_id):
             continue
