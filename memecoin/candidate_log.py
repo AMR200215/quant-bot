@@ -12,7 +12,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from memecoin.config import CANDIDATES_FILE, WINNERS_FILE
+from memecoin.config import CANDIDATES_FILE, WINNERS_FILE, REJECTIONS_FILE
 
 # Captured at signal time — full market snapshot
 _SIGNAL_FIELDS = [
@@ -180,3 +180,39 @@ def promote_to_winners(pos):
               pos.pnl_pct * 100, pos.pnl_usd, pos.signal_id),
         daemon=True,
     ).start()
+
+
+# ---------------------------------------------------------------------------
+# New-launch rejection log
+# ---------------------------------------------------------------------------
+
+_REJECTION_FIELDS = [
+    "timestamp", "chain", "token_address",
+    "price_change_5m", "liquidity_usd", "mcap_usd", "age_minutes",
+    "dex_id", "buy_sell_ratio_5m", "volume_5m",
+    "rejection_reason",
+]
+
+
+def log_new_launch_rejection(chain: str, token_address: str, screen: dict, reason: str = "5m_momentum_below_20"):
+    """
+    Log a new_launch signal that was rejected by an entry filter.
+    Non-blocking — any failure is swallowed so the signal pipeline is never interrupted.
+    """
+    try:
+        row = {
+            "timestamp":         time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+            "chain":             chain,
+            "token_address":     token_address,
+            "price_change_5m":   screen.get("price_change_5m", ""),
+            "liquidity_usd":     screen.get("liquidity_usd", ""),
+            "mcap_usd":          screen.get("mcap_usd", ""),
+            "age_minutes":       round(screen.get("age_minutes", 0), 1) if screen.get("age_minutes") is not None else "",
+            "dex_id":            screen.get("dex_id", ""),
+            "buy_sell_ratio_5m": screen.get("buy_sell_ratio_5m", ""),
+            "volume_5m":         screen.get("volume_5m", ""),
+            "rejection_reason":  reason,
+        }
+        _append_csv(REJECTIONS_FILE, _REJECTION_FIELDS, row)
+    except Exception as e:
+        log.debug("log_new_launch_rejection failed: %s", e)

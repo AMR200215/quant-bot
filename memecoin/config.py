@@ -17,6 +17,7 @@ WHALE_STATS_FILE  = DATA_DIR / "whale_stats.json"
 JOURNAL_FILE           = LOGS_DIR / "memecoin_journal.csv"
 CANDIDATES_FILE        = LOGS_DIR / "signal_candidates.csv"
 WINNERS_FILE           = LOGS_DIR / "winners_journal.csv"
+REJECTIONS_FILE        = LOGS_DIR / "new_launch_rejections.csv"
 DEV_WALLETS_FILE       = DATA_DIR / "dev_wallets.json"
 DEV_LAST_SEEN_FILE     = DATA_DIR / "dev_last_seen.json"
 

@@ -34,7 +34,7 @@ from memecoin.wallet_tracker import (
     poll_sol_wallets_batch, poll_bnb_wallets_batch, WalletEvent,
 )
 from memecoin.portfolio import Portfolio
-from memecoin.candidate_log import log_signal_candidate
+from memecoin.candidate_log import log_signal_candidate, log_new_launch_rejection
 from memecoin.dev_tracker import poll_all_devs, dev_signal_strength
 from memecoin.signals import (
     Signal, make_copy_trade_signal, make_volume_breakout_signal,
@@ -230,6 +230,10 @@ def _scan_new_launches(chain: str, candidates: list[dict]):
         # average -$4.99/trade vs +$2.57 for hot-5m. No rescue rule needed.
         if screen["price_change_5m"] < 20:
             log.debug("new_launch %s skipped: 5m=%.1f%% < 20%%", addr[:8], screen["price_change_5m"])
+            try:
+                log_new_launch_rejection(chain, addr, screen)
+            except Exception as e:
+                log.debug("log_new_launch_rejection failed: %s", e)
             continue
         # Block meteora for new_launch — 22 trades at -29.6% avg win rate 18%
         if screen["dex_id"] == "meteora":
@@ -363,6 +367,10 @@ def _pumpfun_thread():
             if screen["age_minutes"] > MAX_AGE_MINUTES_NEW:
                 continue
             if screen["price_change_5m"] < 20:
+                try:
+                    log_new_launch_rejection("solana", event.mint, screen)
+                except Exception as e:
+                    log.debug("log_new_launch_rejection failed: %s", e)
                 continue
             if screen["dex_id"] == "meteora":
                 continue
