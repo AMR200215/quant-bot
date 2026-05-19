@@ -18,6 +18,7 @@ from typing import Optional
 import requests
 
 from app.market_journal import load_journal_records, update_journal_outcome
+import app.pm_positions as pm_positions
 
 GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 OUTCOME_THRESHOLD = 0.99  # price at which we declare a winner
@@ -116,6 +117,26 @@ def run() -> dict:
             if success:
                 resolved += 1
                 print(f"  ✓ {market_id[:20]}...  → {outcome}")
+
+                # Resolve Polymarket position if one was opened for this market
+                pos = pm_positions.get_position(market_id)
+                if pos and pos.status == "open":
+                    won = (
+                        (pos.side == "YES" and outcome == "yes") or
+                        (pos.side == "NO"  and outcome == "no")
+                    )
+                    exit_price = 1.0 if won else 0.0
+                    closed = pm_positions.resolve_position(
+                        market_id,
+                        outcome="win" if won else "loss",
+                        exit_price=exit_price,
+                    )
+                    if closed:
+                        mode = "DRY-RUN" if pos.dry_run else "LIVE"
+                        print(
+                            f"    [PM {mode}] {pos.side} → {'WIN' if won else 'LOSS'}"
+                            f"  PnL={closed.pnl_usdc:+.2f} USDC"
+                        )
             else:
                 skipped += 1
         else:

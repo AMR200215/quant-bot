@@ -14,6 +14,7 @@ import sys
 
 from app.data_client import enrich_with_momentum, fetch_markets_by_days
 from app.edge import estimate_edge
+from app.executor import EdgeResult as ExecEdge, PolyExecutor
 from app.external_signals import get_external_consensus, fetch_order_book_imbalance, _detect_sport
 from app.market_classifier import get_topic_category
 from app.market_journal import append_journal_record, is_already_logged
@@ -101,6 +102,8 @@ def main(
     max_days: float = DEFAULT_MAX_DAYS,
     threshold: float = DEFAULT_THRESHOLD,
 ) -> None:
+    executor = PolyExecutor(settings)
+
     # --- Circuit breaker ---
     if is_halted(settings.max_drawdown):
         status = get_status()
@@ -417,6 +420,18 @@ def main(
         )
         if written:
             newly_logged += 1
+            # Attempt order placement for real signals
+            if c["is_real_signal"]:
+                exec_edge = ExecEdge(
+                    preferred_side=edge.preferred_side,
+                    adjusted_edge=c["adjusted_edge"],
+                )
+                result = executor.place_order(market, exec_edge)
+                if result.success:
+                    mode = "DRY-RUN" if result.dry_run else "LIVE"
+                    print(f"[ORDER {mode}] {result.side} @ {result.entry_price:.3f}  size=${result.size_usdc:.0f}")
+                else:
+                    print(f"[ORDER SKIPPED] {result.reason}")
 
         print("-" * 60)
         print(f"Rank #{rank}  [{label}]{' ⚠ HIGH RISK: match-fixing' if c['high_risk'] else ''}")

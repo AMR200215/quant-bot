@@ -57,8 +57,10 @@ class Market:
     liquidity_depth: float
     end_date: Optional[str] = None
     days_to_resolution: Optional[float] = None
-    # CLOB token ID for the YES outcome — needed for momentum enrichment
+    # CLOB token ID for the YES outcome — needed for momentum enrichment + order placement
     clob_token_id: Optional[str] = None
+    # CLOB token ID for the NO outcome — needed when buying NO side
+    clob_token_id_no: Optional[str] = None
     # Price 7 days ago; positive = market moved up toward YES, negative = down
     momentum_7d: Optional[float] = None
 
@@ -190,7 +192,8 @@ def fetch_live_markets(limit: int = 20) -> List[Market]:
                     clob_ids = _json.loads(clob_ids)
                 except Exception:
                     clob_ids = []
-            clob_token_id = str(clob_ids[0]) if clob_ids else None
+            clob_token_id    = str(clob_ids[0]) if len(clob_ids) > 0 else None
+            clob_token_id_no = str(clob_ids[1]) if len(clob_ids) > 1 else None
 
             markets.append(
                 Market(
@@ -203,6 +206,7 @@ def fetch_live_markets(limit: int = 20) -> List[Market]:
                     end_date=end_date,
                     days_to_resolution=days_to_resolution,
                     clob_token_id=clob_token_id,
+                    clob_token_id_no=clob_token_id_no,
                 )
             )
             seen_ids.add(market_id)
@@ -338,7 +342,8 @@ def fetch_markets_by_days(
                     clob_ids = _json.loads(clob_ids)
                 except Exception:
                     clob_ids = []
-            clob_token_id = str(clob_ids[0]) if clob_ids else None
+            clob_token_id    = str(clob_ids[0]) if len(clob_ids) > 0 else None
+            clob_token_id_no = str(clob_ids[1]) if len(clob_ids) > 1 else None
 
             markets.append(
                 Market(
@@ -351,6 +356,7 @@ def fetch_markets_by_days(
                     end_date=end_date,
                     days_to_resolution=days_to_resolution,
                     clob_token_id=clob_token_id,
+                    clob_token_id_no=clob_token_id_no,
                 )
             )
             seen_ids.add(market_id)
