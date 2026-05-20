@@ -5,14 +5,16 @@ Two-tier signal logging:
 """
 
 import csv
+import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from memecoin.config import CANDIDATES_FILE, WINNERS_FILE, REJECTIONS_FILE
+from memecoin.config import CANDIDATES_FILE, WINNERS_FILE, REJECTIONS_FILE, NEAR_MISS_FILE
 
 # Captured at signal time — full market snapshot
 _SIGNAL_FIELDS = [
@@ -192,6 +194,101 @@ _REJECTION_FIELDS = [
     "dex_id", "buy_sell_ratio_5m", "volume_5m",
     "rejection_reason",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Near-miss tracking  (tokens rejected at 5m=15-19%, tracked post-rejection)
+# ---------------------------------------------------------------------------
+
+def _load_near_miss() -> dict:
+    if not NEAR_MISS_FILE.exists():
+        return {}
+    try:
+        return json.loads(NEAR_MISS_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_near_miss(data: dict) -> None:
+    NEAR_MISS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = NEAR_MISS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, NEAR_MISS_FILE)
+
+
+def load_near_miss_data() -> dict:
+    return _load_near_miss()
+
+
+def track_near_miss(chain: str, token_address: str, screen: dict) -> None:
+    """
+    Store a near-miss token (5m change 15–19%) for post-rejection outcome tracking.
+    Background poller will check price at 1h and 6h to see what happened.
+    Uses chain:address as key — overwrites if stale (>7h old).
+    """
+    try:
+        key = f"{chain}:{token_address}"
+        data = _load_near_miss()
+        existing = data.get(key, {})
+        # Don't overwrite a recent entry that already has checks pending
+        if existing and not existing.get("check_6h_done"):
+            age = time.time() - existing.get("rejection_time", 0)
+            if age < 25200:  # < 7h → keep existing
+                return
+        data[key] = {
+            "chain":                   chain,
+            "token_address":           token_address,
+            "rejection_time":          time.time(),
+            "rejection_price_usd":     screen.get("price_usd", 0),
+            "price_change_5m_at_rejection": screen.get("price_change_5m", 0),
+            "liquidity_usd":           screen.get("liquidity_usd", 0),
+            "dex_id":                  screen.get("dex_id", ""),
+            "check_1h_done":           False,
+            "check_1h_price_usd":      None,
+            "check_1h_pct":            None,
+            "check_6h_done":           False,
+            "check_6h_price_usd":      None,
+            "check_6h_pct":            None,
+            "outcome":                 None,
+        }
+        _save_near_miss(data)
+    except Exception as e:
+        log.debug("track_near_miss failed: %s", e)
+
+
+def update_near_miss_check(key: str, interval: str, price_usd: float) -> None:
+    """
+    Record price at 1h or 6h post-rejection and compute outcome when 6h check completes.
+    interval: "1h" or "6h"
+    """
+    try:
+        data = _load_near_miss()
+        entry = data.get(key)
+        if not entry:
+            return
+        rejection_price = entry.get("rejection_price_usd") or 0
+        pct = round((price_usd - rejection_price) / rejection_price * 100, 1) if rejection_price > 0 else None
+        if interval == "1h":
+            entry["check_1h_done"]      = True
+            entry["check_1h_price_usd"] = price_usd
+            entry["check_1h_pct"]       = pct
+        elif interval == "6h":
+            entry["check_6h_done"]      = True
+            entry["check_6h_price_usd"] = price_usd
+            entry["check_6h_pct"]       = pct
+            # Determine outcome
+            if pct is None or price_usd == 0:
+                entry["outcome"] = "dump"       # delisted = dead
+            elif pct >= 50:
+                entry["outcome"] = "profitable" # missed a good trade
+            elif pct <= -20:
+                entry["outcome"] = "dump"       # filter was right
+            else:
+                entry["outcome"] = "flat"       # borderline
+        data[key] = entry
+        _save_near_miss(data)
+    except Exception as e:
+        log.debug("update_near_miss_check failed: %s", e)
 
 
 def log_new_launch_rejection(chain: str, token_address: str, screen: dict, reason: str = "5m_momentum_below_20"):

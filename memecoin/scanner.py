@@ -34,7 +34,10 @@ from memecoin.wallet_tracker import (
     poll_sol_wallets_batch, poll_bnb_wallets_batch, WalletEvent,
 )
 from memecoin.portfolio import Portfolio
-from memecoin.candidate_log import log_signal_candidate, log_new_launch_rejection
+from memecoin.candidate_log import (
+    log_signal_candidate, log_new_launch_rejection,
+    track_near_miss, update_near_miss_check, load_near_miss_data,
+)
 from memecoin.dev_tracker import poll_all_devs, dev_signal_strength
 from memecoin.signals import (
     Signal, make_copy_trade_signal, make_volume_breakout_signal,
@@ -210,6 +213,17 @@ def _wallet_thread(wallets: dict, ranks: dict):
 _vol_baselines: dict[str, float] = {}
 
 
+_FUNNEL_LOG_MIN_LIQ = 5_000  # only log screener failures for tokens with real liquidity
+
+
+def _log_rejection(chain: str, addr: str, screen: dict, reason: str):
+    """Log a funnel rejection — never raises."""
+    try:
+        log_new_launch_rejection(chain, addr, screen, reason=reason)
+    except Exception as e:
+        log.debug("log_rejection failed: %s", e)
+
+
 def _scan_new_launches(chain: str, candidates: list[dict]):
     """Screen a list of token candidates for new-launch signals."""
     for item in candidates[:30]:
@@ -223,21 +237,30 @@ def _scan_new_launches(chain: str, candidates: list[dict]):
             continue
         screen = screen_token(chain, addr)
         if not screen["passed"]:
+            # Log meaningful screener failures (skip no_dex_data / micro-liq noise)
+            if screen.get("liquidity_usd", 0) >= _FUNNEL_LOG_MIN_LIQ:
+                _log_rejection(chain, addr, screen, reason=screen["reason"])
             continue
         if screen["age_minutes"] > MAX_AGE_MINUTES_NEW:
+            _log_rejection(chain, addr, screen, reason="age_too_old")
             continue
-        # Fix 3: 5m momentum filter — historical data shows flat-5m entries
-        # average -$4.99/trade vs +$2.57 for hot-5m. No rescue rule needed.
-        if screen["price_change_5m"] < 20:
-            log.debug("new_launch %s skipped: 5m=%.1f%% < 20%%", addr[:8], screen["price_change_5m"])
-            try:
-                log_new_launch_rejection(chain, addr, screen)
-            except Exception as e:
-                log.debug("log_new_launch_rejection failed: %s", e)
+        # Fix 3: 5m momentum filter
+        p5m = screen["price_change_5m"]
+        if p5m < 20:
+            log.debug("new_launch %s skipped: 5m=%.1f%% < 20%%", addr[:8], p5m)
+            reason = "5m_momentum_below_20"
+            _log_rejection(chain, addr, screen, reason=reason)
+            # Near-miss: track tokens at 15–19% for post-rejection outcome analysis
+            if 15 <= p5m < 20:
+                try:
+                    track_near_miss(chain, addr, screen)
+                except Exception as e:
+                    log.debug("track_near_miss failed: %s", e)
             continue
-        # Block meteora for new_launch — 22 trades at -29.6% avg win rate 18%
+        # Block meteora — 22 trades, -29.6% avg, 18% win rate
         if screen["dex_id"] == "meteora":
             log.debug("new_launch %s skipped: meteora dex", addr[:8])
+            _log_rejection(chain, addr, screen, reason="meteora_block")
             continue
         sig = make_new_launch_signal(chain, addr, screen)
         _add_signal(sig)
@@ -361,20 +384,28 @@ def _pumpfun_thread():
         # Quick age gate — only process truly new tokens
         # (event arrives within seconds of creation, so age_minutes ≈ 0)
         try:
-            screen = screen_token("solana", event.mint)
+            addr = event.mint
+            screen = screen_token("solana", addr)
             if not screen["passed"]:
+                if screen.get("liquidity_usd", 0) >= _FUNNEL_LOG_MIN_LIQ:
+                    _log_rejection("solana", addr, screen, reason=screen["reason"])
                 continue
             if screen["age_minutes"] > MAX_AGE_MINUTES_NEW:
+                _log_rejection("solana", addr, screen, reason="age_too_old")
                 continue
-            if screen["price_change_5m"] < 20:
-                try:
-                    log_new_launch_rejection("solana", event.mint, screen)
-                except Exception as e:
-                    log.debug("log_new_launch_rejection failed: %s", e)
+            p5m = screen["price_change_5m"]
+            if p5m < 20:
+                _log_rejection("solana", addr, screen, reason="5m_momentum_below_20")
+                if 15 <= p5m < 20:
+                    try:
+                        track_near_miss("solana", addr, screen)
+                    except Exception as e:
+                        log.debug("track_near_miss failed: %s", e)
                 continue
             if screen["dex_id"] == "meteora":
+                _log_rejection("solana", addr, screen, reason="meteora_block")
                 continue
-            sig = make_new_launch_signal("solana", event.mint, screen)
+            sig = make_new_launch_signal("solana", addr, screen)
             _add_signal(sig)
         except Exception as e:
             log.debug("Pump.fun token screen error %s: %s", event.mint[:8], e)
@@ -406,6 +437,52 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         _add_signal(sig)
     except Exception as e:
         log.warning("TG signal processing error %s: %s", address[:8], e)
+
+
+# ---------------------------------------------------------------------------
+# Near-miss outcome poller thread
+# ---------------------------------------------------------------------------
+
+def _near_miss_poller_thread():
+    """
+    Check near-miss tokens (5m=15-19%) at 1h and 6h post-rejection.
+    Runs every 15 minutes. Fetches current DexScreener price at each interval
+    and records the % change from rejection price → determines if we missed
+    a profitable trade or if the filter was correct.
+    """
+    log.info("Near-miss poller started")
+    while True:
+        try:
+            data = load_near_miss_data()
+            now  = time.time()
+            for key, entry in list(data.items()):
+                chain   = entry["chain"]
+                addr    = entry["token_address"]
+                t0      = entry.get("rejection_time", 0)
+                elapsed = now - t0
+
+                needs_1h = not entry.get("check_1h_done") and elapsed >= 3600
+                needs_6h = not entry.get("check_6h_done") and elapsed >= 21600
+
+                if not (needs_1h or needs_6h):
+                    continue
+
+                pair  = dex_get_token(chain, addr)
+                price = float(pair.get("priceUsd") or 0) if pair else 0
+
+                if needs_1h:
+                    update_near_miss_check(key, "1h", price)
+                    log.debug("near-miss 1h check %s: price=%.8f", addr[:8], price)
+                if needs_6h:
+                    update_near_miss_check(key, "6h", price)
+                    log.debug("near-miss 6h check %s: price=%.8f outcome=%s",
+                              addr[:8], price, load_near_miss_data().get(key, {}).get("outcome"))
+
+                time.sleep(0.3)  # be polite to DexScreener
+        except Exception as e:
+            log.debug("Near-miss poller error: %s", e)
+
+        time.sleep(900)  # run every 15 min
 
 
 # ---------------------------------------------------------------------------
@@ -452,10 +529,11 @@ def start(daemon: bool = True):
     ranks   = build_wallet_ranks(wallets)
 
     for target, kwargs in [
-        (_wallet_thread,    {"wallets": wallets, "ranks": ranks}),
-        (_market_thread,    {}),
-        (_portfolio_thread, {}),
-        (_pumpfun_thread,   {}),
+        (_wallet_thread,       {"wallets": wallets, "ranks": ranks}),
+        (_market_thread,       {}),
+        (_portfolio_thread,    {}),
+        (_pumpfun_thread,      {}),
+        (_near_miss_poller_thread, {}),
     ]:
         t = threading.Thread(target=target, kwargs=kwargs, daemon=daemon)
         t.start()
