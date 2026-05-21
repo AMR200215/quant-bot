@@ -220,21 +220,22 @@ def ingest_wallet(wallet: str, chain: str, since_ts: int) -> dict:
 
     conn = get_conn()
     for t in trades:
-        try:
-            conn.execute(
-                """
-                INSERT INTO wallet_trades
-                    (wallet_address, chain, token_address, side,
-                     token_amount, native_amount, block_time, tx_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (wallet, chain, t["mint"], t["side"],
-                 t["token_amount"], t["native_amount"],
-                 t["block_time"], t["tx_hash"]),
-            )
+        cur = conn.execute(
+            """
+            INSERT INTO wallet_trades
+                (wallet_address, chain, token_address, side,
+                 token_amount, native_amount, block_time, tx_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tx_hash) DO NOTHING
+            """,
+            (wallet, chain, t["mint"], t["side"],
+             t["token_amount"], t["native_amount"],
+             t["block_time"], t["tx_hash"]),
+        )
+        if cur.rowcount > 0:
             inserted += 1
-        except Exception:
-            skipped += 1   # UNIQUE tx_hash violation = already stored
+        else:
+            skipped += 1
 
     # Update last_trade_ts on wallet
     if trades:

@@ -293,6 +293,10 @@ def fetch_markets_by_days(
                 timeout=20,
             )
             resp.raise_for_status()
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 422:
+                break  # Polymarket API offset limit reached — treat as end of results
+            raise RuntimeError(f"Failed to fetch markets by days: {exc}") from exc
         except requests.RequestException as exc:
             raise RuntimeError(f"Failed to fetch markets by days: {exc}") from exc
 
