@@ -29,7 +29,9 @@ from memecoin.config import (
     TIME_STOP_MINUTES, TIME_STOP_MIN_GAIN,
     TP_LEVELS, TRADE_SIZE_USD,
     get_signal_settings,
+    LIVE_TRADING,
 )
+from memecoin import executor as _executor
 from memecoin.data_client import dex_get_token
 from memecoin.candidate_log import promote_to_winners
 from app import alerts
@@ -313,9 +315,21 @@ class Portfolio:
         if pos.dex_id.lower() == "pumpswap":
             pos.hard_stop_pct = -0.40
 
+        # Live execution — only active when LIVE_TRADING = True
+        if LIVE_TRADING and pos.chain == "solana":
+            fill_price = _executor.buy(pos.token_address, pos.size_usd)
+            if fill_price:
+                pos.entry_price  = fill_price
+                pos.current_price = fill_price
+                pos.peak_price   = fill_price
+                pos.notes        = (pos.notes + " | real_fill").strip(" | ")
+            else:
+                pos.notes = (pos.notes + " | exec_failed_paper").strip(" | ")
+
         self._positions[pos.id] = pos
         _save_positions(self._positions)
-        log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s  hard_stop=%.0f%%",
+        log.info("%s position %s  %s/%s @ $%.8f  dex=%s  hard_stop=%.0f%%",
+                 "Opened LIVE" if LIVE_TRADING else "Opened paper",
                  pos.id, pos.chain, pos.token_symbol, pos.entry_price,
                  pos.dex_id, pos.hard_stop_pct * 100)
         return pos
@@ -327,10 +341,19 @@ class Portfolio:
         pos = self._positions.get(pos_id)
         if not pos or pos.status == "closed":
             return None
-        pos.exit_price = price or pos.current_price
-        pos.exit_time  = time.time()
+        pos.exit_price  = price or pos.current_price
+        pos.exit_time   = time.time()
         pos.exit_reason = reason
-        pos.status = "closed"
+        pos.status      = "closed"
+
+        # Live execution — sell on-chain and use real fill price
+        if LIVE_TRADING and pos.chain == "solana":
+            fill_price = _executor.sell(pos.token_address, pos.size_usd, pos.entry_price)
+            if fill_price:
+                pos.exit_price = fill_price
+                pos.notes = (pos.notes + " | real_fill").strip(" | ")
+            else:
+                pos.notes = (pos.notes + " | exec_failed_paper").strip(" | ")
         _append_journal(pos)
         promote_to_winners(pos)
         del self._positions[pos_id]

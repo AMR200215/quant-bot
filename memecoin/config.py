@@ -37,6 +37,13 @@ DEV_LAST_SEEN_FILE     = DATA_DIR / "dev_last_seen.json"
 # ---------------------------------------------------------------------------
 CAPITAL_USD = 100   # ← set this to your actual capital
 
+# ---------------------------------------------------------------------------
+# Live trading flag
+# Flip to True when wallet is funded and SOLANA_PRIVATE_KEY env var is set.
+# False = pure paper trade, nothing changes in existing behaviour.
+# ---------------------------------------------------------------------------
+LIVE_TRADING = False
+
 def _stage(capital: float) -> int:
     if capital < 1_000:  return 1
     if capital < 5_000:  return 2
