@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Sniper — Quant Bot{% endblock %}
+{% block content %}
+
+<style>
+  .pnl-pos { color: var(--green); font-weight: 600; }
+  .pnl-neg { color: var(--red);   font-weight: 600; }
+  .tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .tab-btn {
+    padding: 10px 22px; font-size: 13px; font-weight: 600;
+    color: var(--muted); background: none; border: none;
+    border-bottom: 2px solid transparent; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-btn.active, .tab-btn:hover { color: var(--text); border-bottom-color: var(--accent); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .addr { font-family: monospace; font-size: 11px; color: var(--muted); }
+  .close-btn {
+    background: transparent; border: 1px solid var(--red); color: var(--red);
+    border-radius: 4px; padding: 3px 10px; font-size: 11px; font-weight: 600;
+    cursor: pointer;
+  }
+  .close-btn:hover { background: rgba(255,85,85,0.1); }
+  .strategy-migration { background: rgba(0,200,150,0.15); color: var(--green); }
+  .strategy-launch    { background: rgba(245,166,35,0.15); color: var(--yellow); }
+  .badge-strategy {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600;
+  }
+  .refresh-ts { font-size: 11px; color: var(--muted); margin-left: 12px; }
+</style>
+
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <h1 style="margin:0;">Sniper</h1>
+    <div style="font-size:12px; color:var(--muted); margin-top:4px;">
+      Strategy: <strong style="color:var(--accent);">{{ strategy }}</strong>
+      &nbsp;·&nbsp; Capital: <strong>${{ capital }}</strong>
+      &nbsp;·&nbsp; Launch size: <strong>${{ size_launch }}</strong>
+      &nbsp;·&nbsp; Migration size: <strong>${{ size_migration }}</strong>
+    </div>
+  </div>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <span class="badge badge-gray">Paper Trade Mode</span>
+    <span class="refresh-ts" id="last-refresh">—</span>
+    <button class="btn" onclick="refreshAll()" style="padding:7px 16px; font-size:12px;">Refresh</button>
+  </div>
+</div>
+
+<!-- Summary stats -->
+<div class="grid-3" style="margin-bottom:20px;" id="summary-row">
+  <div class="card"><div class="card-label">Open Positions</div><div class="card-value" id="stat-open">—</div></div>
+  <div class="card"><div class="card-label">Deployed (paper)</div><div class="card-value" id="stat-deployed">—</div></div>
+  <div class="card"><div class="card-label">Unrealised PnL</div><div class="card-value" id="stat-pnl">—</div></div>
+</div>
+
+<!-- Tabs -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="showTab('positions')">Open Positions</button>
+  <button class="tab-btn" onclick="showTab('history')">Trade History</button>
+</div>
+
+<!-- Open Positions -->
+<div id="tab-positions" class="tab-panel active">
+  <div id="positions-container">
+    <div style="color:var(--muted); font-size:13px;">Loading positions...</div>
+  </div>
+</div>
+
+<!-- Trade History -->
+<div id="tab-history" class="tab-panel">
+  {% if journal %}
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Strategy</th><th>Entry Time</th>
+          <th>Size</th><th>Exit Reason</th><th>PnL %</th><th>PnL $</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in journal|reverse %}
+        {% set p = t.pnl_pct|float %}
+        <tr>
+          <td><strong>{{ t.symbol }}</strong><br><span class="addr">{{ t.mint[:12] }}…</span></td>
+          <td><span class="badge-strategy strategy-{{ t.strategy }}">{{ t.strategy }}</span></td>
+          <td style="font-size:11px;">{{ t.entry_time }}</td>
+          <td>${{ t.size_usd }}</td>
+          <td>{{ t.exit_reason }}</td>
+          <td class="{{ 'pnl-pos' if p > 0 else 'pnl-neg' }}">{{ '%+.1f' % p }}%</td>
+          <td class="{{ 'pnl-pos' if p > 0 else 'pnl-neg' }}">${{ '%+.2f' % t.pnl_usd|float }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="color:var(--muted); font-size:13px; padding:20px 0;">No closed trades yet.</div>
+  {% endif %}
+</div>
+
+<script>
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+function pnlClass(pct) { return parseFloat(pct) >= 0 ? 'pnl-pos' : 'pnl-neg'; }
+function pnlSign(pct)  { return parseFloat(pct) >= 0 ? '+' : ''; }
+
+async function refreshPositions() {
+  const resp = await fetch('/sniper/api/positions');
+  const pos  = await resp.json();
+  const container = document.getElementById('positions-container');
+
+  if (!pos.length) {
+    container.innerHTML = '<div style="color:var(--muted); font-size:13px; padding:20px 0;">No open positions.</div>';
+    return;
+  }
+
+  let html = '<div style="overflow-x:auto;"><table class="table"><thead><tr>' +
+    '<th>Symbol</th><th>Strategy</th><th>Entry</th><th>Size</th>' +
+    '<th>PnL %</th><th>PnL $</th><th>Action</th></tr></thead><tbody>';
+
+  for (const p of pos) {
+    const pct = (p.pnl_pct * 100).toFixed(1);
+    const usd = p.pnl_usd.toFixed(2);
+    const cls = parseFloat(pct) >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const sign = parseFloat(pct) >= 0 ? '+' : '';
+    const entry = new Date(p.entry_time * 1000).toLocaleTimeString();
+    html += `<tr>
+      <td><strong>${p.symbol || p.mint.slice(0,8)}</strong><br>
+          <span class="addr">${p.mint.slice(0,12)}…</span></td>
+      <td><span class="badge-strategy strategy-${p.strategy}">${p.strategy}</span></td>
+      <td style="font-size:11px;">${entry}</td>
+      <td>$${p.size_usd}</td>
+      <td class="${cls}">${sign}${pct}%</td>
+      <td class="${cls}">${sign}$${usd}</td>
+      <td><button class="close-btn" onclick="closePos('${p.id}')">Close</button></td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+async function refreshSummary() {
+  const resp = await fetch('/sniper/api/summary');
+  const s = await resp.json();
+  document.getElementById('stat-open').textContent = s.open_count ?? '—';
+  document.getElementById('stat-deployed').textContent = '$' + (s.total_deployed_usd ?? 0).toFixed(2);
+  const pnl = s.unrealised_pnl_usd ?? 0;
+  const el = document.getElementById('stat-pnl');
+  el.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+  el.className = 'card-value ' + (pnl >= 0 ? 'pnl-pos' : 'pnl-neg');
+}
+
+async function closePos(posId) {
+  if (!confirm('Close this position?')) return;
+  await fetch(`/sniper/api/position/${posId}/close`, { method: 'POST' });
+  await refreshAll();
+}
+
+async function refreshAll() {
+  await Promise.all([refreshPositions(), refreshSummary()]);
+  document.getElementById('last-refresh').textContent =
+    'Updated ' + new Date().toLocaleTimeString();
+}
+
+refreshAll();
+setInterval(refreshAll, 30000);
+</script>
+
+{% endblock %}

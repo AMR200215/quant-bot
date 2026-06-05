@@ -168,6 +168,8 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "time_stop_minutes":   45,
     },
     "social_alert": {
+        "trade_size_usd":      3,       # $3/trade while validating fixes
+        "live_trade_size_usd": 3,
         "hard_stop_pct":       -0.35,
         "trailing_stop_pct":   -0.35,   # tighter trail once activated
         "trail_activates_pct": 0.30,    # activate at +30% not +75%
