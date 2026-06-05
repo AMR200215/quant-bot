@@ -41,7 +41,8 @@ JOURNAL_FIELDS = [
     # identity
     "id", "signal_id", "chain", "token_address", "token_symbol",
     "signal_type", "strength",
-    # trade
+    # trade — diagnostic timestamps + signal price for measuring execution cost
+    "signal_price", "signal_time",   # price/time when signal fired (before any execution)
     "entry_price", "entry_time", "size_usd",
     "exit_price", "exit_time", "exit_reason",
     "pnl_usd", "pnl_pct", "peak_price",
@@ -68,7 +69,7 @@ JOURNAL_FIELDS = [
 ]
 
 # Stamp applied to every trade written from this session onward
-CONFIG_TAG = "v4_2026-05-13"
+CONFIG_TAG = "v5_diagnostic_2026-06-05"
 
 
 @dataclass
@@ -83,9 +84,11 @@ class Position:
     whale_count: int
     whale_tiers: list           # e.g. [1, 2]
     whales_involved: list       # wallet addresses
-    entry_price: float
-    entry_time: float           # unix seconds
-    size_usd: float             # TRADE_SIZE_USD
+    signal_price: float = 0.0    # DexScreener price when signal fired — never overwritten
+    signal_time: float = 0.0    # unix seconds when signal fired
+    entry_price: float = 0.0
+    entry_time: float = 0.0     # unix seconds
+    size_usd: float = 0.0       # TRADE_SIZE_USD
     # live / updated fields
     current_price: float = 0.0
     peak_price: float = 0.0
@@ -204,6 +207,8 @@ def _append_journal(pos: Position):
             "token_symbol": pos.token_symbol,
             "signal_type": pos.signal_type,
             "strength": pos.strength,
+            "signal_price": pos.signal_price,
+            "signal_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.signal_time)) if pos.signal_time else "",
             "entry_price": pos.entry_price,
             "entry_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
             "size_usd": pos.size_usd,
@@ -261,6 +266,8 @@ def _append_journal(pos: Position):
                 "token_symbol": pos.token_symbol,
                 "signal_type": pos.signal_type,
                 "strength": pos.strength,
+                "signal_price": pos.signal_price,
+                "signal_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.signal_time)) if pos.signal_time else "",
                 "entry_price": pos.entry_price,
                 "entry_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
                 "size_usd": pos.size_usd,
@@ -330,6 +337,8 @@ class Portfolio:
             whale_count=getattr(signal, "whale_count", 0),
             whale_tiers=list(getattr(signal, "whale_tiers", [])),
             whales_involved=list(getattr(signal, "whales_involved", [])),
+            signal_price=signal.price_usd,   # snapshot at signal fire — never changes
+            signal_time=time.time(),
             entry_price=signal.price_usd,
             entry_time=time.time(),
             size_usd=getattr(signal, "_tier1_size", None)
@@ -452,6 +461,8 @@ class Portfolio:
             whale_count=paper_pos.whale_count,
             whale_tiers=list(paper_pos.whale_tiers),
             whales_involved=list(paper_pos.whales_involved),
+            signal_price=paper_pos.signal_price,   # original signal price — never overwritten
+            signal_time=paper_pos.signal_time,
             entry_price=paper_pos.entry_price,
             entry_time=paper_pos.entry_time,
             size_usd=_live_size,
