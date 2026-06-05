@@ -24,14 +24,13 @@ _T10_FIELDS = [
 ]
 
 from memecoin.config import (
-    POSITIONS_FILE, JOURNAL_FILE,
+    POSITIONS_FILE, JOURNAL_FILE, LIVE_JOURNAL_FILE,
     HARD_STOP_PCT, TRAILING_STOP_PCT, TRAIL_ACTIVATES_PCT,
     TIME_STOP_MINUTES, TIME_STOP_MIN_GAIN,
     TP_LEVELS, TRADE_SIZE_USD,
     get_signal_settings,
     LIVE_TRADING,
 )
-from memecoin import executor as _executor
 from memecoin.data_client import dex_get_token
 from memecoin.candidate_log import promote_to_winners
 from app import alerts
@@ -247,6 +246,63 @@ def _append_journal(pos: Position):
             "config_tag": CONFIG_TAG,
         })
 
+    # If this was a live trade, also write to the live journal
+    if pos.notes and "live|tx:" in pos.notes:
+        write_header = not LIVE_JOURNAL_FILE.exists() or LIVE_JOURNAL_FILE.stat().st_size == 0
+        with open(LIVE_JOURNAL_FILE, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
+            if write_header:
+                writer.writeheader()
+            writer.writerow({
+                "id": pos.id,
+                "signal_id": pos.signal_id,
+                "chain": pos.chain,
+                "token_address": pos.token_address,
+                "token_symbol": pos.token_symbol,
+                "signal_type": pos.signal_type,
+                "strength": pos.strength,
+                "entry_price": pos.entry_price,
+                "entry_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
+                "size_usd": pos.size_usd,
+                "exit_price": pos.exit_price,
+                "exit_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.exit_time)) if pos.exit_time else "",
+                "exit_reason": pos.exit_reason,
+                "pnl_usd": round(pos.pnl_usd, 4),
+                "pnl_pct": round(pos.pnl_pct * 100, 2),
+                "peak_price": pos.peak_price,
+                "whale_count": pos.whale_count,
+                "whale_tiers": ",".join(str(t) for t in pos.whale_tiers),
+                "safety_score": pos.safety_score,
+                "momentum_score": pos.momentum_score,
+                "composite_score": pos.composite_score,
+                "price_change_5m": pos.price_change_5m,
+                "price_change_1h": pos.price_change_1h,
+                "price_change_6h": pos.price_change_6h,
+                "buys_5m": pos.buys_5m,
+                "sells_5m": pos.sells_5m,
+                "buys_h1": pos.buys_h1,
+                "sells_h1": pos.sells_h1,
+                "buy_sell_ratio_5m": pos.buy_sell_ratio_5m,
+                "buy_sell_ratio_h1": pos.buy_sell_ratio_h1,
+                "volume_5m": pos.volume_5m,
+                "volume_h1": pos.volume_h1,
+                "volume_h6": pos.volume_h6,
+                "liquidity_usd": pos.liquidity_usd,
+                "mcap_usd": pos.mcap_usd,
+                "fdv": pos.fdv,
+                "age_minutes": round(pos.age_minutes, 1),
+                "dex_id": pos.dex_id,
+                "dexscreener_url": pos.dexscreener_url,
+                "has_twitter": pos.has_twitter,
+                "has_telegram": pos.has_telegram,
+                "has_website": pos.has_website,
+                "rugcheck_score": pos.rugcheck_score,
+                "buy_tax": pos.buy_tax,
+                "sell_tax": pos.sell_tax,
+                "notes": pos.notes,
+                "config_tag": CONFIG_TAG,
+            })
+
 
 # ---------------------------------------------------------------------------
 # Portfolio manager
@@ -315,24 +371,169 @@ class Portfolio:
         if pos.dex_id.lower() == "pumpswap":
             pos.hard_stop_pct = -0.40
 
-        # Live execution — only active when LIVE_TRADING = True
-        if LIVE_TRADING and pos.chain == "solana":
-            fill_price = _executor.buy(pos.token_address, pos.size_usd)
-            if fill_price:
-                pos.entry_price  = fill_price
-                pos.current_price = fill_price
-                pos.peak_price   = fill_price
-                pos.notes        = (pos.notes + " | real_fill").strip(" | ")
-            else:
-                pos.notes = (pos.notes + " | exec_failed_paper").strip(" | ")
-
+        # Live execution gate — only fire for social_alert pumpfun signals
+        # ── Paper position (always opened, independent of live) ──────────────
         self._positions[pos.id] = pos
         _save_positions(self._positions)
-        log.info("%s position %s  %s/%s @ $%.8f  dex=%s  hard_stop=%.0f%%",
-                 "Opened LIVE" if LIVE_TRADING else "Opened paper",
-                 pos.id, pos.chain, pos.token_symbol, pos.entry_price,
-                 pos.dex_id, pos.hard_stop_pct * 100)
+        log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s",
+                 pos.id, pos.chain, pos.token_symbol, pos.entry_price, pos.dex_id)
+
+        # ── Live position (parallel, independent — social_alert+pump only) ──
+        _is_live_signal = (
+            LIVE_TRADING
+            and signal.signal_type == "social_alert"
+            and "pump" in getattr(signal, "dex_id", "").lower()
+        )
+        if _is_live_signal:
+            # ── Circuit breaker 1: daily loss limit ──────────────────────────
+            daily_loss = self._live_daily_pnl()
+            if daily_loss <= -15.0:
+                log.warning(
+                    "CIRCUIT BREAKER: daily live PnL=$%.2f — skipping live trade for %s",
+                    daily_loss, signal.token_symbol,
+                )
+            # ── Circuit breaker 2: max concurrent live positions ─────────────
+            elif self._count_open_live() >= 2:
+                log.warning(
+                    "CIRCUIT BREAKER: %d live positions already open — skipping %s",
+                    self._count_open_live(), signal.token_symbol,
+                )
+            else:
+                self._open_live_position(signal, pos)
+
         return pos
+
+    def _live_daily_pnl(self) -> float:
+        """Sum of today's closed live position PnL from the journal."""
+        import csv as _csv
+        from datetime import date as _date
+        today = str(_date.today())
+        total = 0.0
+        try:
+            with open(LIVE_JOURNAL_FILE) as f:
+                for row in _csv.DictReader(f):
+                    if row.get("entry_time", "")[:10] == today:
+                        total += float(row.get("pnl_usd", 0) or 0)
+        except Exception:
+            pass
+        return total
+
+    def _count_open_live(self) -> int:
+        """Count currently open live positions."""
+        return sum(
+            1 for p in self._positions.values()
+            if p.id.startswith("L") and p.status == "open"
+        )
+
+    def _open_live_position(self, signal, paper_pos: "Position") -> None:
+        """
+        Fire a real on-chain buy and store a parallel live position.
+        Completely independent from the paper position — different ID,
+        different size, different journal. They do not know each other exist.
+        """
+        import uuid as _uuid
+        from memecoin.executor import MemeExecutor
+        from memecoin.config import get_signal_settings as _gss
+
+        _live_size = _gss(signal.signal_type).get("live_trade_size_usd", paper_pos.size_usd)
+
+        # Build the live position as a separate object
+        live_pos = Position(
+            id=f"L{str(_uuid.uuid4())[:7]}",   # L-prefix = live, visually distinct
+            signal_id=signal.id,
+            chain=paper_pos.chain,
+            token_address=paper_pos.token_address,
+            token_symbol=paper_pos.token_symbol,
+            signal_type=paper_pos.signal_type,
+            strength=paper_pos.strength,
+            whale_count=paper_pos.whale_count,
+            whale_tiers=list(paper_pos.whale_tiers),
+            whales_involved=list(paper_pos.whales_involved),
+            entry_price=paper_pos.entry_price,
+            entry_time=paper_pos.entry_time,
+            size_usd=_live_size,
+            hard_stop_pct=paper_pos.hard_stop_pct,
+            trailing_stop_pct=paper_pos.trailing_stop_pct,
+            trail_activates_pct=paper_pos.trail_activates_pct,
+            time_stop_minutes=paper_pos.time_stop_minutes,
+            current_price=paper_pos.current_price,
+            peak_price=paper_pos.peak_price,
+            price_change_5m=paper_pos.price_change_5m,
+            price_change_1h=paper_pos.price_change_1h,
+            price_change_6h=paper_pos.price_change_6h,
+            buys_5m=paper_pos.buys_5m, sells_5m=paper_pos.sells_5m,
+            buys_h1=paper_pos.buys_h1, sells_h1=paper_pos.sells_h1,
+            buy_sell_ratio_5m=paper_pos.buy_sell_ratio_5m,
+            buy_sell_ratio_h1=paper_pos.buy_sell_ratio_h1,
+            volume_5m=paper_pos.volume_5m, volume_h1=paper_pos.volume_h1,
+            volume_h6=paper_pos.volume_h6,
+            liquidity_usd=paper_pos.liquidity_usd,
+            mcap_usd=paper_pos.mcap_usd, fdv=paper_pos.fdv,
+            age_minutes=paper_pos.age_minutes,
+            safety_score=paper_pos.safety_score,
+            momentum_score=paper_pos.momentum_score,
+            composite_score=paper_pos.composite_score,
+            dex_id=paper_pos.dex_id,
+            dexscreener_url=paper_pos.dexscreener_url,
+            has_twitter=paper_pos.has_twitter,
+            has_telegram=paper_pos.has_telegram,
+            has_website=paper_pos.has_website,
+            rugcheck_score=paper_pos.rugcheck_score,
+            buy_tax=paper_pos.buy_tax, sell_tax=paper_pos.sell_tax,
+        )
+
+        try:
+            ex = MemeExecutor()
+            result = ex.buy(signal.token_address, _live_size, signal.chain)
+            if result.get("success"):
+                fill_price = result.get("fill_price") or live_pos.entry_price
+                signal_price = live_pos.entry_price
+                # Abort if entry slippage > 40% — we'd need a massive recovery just to
+                # break even, and the hard stop would fire at -60%+ from actual fill.
+                if signal_price > 0 and fill_price > signal_price * 1.40:
+                    log.warning(
+                        "LIVE BUY ABORTED %s — fill slippage %.1f%% > 40%% limit  "
+                        "fill=%.10f  signal=%.10f",
+                        live_pos.token_symbol, (fill_price / signal_price - 1) * 100,
+                        fill_price, signal_price,
+                    )
+                    try:
+                        ex2 = MemeExecutor()
+                        ex2.sell(live_pos.token_address, _live_size, fill_price, live_pos.chain)
+                    except Exception as _e:
+                        log.error("Abort-sell failed %s: %s", live_pos.token_symbol, _e)
+                    return
+                # Anchor stops to actual fill price, not signal detection price.
+                # Without this the hard stop fires at -48% from fill even though it
+                # is set to -35%, because the fill averaged +24% above signal.
+                live_pos.entry_price   = fill_price
+                live_pos.current_price = fill_price
+                live_pos.peak_price    = fill_price
+                live_pos.notes = f"live|tx:{result.get('tx_sig', '')[:12]}|fill:{fill_price:.10f}"
+                log.info("LIVE BUY confirmed %s  tx=%s  fill=%.10f",
+                         live_pos.token_symbol, result.get("tx_sig","")[:16], result.get("fill_price",0))
+                try:
+                    from app.alerts import alert_live_buy
+                    alert_live_buy(live_pos, result.get("tx_sig",""), result.get("sol_spent", _live_size / 70))
+                except Exception:
+                    pass
+                # Store live position — it will be monitored independently
+                self._positions[live_pos.id] = live_pos
+                _save_positions(self._positions)
+                log.info("Opened LIVE position %s  size=$%.2f  entry=$%.8f",
+                         live_pos.id, live_pos.size_usd, live_pos.entry_price)
+            elif result.get("unconfirmed"):
+                live_pos.notes = f"unconfirmed|tx:{result.get('tx_sig', '')[:12]}"
+                self._positions[live_pos.id] = live_pos
+                _save_positions(self._positions)
+                log.error("LIVE BUY UNCONFIRMED %s — check on-chain: %s",
+                          live_pos.token_symbol, result.get("tx_sig", ""))
+            else:
+                log.error("LIVE BUY failed for %s: %s — paper trade continues independently",
+                          live_pos.token_symbol, result.get("error"))
+        except RuntimeError as e:
+            log.error("LIVE executor error for %s: %s — paper trade continues independently",
+                      live_pos.token_symbol, e)
 
     # ---- close ----
 
@@ -341,19 +542,44 @@ class Portfolio:
         pos = self._positions.get(pos_id)
         if not pos or pos.status == "closed":
             return None
-        pos.exit_price  = price or pos.current_price
-        pos.exit_time   = time.time()
+        pos.exit_price = price or pos.current_price
+        pos.exit_time  = time.time()
         pos.exit_reason = reason
-        pos.status      = "closed"
+        pos.status = "closed"
 
-        # Live execution — sell on-chain and use real fill price
-        if LIVE_TRADING and pos.chain == "solana":
-            fill_price = _executor.sell(pos.token_address, pos.size_usd, pos.entry_price)
-            if fill_price:
-                pos.exit_price = fill_price
-                pos.notes = (pos.notes + " | real_fill").strip(" | ")
-            else:
-                pos.notes = (pos.notes + " | exec_failed_paper").strip(" | ")
+        # Live execution gate — only sell on-chain if this position was a live buy
+        _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
+        if LIVE_TRADING and _was_live_buy:
+            from memecoin.executor import MemeExecutor
+            try:
+                ex = MemeExecutor()
+                result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
+                if result.get("success"):
+                    # Keep DexScreener price as exit_price — matches paper methodology
+                    # Jupiter fill stored in notes for real PnL accounting
+                    fill = result.get("fill_price") or pos.exit_price
+                    pos.notes = (pos.notes or "") + f"|sell_tx:{result.get('tx_sig','')[:12]}|sell_fill:{fill:.10f}"
+                    log.info("Live sell confirmed %s  tx=%s  fill=%.10f",
+                             pos.token_symbol, result.get("tx_sig","")[:16], fill)
+                    try:
+                        from app.alerts import alert_live_sell
+                        alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
+                    except Exception:
+                        pass
+                elif result.get("unconfirmed"):
+                    pos.notes = (pos.notes or "") + f"|sell_unconf:{result.get('tx_sig','')[:12]}"
+                    log.error("Live sell UNCONFIRMED for %s — journaling at paper price. "
+                              "Check on-chain: %s", pos.token_symbol, result.get("tx_sig", ""))
+                else:
+                    # Sell failed — journal at paper price, tokens remain in wallet
+                    pos.notes = (pos.notes or "") + f"|sell_failed"
+                    log.error("Live sell FAILED for %s: %s — "
+                              "TOKENS REMAIN IN WALLET. Journaling at paper price.",
+                              pos.token_symbol, result.get("error"))
+            except Exception as e:
+                pos.notes = (pos.notes or "") + f"|sell_error"
+                log.error("Executor error during sell for %s: %s", pos.token_symbol, e)
+
         _append_journal(pos)
         promote_to_winners(pos)
         del self._positions[pos_id]
