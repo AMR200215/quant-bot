@@ -19,6 +19,7 @@ LIVE_JOURNAL_FILE      = LOGS_DIR / "memecoin_live_journal.csv"
 CANDIDATES_FILE        = LOGS_DIR / "signal_candidates.csv"
 WINNERS_FILE           = LOGS_DIR / "winners_journal.csv"
 REJECTIONS_FILE        = LOGS_DIR / "new_launch_rejections.csv"
+TRAJECTORY_FILE        = LOGS_DIR / "signal_trajectory.csv"   # T+30s / T+60s price snapshots
 NEAR_MISS_FILE         = DATA_DIR / "near_miss_tracking.json"
 DEV_WALLETS_FILE       = DATA_DIR / "dev_wallets.json"
 DEV_LAST_SEEN_FILE     = DATA_DIR / "dev_last_seen.json"

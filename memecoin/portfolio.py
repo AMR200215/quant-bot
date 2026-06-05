@@ -24,7 +24,7 @@ _T10_FIELDS = [
 ]
 
 from memecoin.config import (
-    POSITIONS_FILE, JOURNAL_FILE, LIVE_JOURNAL_FILE,
+    POSITIONS_FILE, JOURNAL_FILE, LIVE_JOURNAL_FILE, TRAJECTORY_FILE,
     HARD_STOP_PCT, TRAILING_STOP_PCT, TRAIL_ACTIVATES_PCT,
     TIME_STOP_MINUTES, TIME_STOP_MIN_GAIN,
     TP_LEVELS, TRADE_SIZE_USD,
@@ -134,6 +134,8 @@ class Position:
     buy_tax: float = 0.0
     sell_tax: float = 0.0
     t10_logged: bool = False   # True once T+10 buy-velocity snapshot is written
+    t30_logged: bool = False   # True once T+30s post-signal price is recorded
+    t60_logged: bool = False   # True once T+60s post-signal price is recorded
 
     @property
     def pnl_pct(self) -> float:
@@ -669,6 +671,51 @@ class Portfolio:
                     })
                 pos.t10_logged = True
                 log.debug("T+10 velocity logged for %s  bsr5m=%.2f  buys=%d", pos.id, bsr5, b5)
+
+            # T+30s / T+60s post-signal price trajectory
+            # Answers Opus's diagnostic question: does price continue after signal?
+            # Applies to ALL positions (paper + live) so we get clean data on winners too.
+            if pos.signal_time > 0:
+                elapsed_signal = time.time() - pos.signal_time
+                for label, threshold, already_logged, set_flag in [
+                    ("t30",  30,  pos.t30_logged, "t30_logged"),
+                    ("t60",  60,  pos.t60_logged, "t60_logged"),
+                ]:
+                    if not already_logged and elapsed_signal >= threshold:
+                        gain_from_signal = (
+                            (pos.current_price - pos.signal_price) / pos.signal_price
+                            if pos.signal_price > 0 else 0.0
+                        )
+                        TRAJECTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                        write_hdr = not TRAJECTORY_FILE.exists() or TRAJECTORY_FILE.stat().st_size == 0
+                        with open(TRAJECTORY_FILE, "a", newline="") as _tf:
+                            _tw = csv.DictWriter(_tf, fieldnames=[
+                                "pos_id", "signal_id", "token_symbol", "chain",
+                                "signal_type", "strength", "is_live",
+                                "signal_price", "signal_time",
+                                "snapshot_label", "snapshot_time", "snapshot_price",
+                                "gain_from_signal_pct",
+                            ])
+                            if write_hdr:
+                                _tw.writeheader()
+                            _tw.writerow({
+                                "pos_id":               pos.id,
+                                "signal_id":            pos.signal_id,
+                                "token_symbol":         pos.token_symbol,
+                                "chain":                pos.chain,
+                                "signal_type":          pos.signal_type,
+                                "strength":             pos.strength,
+                                "is_live":              "live|tx:" in (pos.notes or ""),
+                                "signal_price":         pos.signal_price,
+                                "signal_time":          time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.signal_time)),
+                                "snapshot_label":       label,
+                                "snapshot_time":        time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                                "snapshot_price":       pos.current_price,
+                                "gain_from_signal_pct": round(gain_from_signal * 100, 2),
+                            })
+                        setattr(pos, set_flag, True)
+                        log.debug("%s trajectory %s  gain_from_signal=%.1f%%",
+                                  pos.token_symbol, label, gain_from_signal * 100)
 
             gain = pos.pnl_pct
             reason = None
