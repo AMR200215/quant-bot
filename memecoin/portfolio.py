@@ -311,6 +311,9 @@ def _append_journal(pos: Position):
 class Portfolio:
     def __init__(self):
         self._positions: dict[str, Position] = _load_positions()
+        # In-memory stall tracker: pos_id → {"last_peak": float, "stall_since": float}
+        # Not persisted — resets on restart. Fine for short pumpfun trades.
+        self._stall_tracker: dict[str, dict] = {}
 
     # ---- open ----
 
@@ -659,12 +662,32 @@ class Portfolio:
             gain = pos.pnl_pct
             reason = None
 
+            # Update stall tracker — reset timer whenever peak_price improves
+            stall = self._stall_tracker.setdefault(
+                pos.id, {"last_peak": pos.peak_price, "stall_since": time.time()}
+            )
+            if pos.peak_price > stall["last_peak"]:
+                stall["last_peak"] = pos.peak_price
+                stall["stall_since"] = time.time()
+
+            # 0. Profit-lock on stall: if we're in small profit and the peak
+            #    hasn't moved for N seconds, exit before momentum fully dies.
+            #    Skip for big runners (gain > max_gain) — let trail handle those.
+            from memecoin.config import get_signal_settings as _gss_pl
+            _pl = _gss_pl(pos.signal_type)
+            _pl_min  = _pl.get("profit_lock_min_gain",  0.05)
+            _pl_max  = _pl.get("profit_lock_max_gain",  0.30)
+            _pl_sec  = _pl.get("profit_lock_stall_sec", 999999)  # default: disabled
+            if (_pl_min <= gain <= _pl_max and
+                    (time.time() - stall["stall_since"]) >= _pl_sec):
+                reason = "profit_lock"
+
             # 1. Hard stop
-            if gain <= pos.hard_stop_pct:
+            if not reason and gain <= pos.hard_stop_pct:
                 reason = "hard_stop"
 
             # 2. Trailing stop
-            elif pos.peak_price > 0 and gain >= pos.trail_activates_pct:
+            elif not reason and pos.peak_price > 0 and gain >= pos.trail_activates_pct:
                 drawdown_from_peak = (pos.current_price - pos.peak_price) / pos.peak_price
                 if drawdown_from_peak <= pos.trailing_stop_pct:
                     reason = "trailing_stop"

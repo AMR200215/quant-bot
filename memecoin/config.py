@@ -167,6 +167,16 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "trail_activates_pct": 0.75,
         "time_stop_minutes":   45,
     },
+    "social_alert": {
+        "hard_stop_pct":       -0.35,
+        "trailing_stop_pct":   -0.35,   # tighter trail once activated
+        "trail_activates_pct": 0.30,    # activate at +30% not +75%
+        "time_stop_minutes":   90,
+        # profit_lock: exit if gain in [5%, 30%] and peak stalled for N sec
+        "profit_lock_min_gain":   0.05,
+        "profit_lock_max_gain":   0.30,
+        "profit_lock_stall_sec":  120,  # 2 minutes of no new peak
+    },
     "manual": {
         "trade_size_usd":      _SIZES["manual"],
         "hard_stop_pct":       HARD_STOP_PCT,
