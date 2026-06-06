@@ -75,7 +75,9 @@ def _get_pair_data(token_address: str) -> dict | None:
 
 def _get_whale_bought_tokens() -> list[dict]:
     """
-    Return distinct tokens bought by S/A/B-tier wallets in the last LOOKBACK_DAYS.
+    Return distinct tokens bought by any tracked wallet in the last LOOKBACK_DAYS.
+    Tier filter removed — wallets are not tiered until Phase 4, so filtering by
+    tier here would produce zero results and never populate token_outcomes.
     Each row: {token_address, chain, first_buy_ts}
     """
     since = int(time.time()) - LOOKBACK_DAYS * 86400
@@ -87,10 +89,9 @@ def _get_whale_bought_tokens() -> list[dict]:
         JOIN wallets w ON wt.wallet_address = w.address AND wt.chain = w.chain
         WHERE wt.side = 'buy'
           AND wt.block_time >= {_PH}
-          AND w.current_tier IN ({_PH}, {_PH}, {_PH})
         GROUP BY wt.token_address, wt.chain
         """,
-        (since, "S", "A", "B"),
+        (since,),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
