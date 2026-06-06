@@ -129,12 +129,12 @@ class PumpListener:
         log.info("Pump.fun listener: RPC=%s", "Helius" if key else "public")
 
     def _ws_endpoints(self) -> list[str]:
-        """Return WS endpoints to try, Helius first if available."""
-        endpoints = []
-        if self._helius_ws:
-            endpoints.append(self._helius_ws)
-        endpoints.append("wss://api.mainnet-beta.solana.com")
-        return endpoints
+        """
+        Return WS endpoints to try in order.
+        Helius free tier blocks websocket (plan limit). Public mainnet works
+        but rate-limits rapid reconnects — needs 60s+ between attempts.
+        """
+        return ["wss://api.mainnet-beta.solana.com"]
 
     # ------------------------------------------------------------------
     # Main loop with auto-reconnect + endpoint rotation
