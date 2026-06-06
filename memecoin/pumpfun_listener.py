@@ -53,8 +53,13 @@ _BUY_BUYER_IDX = 6
 # Track tokens created in last N seconds for early-buy detection
 _EARLY_BUY_WINDOW_SEC = 600   # 10 minutes
 
-# Reconnect delay on websocket drop
-_RECONNECT_DELAY = 10
+# Websocket endpoints to try in order (rotate on repeated failure)
+_WS_ENDPOINTS = [
+    "wss://mainnet.rpcpool.com",           # Triton free public — good pubsub support
+    "wss://solana-mainnet.rpcpool.com",    # Triton alt
+    "wss://api.mainnet-beta.solana.com",   # Official public (rate-limited, last resort)
+]
+_RECONNECT_BASE_DELAY = 15   # doubles on each consecutive failure, resets on success
 
 
 @dataclass
@@ -113,19 +118,15 @@ class PumpListener:
     def _setup_urls(self):
         key = os.getenv("HELIUS_API_KEY", "")
         if key:
-            # Use Helius HTTP RPC for getTransaction (faster, more reliable)
-            # but public Solana WS for the subscription — Helius free tier blocks
-            # concurrent websocket connections with 429.
+            # Helius HTTP for getTransaction (fast, reliable)
             self._rpc_url = f"https://mainnet.helius-rpc.com/?api-key={key}"
         else:
             self._rpc_url = "https://api.mainnet-beta.solana.com"
-        # Always use public mainnet websocket for logsSubscribe
-        self._ws_url = "wss://api.mainnet-beta.solana.com"
-        log.info("Pump.fun listener: WS=public-mainnet  RPC=%s",
-                 "Helius" if key else "public")
+        # WS endpoint chosen at connect time from _WS_ENDPOINTS rotation
+        log.info("Pump.fun listener: RPC=%s", "Helius" if key else "public")
 
     # ------------------------------------------------------------------
-    # Main loop with auto-reconnect
+    # Main loop with auto-reconnect + endpoint rotation
     # ------------------------------------------------------------------
 
     def _run(self):
@@ -139,16 +140,25 @@ class PumpListener:
             return
 
         log.info("Pump.fun listener starting")
-        while True:
-            try:
-                self._connect(_ws_mod)
-            except Exception as e:
-                log.warning("Pump.fun websocket error: %s — reconnecting in %ds",
-                            e, _RECONNECT_DELAY)
-                time.sleep(_RECONNECT_DELAY)
+        fail_count   = 0
+        ep_idx       = 0   # rotate through _WS_ENDPOINTS on repeated failure
 
-    def _connect(self, ws_mod):
-        ws = ws_mod.create_connection(self._ws_url, timeout=30)
+        while True:
+            ws_url = _WS_ENDPOINTS[ep_idx % len(_WS_ENDPOINTS)]
+            try:
+                self._connect(_ws_mod, ws_url)
+                fail_count = 0   # reset on clean exit
+            except Exception as e:
+                fail_count += 1
+                delay = min(_RECONNECT_BASE_DELAY * (2 ** min(fail_count - 1, 4)), 300)
+                if fail_count % len(_WS_ENDPOINTS) == 0:
+                    ep_idx += 1   # try next endpoint after cycling all
+                log.warning("Pump.fun WS error (attempt %d, ep=%s): %s — retry in %ds",
+                            fail_count, ws_url.split("//")[1].split("/")[0], e, delay)
+                time.sleep(delay)
+
+    def _connect(self, ws_mod, ws_url: str):
+        ws = ws_mod.create_connection(ws_url, timeout=30)
         log.info("Pump.fun websocket connected")
 
         ws.send(json.dumps({
