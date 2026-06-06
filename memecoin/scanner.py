@@ -490,7 +490,7 @@ def _near_miss_poller_thread():
 # ---------------------------------------------------------------------------
 
 def _portfolio_thread():
-    """Update open position prices and check exit conditions every 60s."""
+    """Update open position prices and check exit conditions every 10s."""
     log.info("Portfolio monitor started")
     while True:
         try:
@@ -504,7 +504,7 @@ def _portfolio_thread():
                              e["token_symbol"], e["reason"], e["pnl_pct"])
         except Exception as e:
             log.warning("Portfolio monitor error: %s", e)
-        time.sleep(60)
+        time.sleep(10)
 
 
 # ---------------------------------------------------------------------------
