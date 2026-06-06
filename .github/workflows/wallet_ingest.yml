@@ -2,13 +2,13 @@ name: Wallet Trade Ingestion (Phase 2a/2e)
 
 on:
   schedule:
-    - cron: "*/10 * * * *"     # every 10 min — pull fresh trades for tiered wallets
+    - cron: "*/30 * * * *"     # every 30 min — pull fresh trades for tiered wallets
   workflow_dispatch:
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 20
 
     env:
       DATABASE_URL:       ${{ secrets.DATABASE_URL }}
