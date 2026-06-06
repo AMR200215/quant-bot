@@ -54,12 +54,15 @@ _BUY_BUYER_IDX = 6
 _EARLY_BUY_WINDOW_SEC = 600   # 10 minutes
 
 # Websocket endpoints to try in order (rotate on repeated failure)
+# Helius free tier: 5 pubsub connections allowed, but connection rate-limited on
+# rapid reconnects — needs 60s+ between attempts. Works fine when stable.
+# Public mainnet: heavily rate-limited on our IP from prior rapid reconnects.
+# Both work fine with appropriate backoff.
 _WS_ENDPOINTS = [
-    "wss://mainnet.rpcpool.com",           # Triton free public — good pubsub support
-    "wss://solana-mainnet.rpcpool.com",    # Triton alt
-    "wss://api.mainnet-beta.solana.com",   # Official public (rate-limited, last resort)
+    "",   # placeholder — filled by _build_ws_url() using HELIUS_API_KEY if set
+    "wss://api.mainnet-beta.solana.com",   # fallback
 ]
-_RECONNECT_BASE_DELAY = 15   # doubles on each consecutive failure, resets on success
+_RECONNECT_BASE_DELAY = 60   # 60s base, doubles per failure — avoids rate limit storms
 
 
 @dataclass
@@ -118,12 +121,20 @@ class PumpListener:
     def _setup_urls(self):
         key = os.getenv("HELIUS_API_KEY", "")
         if key:
-            # Helius HTTP for getTransaction (fast, reliable)
-            self._rpc_url = f"https://mainnet.helius-rpc.com/?api-key={key}"
+            self._rpc_url  = f"https://mainnet.helius-rpc.com/?api-key={key}"
+            self._helius_ws = f"wss://mainnet.helius-rpc.com/?api-key={key}"
         else:
-            self._rpc_url = "https://api.mainnet-beta.solana.com"
-        # WS endpoint chosen at connect time from _WS_ENDPOINTS rotation
+            self._rpc_url   = "https://api.mainnet-beta.solana.com"
+            self._helius_ws = ""
         log.info("Pump.fun listener: RPC=%s", "Helius" if key else "public")
+
+    def _ws_endpoints(self) -> list[str]:
+        """Return WS endpoints to try, Helius first if available."""
+        endpoints = []
+        if self._helius_ws:
+            endpoints.append(self._helius_ws)
+        endpoints.append("wss://api.mainnet-beta.solana.com")
+        return endpoints
 
     # ------------------------------------------------------------------
     # Main loop with auto-reconnect + endpoint rotation
@@ -140,19 +151,19 @@ class PumpListener:
             return
 
         log.info("Pump.fun listener starting")
-        fail_count   = 0
-        ep_idx       = 0   # rotate through _WS_ENDPOINTS on repeated failure
+        fail_count = 0
+        endpoints  = self._ws_endpoints()
+        ep_idx     = 0
 
         while True:
-            ws_url = _WS_ENDPOINTS[ep_idx % len(_WS_ENDPOINTS)]
+            ws_url = endpoints[ep_idx % len(endpoints)]
             try:
                 self._connect(_ws_mod, ws_url)
-                fail_count = 0   # reset on clean exit
+                fail_count = 0   # reset on clean disconnect
             except Exception as e:
                 fail_count += 1
-                delay = min(_RECONNECT_BASE_DELAY * (2 ** min(fail_count - 1, 4)), 300)
-                if fail_count % len(_WS_ENDPOINTS) == 0:
-                    ep_idx += 1   # try next endpoint after cycling all
+                delay = min(_RECONNECT_BASE_DELAY * (2 ** min(fail_count - 1, 3)), 300)
+                ep_idx += 1      # rotate endpoint on every failure
                 log.warning("Pump.fun WS error (attempt %d, ep=%s): %s — retry in %ds",
                             fail_count, ws_url.split("//")[1].split("/")[0], e, delay)
                 time.sleep(delay)
