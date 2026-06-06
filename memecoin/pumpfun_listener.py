@@ -113,13 +113,16 @@ class PumpListener:
     def _setup_urls(self):
         key = os.getenv("HELIUS_API_KEY", "")
         if key:
+            # Use Helius HTTP RPC for getTransaction (faster, more reliable)
+            # but public Solana WS for the subscription — Helius free tier blocks
+            # concurrent websocket connections with 429.
             self._rpc_url = f"https://mainnet.helius-rpc.com/?api-key={key}"
-            self._ws_url  = f"wss://mainnet.helius-rpc.com/?api-key={key}"
         else:
-            # Public endpoint — less reliable but free
             self._rpc_url = "https://api.mainnet-beta.solana.com"
-            self._ws_url  = "wss://api.mainnet-beta.solana.com"
-        log.info("Pump.fun listener using %s", "Helius RPC" if key else "public RPC")
+        # Always use public mainnet websocket for logsSubscribe
+        self._ws_url = "wss://api.mainnet-beta.solana.com"
+        log.info("Pump.fun listener: WS=public-mainnet  RPC=%s",
+                 "Helius" if key else "public")
 
     # ------------------------------------------------------------------
     # Main loop with auto-reconnect

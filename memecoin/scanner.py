@@ -385,9 +385,8 @@ def _pumpfun_thread():
         nonlocal _whale_addrs, _whale_reload_ts
         try:
             wallets = load_all_wallets()
-            _whale_addrs = {
-                w["address"] for w in wallets.get("solana", [])
-            }
+            # load_all_wallets returns {"solana": [addr_str, ...], "bsc": [...]}
+            _whale_addrs = set(wallets.get("solana", []))
             _whale_reload_ts = time.time()
             log.debug("Loaded %d whale addresses for early-buy filter", len(_whale_addrs))
         except Exception as e:
