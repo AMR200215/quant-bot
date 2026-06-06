@@ -221,48 +221,49 @@ class PumpListener:
     # ------------------------------------------------------------------
 
     def _fetch_tx(self, sig: str) -> Optional[dict]:
-        """Fetch parsed transaction. Returns result or None."""
+        """Fetch parsed transaction. Retries up to 3x on 429."""
         with self._fetch_sem:
-            try:
-                resp = requests.post(
-                    self._rpc_url,
-                    json={
-                        "jsonrpc": "2.0", "id": 1,
-                        "method": "getTransaction",
-                        "params": [sig, {
-                            "encoding": "jsonParsed",
-                            "maxSupportedTransactionVersion": 0,
-                            "commitment": "confirmed",
-                        }],
-                    },
-                    timeout=12,
-                )
-                return resp.json().get("result")
-            except Exception as e:
-                log.debug("getTransaction %s failed: %s", sig[:12], e)
-                return None
+            for attempt in range(3):
+                try:
+                    resp = requests.post(
+                        self._rpc_url,
+                        json={
+                            "jsonrpc": "2.0", "id": 1,
+                            "method": "getTransaction",
+                            "params": [sig, {
+                                "encoding": "jsonParsed",
+                                "maxSupportedTransactionVersion": 0,
+                                "commitment": "confirmed",
+                            }],
+                        },
+                        timeout=12,
+                    )
+                    if resp.status_code == 429:
+                        time.sleep(2 ** attempt)
+                        continue
+                    return resp.json().get("result")
+                except Exception as e:
+                    log.debug("getTransaction %s attempt %d: %s", sig[:12], attempt, e)
+                    time.sleep(1)
+            return None
 
-    def _get_pumpfun_accounts(self, tx: dict) -> Optional[tuple[list[str], list[int]]]:
+    def _get_pumpfun_accounts(self, tx: dict) -> Optional[list[str]]:
         """
-        Returns (account_keys, pump_ix_accounts) where pump_ix_accounts
-        is the list of account indices for the pump.fun instruction.
-        Returns None if pump.fun instruction not found.
+        Return the pump.fun instruction's accounts as a flat list of pubkey strings.
+
+        In jsonParsed encoding, for programs Solana cannot natively decode
+        (like pump.fun), the instruction 'accounts' field is already a list
+        of pubkey strings — NOT integer indices into accountKeys.
         """
         try:
-            msg  = tx["transaction"]["message"]
-            keys = [
-                k["pubkey"] if isinstance(k, dict) else k
-                for k in msg.get("accountKeys", [])
-            ]
-            # Check top-level instructions
+            msg = tx["transaction"]["message"]
             for ix in msg.get("instructions", []):
                 if ix.get("programId") == PUMPFUN_PROGRAM:
-                    return keys, ix.get("accounts", [])
-            # Check inner instructions
+                    return ix.get("accounts", [])
             for group in (tx.get("meta") or {}).get("innerInstructions", []):
                 for ix in group.get("instructions", []):
                     if ix.get("programId") == PUMPFUN_PROGRAM:
-                        return keys, ix.get("accounts", [])
+                        return ix.get("accounts", [])
         except Exception as e:
             log.debug("Account parse error: %s", e)
         return None
@@ -277,15 +278,15 @@ class PumpListener:
         if not tx:
             return
 
-        result = self._get_pumpfun_accounts(tx)
-        if not result:
+        accs = self._get_pumpfun_accounts(tx)
+        if not accs or len(accs) <= max(_CREATE_MINT_IDX, _CREATE_CREATOR_IDX):
             return
-        keys, accs = result
 
         try:
-            mint    = keys[accs[_CREATE_MINT_IDX]]
-            creator = keys[accs[_CREATE_CREATOR_IDX]]
-        except (IndexError, KeyError):
+            # accs is a list of pubkey strings directly (jsonParsed encoding)
+            mint    = accs[_CREATE_MINT_IDX]
+            creator = accs[_CREATE_CREATOR_IDX]
+        except IndexError:
             return
 
         # Register as recent token for early-buy window
@@ -306,15 +307,14 @@ class PumpListener:
         if not tx:
             return
 
-        result = self._get_pumpfun_accounts(tx)
-        if not result:
+        accs = self._get_pumpfun_accounts(tx)
+        if not accs or len(accs) <= max(_BUY_MINT_IDX, _BUY_BUYER_IDX):
             return
-        keys, accs = result
 
         try:
-            mint  = keys[accs[_BUY_MINT_IDX]]
-            buyer = keys[accs[_BUY_BUYER_IDX]]
-        except (IndexError, KeyError):
+            mint  = accs[_BUY_MINT_IDX]
+            buyer = accs[_BUY_BUYER_IDX]
+        except IndexError:
             return
 
         # Only fire if token is still in the early-buy window
