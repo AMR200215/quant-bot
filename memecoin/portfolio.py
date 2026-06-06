@@ -500,7 +500,8 @@ class Portfolio:
 
         try:
             ex = MemeExecutor()
-            result = ex.buy(signal.token_address, _live_size, signal.chain)
+            result = ex.buy(signal.token_address, _live_size, signal.chain,
+                            signal_price=paper_pos.signal_price)
             if result.get("success"):
                 fill_price = result.get("fill_price") or live_pos.entry_price
                 signal_price = live_pos.entry_price

@@ -284,3 +284,92 @@ def sell(token_address: str, size_usd: float, entry_price: float) -> float | Non
     except Exception as e:
         log.error("SELL failed  token=%s  err=%s — paper fallback", token_address[:8], e)
         return None
+
+
+# ---------------------------------------------------------------------------
+# MemeExecutor — dict-based interface used by portfolio.py
+# Pre-flight slippage check: get quote → check price → only submit if within
+# max_slippage_pct of signal_price. Saves Jito tip on high-slippage skips.
+# ---------------------------------------------------------------------------
+
+class MemeExecutor:
+
+    def buy(self, token_address: str, size_usd: float, chain: str = "solana",
+            signal_price: float = 0.0, max_slippage_pct: float = 0.10) -> dict:
+        """
+        Swap SOL → token. Returns dict: {success, fill_price, tx_sig} or
+        {success: False, reason, ...} on abort/failure.
+        Pre-flight: if Jupiter quote implies price > signal_price * (1 + max_slippage_pct),
+        abort before paying any Jito tip.
+        """
+        try:
+            sol_price = _sol_price_usd()
+            lamports  = int((size_usd / sol_price) * 10 ** SOL_DECIMALS)
+            quote     = _get_quote(SOL_MINT, token_address, lamports)
+
+            # ── Pre-flight slippage check (free — no tip spent) ──────────────
+            if signal_price > 0:
+                token_decimals = int(quote.get("outputDecimals") or 6)
+                tokens_out     = int(quote["outAmount"]) / (10 ** token_decimals)
+                quote_price    = size_usd / tokens_out if tokens_out > 0 else 0
+                slippage       = (quote_price / signal_price - 1) if signal_price > 0 else 0
+                if slippage > max_slippage_pct:
+                    log.warning(
+                        "BUY skipped — slippage %.1f%% > max %.0f%%  token=%s  "
+                        "signal=$%.10f  quote=$%.10f",
+                        slippage * 100, max_slippage_pct * 100,
+                        token_address[:8], signal_price, quote_price,
+                    )
+                    return {"success": False, "reason": "slippage",
+                            "slippage_pct": round(slippage * 100, 1),
+                            "quote_price": quote_price}
+
+            keypair = _get_keypair()
+            wallet  = str(keypair.pubkey())
+            sig     = _execute_swap(quote, wallet)
+            log.info("BUY tx sent  sig=%s  token=%s  size=$%.2f", sig[:12], token_address[:8], size_usd)
+
+            if not _confirm_tx(sig):
+                log.warning("BUY tx unconfirmed  sig=%s", sig[:12])
+                return {"success": False, "unconfirmed": True, "tx_sig": sig}
+
+            token_decimals = int(quote.get("outputDecimals") or 6)
+            tokens_out     = int(quote["outAmount"]) / (10 ** token_decimals)
+            fill_price     = size_usd / tokens_out if tokens_out > 0 else None
+            log.info("BUY confirmed  sig=%s  fill=$%.10f", sig[:12], fill_price or 0)
+            return {"success": True, "fill_price": fill_price, "tx_sig": sig}
+
+        except Exception as e:
+            log.error("BUY failed  token=%s  err=%s", token_address[:8], e)
+            return {"success": False, "error": str(e)}
+
+    def sell(self, token_address: str, size_usd: float, entry_price: float,
+             chain: str = "solana") -> dict:
+        """Swap all held token → SOL. Returns dict: {success, fill_price, tx_sig}."""
+        try:
+            keypair = _get_keypair()
+            wallet  = str(keypair.pubkey())
+            balance = _token_balance(wallet, token_address)
+            if balance == 0:
+                log.warning("SELL skipped — zero balance  token=%s", token_address[:8])
+                return {"success": False, "reason": "zero_balance"}
+
+            quote = _get_quote(token_address, SOL_MINT, balance)
+            sig   = _execute_swap(quote, wallet)
+            log.info("SELL tx sent  sig=%s  token=%s", sig[:12], token_address[:8])
+
+            if not _confirm_tx(sig):
+                log.warning("SELL tx unconfirmed  sig=%s", sig[:12])
+                return {"success": False, "unconfirmed": True, "tx_sig": sig}
+
+            sol_price      = _sol_price_usd()
+            sol_out        = int(quote["outAmount"]) / (10 ** SOL_DECIMALS)
+            token_decimals = int(quote.get("inputDecimals") or 6)
+            tokens_in      = balance / (10 ** token_decimals)
+            fill_price     = (sol_out * sol_price) / tokens_in if tokens_in > 0 else None
+            log.info("SELL confirmed  sig=%s  fill=$%.10f", sig[:12], fill_price or 0)
+            return {"success": True, "fill_price": fill_price, "tx_sig": sig}
+
+        except Exception as e:
+            log.error("SELL failed  token=%s  err=%s", token_address[:8], e)
+            return {"success": False, "error": str(e)}
