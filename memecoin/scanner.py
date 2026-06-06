@@ -360,55 +360,131 @@ def _market_thread():
 
 def _pumpfun_thread():
     """
-    Listens to Pump.fun WebSocket for new token creation events.
-    Pushes them directly to the screener — no 2-min poll delay.
+    Real-time pump.fun event listener via Solana logsSubscribe websocket.
+
+    Handles two event types:
+      new_token  → screen via DexScreener → new_launch signal
+                   OR if creator is a known dev → dev_launch signal (fired first)
+      early_buy  → if buyer is a tracked whale wallet → copy_trade signal
+                   (fires before any Telegram alert sees the token)
+
     Falls back gracefully if websocket-client is not installed.
     """
-    try:
-        from sniper.listener import PumpListener, PumpEvent
-    except ImportError:
-        log.info("sniper module not available — skipping Pump.fun WebSocket")
-        return
+    from memecoin.pumpfun_listener import PumpListener, PumpEvent
 
-    log.info("Pump.fun real-time listener started (memecoin new_launch feed)")
-    listener = PumpListener(strategies=["launch"])
+    log.info("Pump.fun real-time listener starting")
+    listener = PumpListener()
     listener.start(daemon=True)
 
+    # Load whale wallet addresses for early-buy detection
+    # Refreshed every 5 min so new wallets added to JSON are picked up
+    _whale_addrs: set = set()
+    _whale_reload_ts = 0.0
+
+    def _reload_whale_addrs():
+        nonlocal _whale_addrs, _whale_reload_ts
+        try:
+            wallets = load_all_wallets()
+            _whale_addrs = {
+                w["address"] for w in wallets.get("solana", [])
+            }
+            _whale_reload_ts = time.time()
+            log.debug("Loaded %d whale addresses for early-buy filter", len(_whale_addrs))
+        except Exception as e:
+            log.warning("Could not reload whale addresses: %s", e)
+
+    _reload_whale_addrs()
+
     while True:
+        # Refresh whale list every 5 min
+        if time.time() - _whale_reload_ts > 300:
+            _reload_whale_addrs()
+
         event: PumpEvent = listener.get(timeout=2.0)
         if not event:
             continue
-        if event.event_type != "new_token":
-            continue
 
-        # Quick age gate — only process truly new tokens
-        # (event arrives within seconds of creation, so age_minutes ≈ 0)
         try:
-            addr = event.mint
-            screen = screen_token("solana", addr)
-            if not screen["passed"]:
-                if screen.get("liquidity_usd", 0) >= _FUNNEL_LOG_MIN_LIQ:
-                    _log_rejection("solana", addr, screen, reason=screen["reason"])
-                continue
-            if screen["age_minutes"] > MAX_AGE_MINUTES_NEW:
-                _log_rejection("solana", addr, screen, reason="age_too_old")
-                continue
-            p5m = screen["price_change_5m"]
-            if p5m < 20:
-                _log_rejection("solana", addr, screen, reason="5m_momentum_below_20")
-                if 15 <= p5m < 20:
-                    try:
-                        track_near_miss("solana", addr, screen)
-                    except Exception as e:
-                        log.debug("track_near_miss failed: %s", e)
-                continue
-            if screen["dex_id"] == "meteora":
-                _log_rejection("solana", addr, screen, reason="meteora_block")
-                continue
-            sig = make_new_launch_signal("solana", addr, screen)
-            _add_signal(sig)
+            # ── new_token: dev wallet check first, then DexScreener screen ──
+            if event.event_type == "new_token":
+                addr    = event.mint
+                creator = event.creator
+
+                # 1. Dev wallet check — fire dev_launch immediately if known dev
+                from memecoin.dev_tracker import load_dev_wallets, dev_signal_strength
+                dev_wallets = load_dev_wallets()
+                dev_map     = {d["address"]: d for d in dev_wallets if d.get("win_count", 0) >= 2}
+                if creator in dev_map:
+                    dev_entry = dev_map[creator]
+                    strength  = dev_signal_strength(dev_entry)
+                    screen    = screen_token("solana", addr)
+                    # Dev signals skip most filters — we trust the dev's history
+                    screen["passed"] = True
+                    sig = make_dev_launch_signal(
+                        "solana", addr, screen,
+                        dev_address=creator, dev_entry=dev_entry, strength=strength,
+                    )
+                    if sig:
+                        log.info("DEV LAUNCH (realtime)  dev=%s  mint=%s  wins=%d",
+                                 creator[:8], addr[:8], dev_entry.get("win_count", 0))
+                        _add_signal(sig)
+                    continue   # don't double-fire as new_launch
+
+                # 2. Standard new_launch screen (DexScreener — arrives within ~5s)
+                # Wait a few seconds for DexScreener to index the token
+                time.sleep(5)
+                screen = screen_token("solana", addr)
+                if not screen["passed"]:
+                    if screen.get("liquidity_usd", 0) >= _FUNNEL_LOG_MIN_LIQ:
+                        _log_rejection("solana", addr, screen, reason=screen["reason"])
+                    continue
+                if screen["age_minutes"] > MAX_AGE_MINUTES_NEW:
+                    _log_rejection("solana", addr, screen, reason="age_too_old")
+                    continue
+                p5m = screen.get("price_change_5m", 0)
+                if p5m < 20:
+                    _log_rejection("solana", addr, screen, reason="5m_momentum_below_20")
+                    if 15 <= p5m < 20:
+                        try:
+                            track_near_miss("solana", addr, screen)
+                        except Exception:
+                            pass
+                    continue
+                if screen.get("dex_id") == "meteora":
+                    _log_rejection("solana", addr, screen, reason="meteora_block")
+                    continue
+                sig = make_new_launch_signal("solana", addr, screen)
+                _add_signal(sig)
+
+            # ── early_buy: whale bought a recently-created token ──────────
+            elif event.event_type == "early_buy":
+                buyer = event.buyer
+                addr  = event.mint
+                if buyer not in _whale_addrs:
+                    continue   # not a tracked whale — ignore
+
+                log.info("EARLY WHALE BUY (realtime)  buyer=%s  mint=%s",
+                         buyer[:8], addr[:8])
+
+                # Wait for DexScreener to have price data
+                time.sleep(5)
+                screen = screen_token("solana", addr)
+                # Bypass most filters — the whale buy IS the signal
+                screen["passed"] = True
+
+                # Build a copy_trade signal with the whale's address
+                all_wallets = load_all_wallets()
+                ranks = build_wallet_ranks(all_wallets)
+                sig   = make_copy_trade_signal(
+                    "solana", addr, screen,
+                    whale_wallets=[buyer],
+                    wallet_ranks=ranks,
+                )
+                _add_signal(sig)
+
         except Exception as e:
-            log.debug("Pump.fun token screen error %s: %s", event.mint[:8], e)
+            log.debug("Pump.fun event error  type=%s  mint=%s  err=%s",
+                      event.event_type, event.mint[:8], e)
 
 
 # ---------------------------------------------------------------------------
