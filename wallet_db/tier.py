@@ -140,7 +140,7 @@ def run_tiering(single_wallet: str = "", chain: str = "solana",
     else:
         rows = conn.execute(
             f"SELECT address, chain, name, current_tier, current_score, status"
-            f" FROM wallets WHERE chain={_PH}",
+            f" FROM wallets WHERE chain={_PH} AND status != 'dormant'",
             (chain,),
         ).fetchall()
     conn.close()

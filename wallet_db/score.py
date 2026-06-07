@@ -186,15 +186,15 @@ def compute_wallet_score(wallet: str, chain: str, window_days: int = 30) -> dict
 def _write_score(wallet: str, chain: str, sd: dict, today: str) -> None:
     conn = get_conn()
 
+    # Always update current_score — clears any stale values from old scoring formulas
+    conn.execute(
+        f"UPDATE wallets SET current_score={_PH} WHERE address={_PH} AND chain={_PH}",
+        (sd["score"], wallet, chain),
+    )
     if sd["score"] == 0.0 and sd["trade_count"] < DORMANT_THRESH:
         conn.execute(
             f"UPDATE wallets SET status='dormant' WHERE address={_PH} AND chain={_PH}",
             (wallet, chain),
-        )
-    else:
-        conn.execute(
-            f"UPDATE wallets SET current_score={_PH} WHERE address={_PH} AND chain={_PH}",
-            (sd["score"], wallet, chain),
         )
 
     conn.execute(
