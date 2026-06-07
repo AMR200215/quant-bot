@@ -41,7 +41,7 @@ CALL_DELAY = 0.3
 MIN_PEAK_MULTIPLE = 5.0
 RUG_PRICE_RATIO   = 0.10
 RUG_LIQUIDITY     = 5_000
-MAX_AGE_DAYS      = 14
+MAX_AGE_DAYS      = 30   # must match LOOKBACK_DAYS — tokens seeded from 30d lookback
 LOOKBACK_DAYS     = 30
 
 _PH = "%s" if _USE_POSTGRES else "?"
