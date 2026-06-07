@@ -165,44 +165,28 @@ def run_tiering(single_wallet: str = "", chain: str = "solana",
         old_tier = w.get("current_tier")
         old_status = w.get("status", "active")
 
-        # Pull last 4 weekly score snapshots (newest first)
+        # Pull last 4 daily score snapshots (newest first)
+        # composite_score is written by Phase 4 — use it directly for all snapshots
         conn = get_conn()
         snaps = conn.execute(
             f"""
             SELECT score_date, hit_rate, median_return, trade_count,
-                   COALESCE(
-                       (SELECT current_score FROM wallets
-                        WHERE address={_PH} AND chain={_PH}),
-                       0.0
-                   ) as score
+                   COALESCE(composite_score, 0.0) as composite_score
             FROM wallet_scores_history
             WHERE wallet_address={_PH} AND chain={_PH}
             ORDER BY score_date DESC
             LIMIT 4
             """,
-            (addr, wchain, addr, wchain),
+            (addr, wchain),
         ).fetchall()
         conn.close()
 
         history = [dict(s) for s in snaps]
 
-        # For each snapshot, get the composite score stored that day
-        # wallet_scores_history doesn't store the composite — we stored hit_rate/median_return
-        # Use the current_score (Phase 4) for recency, estimate older weeks from hit_rate
-        # Simple approach: use hit_rate as proxy for older snapshots
         scored_history = []
-        for i, h in enumerate(history):
-            if i == 0:
-                # Most recent — use actual current_score from wallets table
-                s = w.get("current_score") or 0.0
-            else:
-                # Older snapshots — approximate from hit_rate * median_return_norm
-                hr = h.get("hit_rate") or 0.0
-                med = h.get("median_return") or 0.0
-                med_norm = min(1.0, max(0.0, med / 200.0))
-                s = round(hr * 35.0 + med_norm * 35.0, 2)
+        for h in history:
             scored_history.append({
-                "score":       s,
+                "score":       h.get("composite_score") or 0.0,
                 "trade_count": h.get("trade_count") or 0,
             })
 

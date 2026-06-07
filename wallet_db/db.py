@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS wallet_scores_history (
     hit_rate        DOUBLE PRECISION,
     median_return   DOUBLE PRECISION,
     trade_count     INTEGER,
+    composite_score DOUBLE PRECISION DEFAULT 0.0,
     UNIQUE (wallet_address, chain, score_date)
 );
 
@@ -190,12 +191,17 @@ def init_db():
     schema = _PG_SCHEMA if _USE_POSTGRES else _SQLITE_SCHEMA
     conn.executescript(schema)
     # Migrations — add columns that may be missing from older DBs
+    migrations = [
+        "ALTER TABLE discovery_queue ADD COLUMN context TEXT DEFAULT ''",
+        "ALTER TABLE wallet_scores_history ADD COLUMN composite_score REAL DEFAULT 0.0",
+    ]
     if not _USE_POSTGRES:
-        try:
-            conn.execute("ALTER TABLE discovery_queue ADD COLUMN context TEXT DEFAULT ''")
-            conn.commit()
-        except Exception:
-            pass  # column already exists
+        for sql in migrations:
+            try:
+                conn.execute(sql)
+                conn.commit()
+            except Exception:
+                pass  # column already exists
     conn.commit()
     conn.close()
 

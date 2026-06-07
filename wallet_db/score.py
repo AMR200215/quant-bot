@@ -200,15 +200,17 @@ def _write_score(wallet: str, chain: str, sd: dict, today: str) -> None:
     conn.execute(
         f"""
         INSERT INTO wallet_scores_history
-            (wallet_address, chain, score_date, tier, hit_rate, median_return, trade_count)
-        VALUES ({_PH}, {_PH}, {_PH}, NULL, {_PH}, {_PH}, {_PH})
+            (wallet_address, chain, score_date, tier, hit_rate, median_return,
+             trade_count, composite_score)
+        VALUES ({_PH}, {_PH}, {_PH}, NULL, {_PH}, {_PH}, {_PH}, {_PH})
         ON CONFLICT (wallet_address, chain, score_date) DO UPDATE SET
-            hit_rate      = excluded.hit_rate,
-            median_return = excluded.median_return,
-            trade_count   = excluded.trade_count
+            hit_rate        = excluded.hit_rate,
+            median_return   = excluded.median_return,
+            trade_count     = excluded.trade_count,
+            composite_score = excluded.composite_score
         """,
         (wallet, chain, today,
-         sd["hit_rate"], sd["median_return"], sd["trade_count"]),
+         sd["hit_rate"], sd["median_return"], sd["trade_count"], sd["score"]),
     )
 
     conn.commit()
