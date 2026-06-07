@@ -91,16 +91,46 @@ def _load_wallet_file(path: Path) -> list[str]:
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
+def _load_db_wallets() -> dict[str, dict]:
+    """
+    Load active S/A/B wallets from wallet_db (Phase 7 integration point).
+    Returns {address: {"tier": "S"|"A"|"B", "score": float}} or {} on failure.
+    Silently falls back to empty dict if DB is unavailable or has < 3 wallets.
+    """
+    try:
+        from wallet_db.db import get_active_wallets
+        rows = get_active_wallets("solana", tiers=("S", "A", "B"))
+        if len(rows) < 3:
+            return {}
+        return {
+            r["address"]: {
+                "tier":  r.get("current_tier") or "",
+                "score": float(r.get("current_score") or 0.0),
+            }
+            for r in rows
+        }
+    except Exception as e:
+        log.debug("wallet_db unavailable (Phase 7 fallback to JSON): %s", e)
+        return {}
+
+
 def load_all_wallets() -> dict:
     """
-    Returns:
-        {
-            "solana": ["addr1", ...],
-            "bsc":    ["addr1", ...],
-        }
+    Returns wallet lists for each chain.
+    Solana: JSON file wallets + any DB-tiered wallets not already in the file.
+    BSC:    JSON file only (DB does not yet track BSC).
     """
+    json_sol = _load_wallet_file(SOL_WALLETS_FILE)
+    db_wallets = _load_db_wallets()
+
+    # Add DB wallets that aren't already in the JSON list
+    json_sol_set = set(json_sol)
+    extra = [addr for addr in db_wallets if addr not in json_sol_set]
+    if extra:
+        log.info("Phase 7: adding %d DB-tiered wallets not in JSON file", len(extra))
+
     return {
-        "solana": _load_wallet_file(SOL_WALLETS_FILE),
+        "solana": json_sol + extra,
         "bsc":    _load_wallet_file(BNB_WALLETS_FILE),
     }
 
@@ -111,57 +141,80 @@ def load_all_wallets() -> dict:
 
 def build_wallet_ranks(wallets: dict) -> dict[str, int]:
     """
-    Assign 0-based rank to each wallet address (across both chains combined).
-    Rank 0 = best.  For now ranks are order-preserved (file order = rank).
-    When GMGN stats are available they replace file-order rank for SOL wallets.
+    Assign ranks to wallet addresses.
+
+    DB-tiered wallets (Phase 7) get reserved negative ranks that encode their
+    Phase 6 tier directly — tier_for_wallet() reads these as DB overrides:
+        S-tier → rank -3  (maps to copy-trade tier 1)
+        A-tier → rank -2  (maps to copy-trade tier 2)
+        B-tier → rank -1  (maps to copy-trade tier 3)
+
+    JSON-only wallets get 0-based positive ranks sorted by whale_stats.json
+    score (or file-order if no stats available).
+
     Returns: { wallet_address: rank }
     """
-    stats_path = WHALE_STATS_FILE
-    # whale_stats.json is a ranked list: [{wallet: addr, score: N, win_rate: N, ...}, ...]
-    # Convert to addr → stats dict for fast lookup
+    db_wallets = _load_db_wallets()
+
+    # whale_stats.json — fallback scoring for JSON-only wallets
     cached: dict[str, dict] = {}
-    if stats_path.exists():
+    if WHALE_STATS_FILE.exists():
         try:
-            entries = json.loads(stats_path.read_text())
+            entries = json.loads(WHALE_STATS_FILE.read_text())
             if isinstance(entries, list):
                 for entry in entries:
                     addr = entry.get("wallet", "")
                     if addr:
                         cached[addr] = entry
             elif isinstance(entries, dict):
-                cached = entries  # legacy format
+                cached = entries
         except Exception:
             pass
 
+    _DB_TIER_RANK = {"S": -3, "A": -2, "B": -1}
+
     ranks: dict[str, int] = {}
 
-    # Solana: sort by score (pre-ranked list already sorted, but re-sort to be safe)
+    # Solana: DB wallets get tier-encoded negative ranks; others get score-sorted positive ranks
     sol_wallets = wallets.get("solana", [])
-    sol_win_rates: list[tuple[str, float]] = []
-    for addr in sol_wallets:
-        score = cached.get(addr, {}).get("score", None)
-        if score is not None:
-            sol_win_rates.append((addr, float(score)))
-        else:
-            sol_win_rates.append((addr, -1.0))  # unranked → sort last
+    json_only: list[tuple[str, float]] = []
 
-    sol_win_rates.sort(key=lambda x: x[1], reverse=True)
-    for i, (addr, _) in enumerate(sol_win_rates):
+    for addr in sol_wallets:
+        db = db_wallets.get(addr)
+        if db and db["tier"] in _DB_TIER_RANK:
+            ranks[addr] = _DB_TIER_RANK[db["tier"]]
+        else:
+            # Fall back to whale_stats.json score for rank ordering
+            score = cached.get(addr, {}).get("score", None)
+            json_only.append((addr, float(score) if score is not None else -1.0))
+
+    json_only.sort(key=lambda x: x[1], reverse=True)
+    for i, (addr, _) in enumerate(json_only):
         ranks[addr] = i
 
-    # BSC: no ranking data yet — assign all to Tier 2 by default
-    # (rank = TIER1_TOP_N so they just enter Tier 2, not Tier 1)
-    # This ensures BSC wallets actually fire copy_trade signals instead of
-    # being silently dropped as Tier 3.
+    # BSC: no DB data yet — assign tier 2 by default
     bnb_wallets = wallets.get("bsc", [])
     for addr in bnb_wallets:
         ranks[addr] = TIER1_TOP_N  # first slot of Tier 2
+
+    db_count = sum(1 for r in ranks.values() if r < 0)
+    if db_count:
+        log.debug("Phase 7: %d wallets using DB tier, %d using JSON rank",
+                  db_count, len(json_only))
 
     return ranks
 
 
 def tier_for_wallet(wallet: str, ranks: dict[str, int]) -> int:
     rank = ranks.get(wallet, 9999)
+    # Negative ranks = DB-tiered wallets (Phase 7): -3=S→tier1, -2=A→tier2, -1=B→tier3
+    if rank == -3:
+        return 1
+    if rank == -2:
+        return 2
+    if rank == -1:
+        return 3
+    # Positive ranks = JSON-only wallets (legacy rank-based tier)
     if rank < TIER1_TOP_N:
         return 1
     if rank < TIER1_TOP_N + TIER2_TOP_N:
