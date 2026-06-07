@@ -49,18 +49,21 @@ MAX_PAGES_PER_TOKEN    = 8   # max Helius pages per token (800 txs)
 def _helius_get(wallet_or_address: str, params: dict) -> list:
     url = f"{HELIUS_BASE}/addresses/{wallet_or_address}/transactions"
     params["api-key"] = HELIUS_KEY
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        if r.status_code == 429:
-            log.warning("Helius rate limit — sleeping 5s")
-            time.sleep(5)
-            return []
-        if r.status_code != 200:
-            return []
-        return r.json() or []
-    except Exception as e:
-        log.debug("Helius error: %s", e)
-        return []
+    for attempt in range(4):
+        try:
+            r = requests.get(url, params=params, timeout=15)
+            if r.status_code == 429:
+                wait = 5 * (2 ** attempt)
+                log.warning("Helius rate limit — sleeping %ds (attempt %d)", wait, attempt + 1)
+                time.sleep(wait)
+                continue
+            if r.status_code != 200:
+                return []
+            return r.json() or []
+        except Exception as e:
+            log.debug("Helius error: %s", e)
+            time.sleep(2)
+    return []
 
 
 def _get_pair_address(token_address: str) -> str | None:
