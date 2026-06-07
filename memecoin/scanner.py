@@ -23,6 +23,8 @@ from memecoin.config import (
     SIGNALS_FILE, DATA_DIR,
     SOL_WALLET_POLL_SEC, BNB_WALLET_POLL_SEC, DEXSCREENER_POLL_SEC,
     MIN_LIQUIDITY_USD, MAX_AGE_MINUTES_NEW,
+    MIN_BUY_SELL_RATIO_SOCIAL, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL,
+    MAX_VOL_H1_SOCIAL, MAX_PRICE_CHANGE_5M_SOCIAL,
 )
 from memecoin.data_client import (
     dex_get_new_pairs, dex_get_boosted, gmgn_new_sol, gmgn_trending_sol,
@@ -503,8 +505,25 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             log.debug("TG token %s rejected (rug): %s", address[:8], reason)
             return
 
-        # Social alerts bypass the liquidity gate — data collection mode.
-        # We still want the DexScreener snapshot even for low-liq tokens.
+        # Social alert entry filters (data-derived from v5+v6, 192 trades)
+        bs   = screen.get("buy_sell_ratio_5m") or 0
+        v5m  = screen.get("volume_5m") or 0
+        vh1  = screen.get("volume_h1") or 0
+        pc5m = screen.get("price_change_5m") or 0
+
+        if bs < MIN_BUY_SELL_RATIO_SOCIAL:
+            log.debug("TG token %s rejected (bs=%.2f < %.2f)", address[:8], bs, MIN_BUY_SELL_RATIO_SOCIAL)
+            return
+        if not (MIN_VOL_5M_SOCIAL <= v5m < MAX_VOL_5M_SOCIAL):
+            log.debug("TG token %s rejected (vol_5m=%.0f not in %d-%d)", address[:8], v5m, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL)
+            return
+        if vh1 >= MAX_VOL_H1_SOCIAL:
+            log.debug("TG token %s rejected (vol_h1=%.0f >= %d)", address[:8], vh1, MAX_VOL_H1_SOCIAL)
+            return
+        if 0 < pc5m >= MAX_PRICE_CHANGE_5M_SOCIAL:
+            log.debug("TG token %s rejected (pc5m=%.0f >= %d)", address[:8], pc5m, MAX_PRICE_CHANGE_5M_SOCIAL)
+            return
+
         screen["passed"] = True
 
         channel = "pumpdotfunalert"
