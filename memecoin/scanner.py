@@ -177,14 +177,35 @@ def _wallet_thread(wallets: dict, ranks: dict):
     bnb_wallets = wallets.get("bsc", [])
     bscscan_key = os.getenv("BSCSCAN_API_KEY", "")
 
-    sol_last = 0.0
-    bnb_last = 0.0
+    sol_last          = 0.0
+    bnb_last          = 0.0
+    wallet_reload_ts  = 0.0
+    WALLET_RELOAD_SEC = 600   # refresh DB-promoted wallets every 10 min
 
     log.info("Wallet tracker started — SOL:%d wallets  BNB:%d wallets",
              len(sol_wallets), len(bnb_wallets))
 
     while True:
         now = time.time()
+
+        # Refresh wallet list + ranks every 10 min so Phase 6/7 DB promotions
+        # are picked up without needing a bot restart
+        if now - wallet_reload_ts >= WALLET_RELOAD_SEC:
+            try:
+                new_wallets = load_all_wallets()
+                new_ranks   = build_wallet_ranks(new_wallets)
+                new_sol     = new_wallets.get("solana", [])
+                new_bnb     = new_wallets.get("bsc", [])
+                added = len(set(new_sol) - set(sol_wallets))
+                if added:
+                    log.info("Wallet refresh: +%d new SOL wallets added to polling", added)
+                sol_wallets = new_sol
+                bnb_wallets = new_bnb
+                ranks.clear()
+                ranks.update(new_ranks)
+                wallet_reload_ts = now
+            except Exception as e:
+                log.debug("Wallet list refresh error: %s", e)
 
         if now - sol_last >= SOL_WALLET_POLL_SEC and sol_wallets:
             sol_last = now

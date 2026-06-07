@@ -110,7 +110,7 @@ def _load_db_wallets() -> dict[str, dict]:
             for r in rows
         }
     except Exception as e:
-        log.debug("wallet_db unavailable (Phase 7 fallback to JSON): %s", e)
+        log.warning("wallet_db unavailable — Phase 7 falling back to JSON-only: %s", e)
         return {}
 
 

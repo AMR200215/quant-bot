@@ -421,47 +421,21 @@ def run_phase2a(days: int = 30, single_wallet: str = ""):
                  score_data["score"],
                  "LOW CONF" if score_data["low_confidence"] else "ok")
 
-    # Rerank active wallets and assign S/A/B using Phase 4 composite scores from DB
-    # (current_score is written by score.py daily — use that, not the ingest-time simple score)
+    # Tier assignment is Phase 6's responsibility (runs Mondays via wallet_db.tier).
+    # Phase 2a only updates activity signals in history — does NOT touch current_tier.
     conn = get_conn()
-    scored_rows = conn.execute(
-        "SELECT address, current_score FROM wallets WHERE status='active' AND chain='solana'"
-    ).fetchall()
-    conn.close()
-
-    score_map = {row["address"]: (row["current_score"] or 0.0) for row in scored_rows}
-
-    active_results = sorted(
-        [r for r in results if r["active"] and r["trades_30d"] >= 3],
-        key=lambda x: score_map.get(x["address"], 0.0), reverse=True,
-    )
-    total = len(active_results)
-
-    conn = get_conn()
-    for i, r in enumerate(active_results):
-        pct = (i + 1) / total if total else 1
-        if pct <= 0.10 and r["trades_30d"] >= 10:
-            tier = "S"
-        elif pct <= 0.30 and r["trades_30d"] >= 5:
-            tier = "A"
-        elif pct <= 0.60 and r["trades_30d"] >= 3:
-            tier = "B"
-        else:
-            tier = None
-        conn.execute(
-            "UPDATE wallets SET current_tier=? WHERE address=? AND chain=?",
-            (tier, r["address"], "solana"),
-        )
+    for r in results:
+        if not r["active"]:
+            continue
         conn.execute(
             """INSERT INTO wallet_scores_history
-               (wallet_address, chain, score_date, tier, hit_rate, median_return, trade_count)
-               VALUES (?, 'solana', ?, ?, ?, ?, ?)
+               (wallet_address, chain, score_date, hit_rate, median_return, trade_count)
+               VALUES (?, 'solana', ?, ?, ?, ?)
                ON CONFLICT (wallet_address, chain, score_date) DO UPDATE SET
-                   tier          = excluded.tier,
                    hit_rate      = excluded.hit_rate,
                    median_return = excluded.median_return,
                    trade_count   = excluded.trade_count""",
-            (r["address"], today, tier, r["win_rate"], r["avg_roi"], r["trades_30d"]),
+            (r["address"], today, r["win_rate"], r["avg_roi"], r["trades_30d"]),
         )
     conn.commit()
     conn.close()
