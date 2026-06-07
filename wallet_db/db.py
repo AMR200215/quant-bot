@@ -188,10 +188,14 @@ def init_db():
     """Create schema. Safe to call multiple times."""
     conn = get_conn()
     schema = _PG_SCHEMA if _USE_POSTGRES else _SQLITE_SCHEMA
-    if _USE_POSTGRES:
-        conn.executescript(schema)
-    else:
-        conn.executescript(schema)
+    conn.executescript(schema)
+    # Migrations — add columns that may be missing from older DBs
+    if not _USE_POSTGRES:
+        try:
+            conn.execute("ALTER TABLE discovery_queue ADD COLUMN context TEXT DEFAULT ''")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
     conn.commit()
     conn.close()
 
