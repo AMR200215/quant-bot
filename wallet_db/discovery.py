@@ -23,7 +23,8 @@ import requests
 from dotenv import load_dotenv
 
 from wallet_db.db import get_conn, init_db
-from wallet_db.ingest import ingest_wallet, _compute_score
+from wallet_db.ingest import ingest_wallet
+from wallet_db.score import compute_wallet_score
 
 load_dotenv()
 
@@ -285,7 +286,7 @@ def run_promote():
         # Pull 30d history
         summary    = ingest_wallet(wallet, "solana", now - 30 * 86400)
         time.sleep(CALL_DELAY)
-        score_data = _compute_score(wallet, "solana", 30)
+        score_data = compute_wallet_score(wallet, "solana", 30)
 
         conn = get_conn()
 
