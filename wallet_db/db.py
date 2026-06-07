@@ -131,7 +131,7 @@ class _PgConn:
     def __init__(self, dsn: str):
         import psycopg2
         import psycopg2.extras
-        self._conn = psycopg2.connect(dsn)
+        self._conn = psycopg2.connect(dsn, connect_timeout=15)
         self._conn.autocommit = False
 
     def execute(self, sql: str, params=()) -> Any:

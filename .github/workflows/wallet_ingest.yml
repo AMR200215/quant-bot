@@ -1,8 +1,9 @@
 name: Wallet Trade Ingestion (Phase 2a/2e)
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"     # every 30 min — pull fresh trades for tiered wallets
+  # Schedule disabled — Supabase blocks GitHub Actions IPs.
+  # Ingestion now runs via cron on Hetzner (every 30 min).
+  # Keep workflow_dispatch for manual one-off runs if needed.
   workflow_dispatch:
 
 jobs:
