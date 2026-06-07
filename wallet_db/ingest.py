@@ -346,9 +346,10 @@ def _update_tier(wallet: str, chain: str, score: float,
         conn.close()
         return
 
+    # current_score is owned by Phase 4 (score.py) — ingest only tracks activity
     conn.execute(
-        "UPDATE wallets SET current_score=? WHERE address=? AND chain=?",
-        (score, wallet, chain),
+        "UPDATE wallets SET last_trade_ts=COALESCE(last_trade_ts, 0) WHERE address=? AND chain=?",
+        (wallet, chain),
     )
     conn.commit()
     conn.close()
@@ -420,10 +421,19 @@ def run_phase2a(days: int = 30, single_wallet: str = ""):
                  score_data["score"],
                  "LOW CONF" if score_data["low_confidence"] else "ok")
 
-    # Rerank remaining active wallets and assign S/A/B
+    # Rerank active wallets and assign S/A/B using Phase 4 composite scores from DB
+    # (current_score is written by score.py daily — use that, not the ingest-time simple score)
+    conn = get_conn()
+    scored_rows = conn.execute(
+        "SELECT address, current_score FROM wallets WHERE status='active' AND chain='solana'"
+    ).fetchall()
+    conn.close()
+
+    score_map = {row["address"]: (row["current_score"] or 0.0) for row in scored_rows}
+
     active_results = sorted(
         [r for r in results if r["active"] and r["trades_30d"] >= 3],
-        key=lambda x: x["score"], reverse=True,
+        key=lambda x: score_map.get(x["address"], 0.0), reverse=True,
     )
     total = len(active_results)
 
