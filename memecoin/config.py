@@ -44,7 +44,7 @@ CAPITAL_USD = 100   # ← set this to your actual capital
 # Flip to True when wallet is funded and SOLANA_PRIVATE_KEY env var is set.
 # False = pure paper trade, nothing changes in existing behaviour.
 # ---------------------------------------------------------------------------
-LIVE_TRADING = False
+LIVE_TRADING = True
 
 def _stage(capital: float) -> int:
     if capital < 1_000:  return 1
