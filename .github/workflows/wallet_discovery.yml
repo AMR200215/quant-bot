@@ -1,9 +1,10 @@
 name: Wallet Discovery Pipeline
 
 on:
-  schedule:
-    - cron: "0 */4 * * *"      # every 4 hours — outcome tracker + winner backtrace
-    - cron: "0 3 * * *"        # daily 03:00 UTC — multi-winner promotion
+  # Schedule disabled — Supabase blocks GitHub Actions IPs.
+  # Outcome tracker runs every 4h via Hetzner cron.
+  # Discovery runs daily 03:00 UTC via Hetzner cron.
+  # Keep workflow_dispatch for manual one-off runs if needed.
   workflow_dispatch:
 
 jobs:

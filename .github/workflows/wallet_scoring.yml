@@ -1,10 +1,11 @@
 name: Wallet Scoring & Tiering
 
 on:
-  schedule:
-    - cron: "0 4 * * *"        # daily 04:00 UTC — scoring
-    - cron: "0 5 * * 1"        # Monday 05:00 UTC — tiering (after scoring)
-  workflow_dispatch:             # manual trigger for testing
+  # Schedule disabled — Supabase blocks GitHub Actions IPs.
+  # Scoring (Phase 4) runs daily 04:00 UTC via Hetzner cron.
+  # Tiering (Phase 6) runs Mondays 05:00 UTC via Hetzner cron.
+  # Keep workflow_dispatch for manual one-off runs if needed.
+  workflow_dispatch:
 
 jobs:
   score-and-tier:
