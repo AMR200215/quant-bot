@@ -27,9 +27,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
-JUPITER_SWAP_URL  = "https://quote-api.jup.ag/v6/swap"
-JUPITER_PRICE_URL = "https://price.jup.ag/v6/price"
+JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote"
+JUPITER_SWAP_URL  = "https://lite-api.jup.ag/swap/v1/swap"
 
 SOL_MINT     = "So11111111111111111111111111111111111111112"
 SOL_DECIMALS = 9
@@ -81,16 +80,23 @@ def _get_keypair():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
 def _sol_price_usd() -> float:
-    """Fetch current SOL/USD price from Jupiter price API."""
+    """Fetch current SOL/USD price by quoting 1 SOL → USDC via Jupiter."""
     try:
         resp = requests.get(
-            JUPITER_PRICE_URL,
-            params={"ids": SOL_MINT},
+            JUPITER_QUOTE_URL,
+            params={
+                "inputMint":  SOL_MINT,
+                "outputMint": USDC_MINT,
+                "amount":     1_000_000_000,  # 1 SOL in lamports
+            },
             timeout=5,
         )
         resp.raise_for_status()
-        return float(resp.json()["data"][SOL_MINT]["price"])
+        usdc_out = float(resp.json()["outAmount"])  # USDC has 6 decimals
+        return round(usdc_out / 1e6, 4)
     except Exception as e:
         log.warning("SOL price fetch failed: %s — using fallback $170", e)
         return 170.0
