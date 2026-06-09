@@ -120,13 +120,11 @@ class PumpListener:
 
     def _setup_urls(self):
         key = os.getenv("HELIUS_API_KEY", "")
-        if key:
-            self._rpc_url  = f"https://mainnet.helius-rpc.com/?api-key={key}"
-            self._helius_ws = f"wss://mainnet.helius-rpc.com/?api-key={key}"
-        else:
-            self._rpc_url   = "https://api.mainnet-beta.solana.com"
-            self._helius_ws = ""
-        log.info("Pump.fun listener: RPC=%s", "Helius" if key else "public")
+        # Always use public RPC for HTTP calls — reserves Helius quota for live trading
+        # (executor.py confirm_tx / token_balance).
+        self._rpc_url   = "https://api.mainnet-beta.solana.com"
+        self._helius_ws = f"wss://mainnet.helius-rpc.com/?api-key={key}" if key else ""
+        log.info("Pump.fun listener: RPC=public (Helius reserved for live trading)")
 
     def _ws_endpoints(self) -> list[str]:
         """
