@@ -47,7 +47,8 @@ _JITO_TIP_ACCOUNTS = [
 JITO_TIP_LAMPORTS = 1_000_000        # 0.001 SOL (~$0.17)
 JITO_RPC_URL      = "https://mainnet.block-engine.jito.wtf/api/v1/transactions"
 
-SOLANA_RPC = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+SOLANA_RPC         = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+SOLANA_RPC_FALLBACK = "https://api.mainnet-beta.solana.com"   # used if primary returns 429
 
 
 # ---------------------------------------------------------------------------
@@ -170,20 +171,25 @@ def _execute_swap(quote: dict, wallet_pubkey: str) -> str:
     return result["result"]  # tx signature
 
 
+def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
+    """POST to SOLANA_RPC; on 429 fall back to public mainnet automatically."""
+    resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
+    if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
+        log.warning("Primary RPC 429 (quota exhausted?) — falling back to public mainnet")
+        resp = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
+    return resp
+
+
 def _confirm_tx(sig: str, max_wait: int = 30) -> bool:
-    """Poll until tx is confirmed or timeout. Backs off on 429."""
+    """Poll until tx is confirmed or timeout. Falls back to public RPC on 429."""
     deadline = time.time() + max_wait
     while time.time() < deadline:
         try:
-            resp = requests.post(
-                SOLANA_RPC,
-                json={
-                    "jsonrpc": "2.0", "id": 1,
-                    "method":  "getSignatureStatuses",
-                    "params":  [[sig], {"searchTransactionHistory": True}],
-                },
-                timeout=10,
-            )
+            resp = _rpc_post({
+                "jsonrpc": "2.0", "id": 1,
+                "method":  "getSignatureStatuses",
+                "params":  [[sig], {"searchTransactionHistory": True}],
+            })
             if resp.status_code == 429:
                 time.sleep(5)
                 continue
@@ -199,19 +205,15 @@ def _confirm_tx(sig: str, max_wait: int = 30) -> bool:
 def _token_balance(wallet_pubkey: str, token_mint: str) -> int:
     """Return raw token balance (smallest unit) for a wallet."""
     try:
-        resp = requests.post(
-            SOLANA_RPC,
-            json={
-                "jsonrpc": "2.0", "id": 1,
-                "method":  "getTokenAccountsByOwner",
-                "params":  [
-                    wallet_pubkey,
-                    {"mint": token_mint},
-                    {"encoding": "jsonParsed"},
-                ],
-            },
-            timeout=10,
-        )
+        resp = _rpc_post({
+            "jsonrpc": "2.0", "id": 1,
+            "method":  "getTokenAccountsByOwner",
+            "params":  [
+                wallet_pubkey,
+                {"mint": token_mint},
+                {"encoding": "jsonParsed"},
+            ],
+        })
         accounts = resp.json().get("result", {}).get("value", [])
         if not accounts:
             return 0
