@@ -48,7 +48,7 @@ def alert_position_open(sig, pos) -> bool:
     """Fired when a new paper position is opened."""
     chain_short = "SOL" if sig.chain == "solana" else "BSC"
     lines = [
-        f"[OPEN] {sig.token_symbol or sig.token_address[:8]} ({chain_short})",
+        f"[PAPER OPEN] {sig.token_symbol or sig.token_address[:8]} ({chain_short})",
         f"Type:     {sig.signal_type}  |  {sig.strength.upper()}",
         f"Entry:    ${sig.price_usd:.8g}",
         f"Size:     ${pos.size_usd:.2f}",
@@ -62,14 +62,50 @@ def alert_position_open(sig, pos) -> bool:
     return _send("\n".join(lines))
 
 
+def alert_live_buy(pos, tx_sig: str, sol_spent: float) -> bool:
+    """Fired when a real on-chain buy is confirmed."""
+    chain_short = "SOL" if pos.chain == "solana" else "BSC"
+    lines = [
+        f"🟢 [LIVE BUY] {pos.token_symbol} ({chain_short})",
+        f"Entry:    ${pos.entry_price:.8g}",
+        f"Size:     ${pos.size_usd:.2f}  ({sol_spent:.4f} SOL spent)",
+        f"Stop:     {pos.hard_stop_pct*100:.0f}%  Trail: {pos.trailing_stop_pct*100:.0f}%",
+        f"Tx:       {tx_sig[:20]}...",
+    ]
+    if getattr(pos, "dexscreener_url", ""):
+        lines.append(pos.dexscreener_url)
+    return _send("\n".join(lines))
+
+
+def alert_live_sell(pos, sol_received: float, tx_sig: str) -> bool:
+    """Fired when a real on-chain sell is confirmed."""
+    pnl_pct = pos.pnl_pct * 100
+    pnl_usd = pos.pnl_usd
+    sign    = "+" if pnl_usd >= 0 else ""
+    emoji   = "🟢" if pnl_usd >= 0 else "🔴"
+    chain_short = "SOL" if pos.chain == "solana" else "BSC"
+    lines = [
+        f"{emoji} [LIVE SELL] {pos.token_symbol} ({chain_short})",
+        f"Reason:   {pos.exit_reason}",
+        f"PnL:      {sign}{pnl_pct:.1f}%  ({sign}${pnl_usd:.2f})",
+        f"Entry:    ${pos.entry_price:.8g}  ->  Exit: ${pos.exit_price:.8g}",
+        f"SOL rcvd: {sol_received:.4f}",
+        f"Tx:       {tx_sig[:20]}...",
+    ]
+    return _send("\n".join(lines))
+
+
 def alert_position_close(pos) -> bool:
-    """Fired when a position is closed."""
+    """Fired when a paper position is closed."""
+    # Skip paper close alert if this was a live position — alert_live_sell handles it
+    if pos.notes and "live|tx:" in pos.notes:
+        return False
     pnl_pct = pos.pnl_pct * 100
     pnl_usd = pos.pnl_usd
     sign    = "+" if pnl_usd >= 0 else ""
     chain_short = "SOL" if pos.chain == "solana" else "BSC"
     lines = [
-        f"[CLOSE] {pos.token_symbol} ({chain_short})",
+        f"[PAPER CLOSE] {pos.token_symbol} ({chain_short})",
         f"Reason:   {pos.exit_reason}",
         f"PnL:      {sign}{pnl_pct:.1f}%  ({sign}${pnl_usd:.2f})",
         f"Entry:    ${pos.entry_price:.8g}  ->  Exit: ${pos.exit_price:.8g}",
