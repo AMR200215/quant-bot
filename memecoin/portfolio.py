@@ -421,8 +421,7 @@ class Portfolio:
                 except Exception:
                     pass
             # ── Circuit breaker 2: max concurrent live positions ─────────────
-            elif self._count_open_live() >= 2:
-                open_count = self._count_open_live()
+            elif (open_count := self._count_open_live()) >= 2:
                 _cb_reason = f"{open_count} live positions already open (limit 2)"
                 log.warning("CIRCUIT BREAKER: %s — skipping %s", _cb_reason, signal.token_symbol)
                 try:
