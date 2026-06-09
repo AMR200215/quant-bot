@@ -19,6 +19,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -34,13 +35,20 @@ CHANNELS = [
     "pumpdotfunalert",
 ]
 
-# Cooldown: don't re-process same address within this many seconds
+# Cooldown: don't re-process same address within this many seconds.
+# Only applied to addresses that passed DexScreener (have data).
+# Addresses that failed no_dex_data are NOT added here — they retry freely.
 _SEEN_ADDRESSES: dict[str, float] = {}
 _SEEN_COOLDOWN = 300  # 5 minutes
 
+# Retry queue: addresses that hit no_dex_data get retried after this delay.
+# DexScreener typically indexes pump.fun tokens within 30-90 seconds of launch.
+_NO_DEX_RETRY_DELAY = 45   # seconds before first retry
+_NO_DEX_MAX_RETRIES = 3    # give up after this many retries
+
 
 def _is_fresh(address: str) -> bool:
-    """Return True if we haven't seen this address recently."""
+    """Return True if we haven't successfully processed this address recently."""
     last = _SEEN_ADDRESSES.get(address, 0)
     if time.time() - last < _SEEN_COOLDOWN:
         return False
@@ -48,11 +56,15 @@ def _is_fresh(address: str) -> bool:
     return True
 
 
+def _mark_seen(address: str):
+    """Mark address as successfully processed (start cooldown)."""
+    _SEEN_ADDRESSES[address] = time.time()
+
+
 def _extract_addresses(text: str) -> list[tuple[str, str]]:
     """Extract (chain, address) pairs from message text."""
     results = []
     for addr in _SOL_ADDRESS_RE.findall(text):
-        # Filter out common non-token strings (tx hashes etc.)
         if len(addr) >= 32 and _is_fresh(addr):
             results.append(("solana", addr))
     for addr in _BSC_ADDRESS_RE.findall(text):
@@ -65,6 +77,12 @@ class TelegramMonitor:
     """
     Async Telegram monitor. Runs in a dedicated thread with its own event loop.
     Calls signal_callback(chain, address, message_text) for each new token found.
+
+    Screening runs in a ThreadPoolExecutor so the Telegram event loop is never
+    blocked by HTTP calls — rapid signals are all received immediately.
+
+    no_dex_data addresses are retried after _NO_DEX_RETRY_DELAY seconds
+    (DexScreener indexes most pump.fun tokens within 30-90s of launch).
     """
 
     def __init__(self, api_id: int, api_hash: str, signal_callback):
@@ -73,6 +91,8 @@ class TelegramMonitor:
         self.signal_callback = signal_callback
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Thread pool for running synchronous screening without blocking event loop
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tg-screen")
 
     def start(self, daemon: bool = True):
         """Start the monitor in a background thread."""
@@ -90,6 +110,51 @@ class TelegramMonitor:
         except Exception as e:
             log.error("Telegram monitor crashed: %s", e)
 
+    def _screen_and_signal(self, chain: str, address: str, text: str,
+                            attempt: int = 1):
+        """
+        Run in thread pool — does the blocking HTTP screening then fires callback.
+        If DexScreener returns no_dex_data (_NoDexData raised), clears the seen
+        entry and schedules a retry so the address isn't suppressed for 5 minutes.
+        """
+        try:
+            self.signal_callback(chain, address, text)
+        except Exception as e:
+            # Check if it's a no_dex_data signal from the scanner
+            if type(e).__name__ == "_NoDexData":
+                # Clear from seen so retry can proceed without cooldown blocking it
+                _SEEN_ADDRESSES.pop(address, None)
+                self._schedule_retry(chain, address, text, attempt)
+            else:
+                log.warning("TG screen error %s: %s", address[:8], e)
+
+    def _schedule_retry(self, chain: str, address: str, text: str, attempt: int):
+        """Schedule a no_dex_data retry after _NO_DEX_RETRY_DELAY seconds."""
+        if attempt > _NO_DEX_MAX_RETRIES:
+            log.info("TG no_dex_data %s — max retries (%d) reached, giving up",
+                     address[:8], _NO_DEX_MAX_RETRIES)
+            return
+
+        def _retry():
+            time.sleep(_NO_DEX_RETRY_DELAY)
+            # Only retry if still not in seen-cooldown (not processed by another path)
+            if address not in _SEEN_ADDRESSES:
+                log.info("TG no_dex_data retry %d/%d for %s",
+                         attempt, _NO_DEX_MAX_RETRIES, address[:8])
+                _SEEN_ADDRESSES[address] = time.time()  # reserve slot before retry
+                try:
+                    self.signal_callback(chain, address, text)
+                except Exception as e:
+                    log.warning("TG retry error %s: %s", address[:8], e)
+                    # If still no_dex_data, clear reservation and try again
+                    if address in _SEEN_ADDRESSES:
+                        del _SEEN_ADDRESSES[address]
+                    self._schedule_retry(chain, address, text, attempt + 1)
+
+        t = threading.Thread(target=_retry, daemon=True,
+                             name=f"tg-retry-{address[:8]}")
+        t.start()
+
     async def _monitor(self):
         try:
             from telethon import TelegramClient, events
@@ -104,12 +169,9 @@ class TelegramMonitor:
         async with TelegramClient(session_file, self.api_id, self.api_hash) as client:
             log.warning("Telegram client connected")
 
-            # Register handler for new messages in monitored channels
             @client.on(events.NewMessage(chats=CHANNELS))
             async def handler(event):
                 text = event.raw_text or ""
-                # Also collect URLs from hyperlink entities — pump.fun links embed
-                # the token address in the URL, not the visible text
                 extra_urls = []
                 if event.message and event.message.entities:
                     for ent in event.message.entities:
@@ -123,9 +185,12 @@ class TelegramMonitor:
                         "TG signal: %s address=%s from channel=%s",
                         chain, address[:12], event.chat.username or "?"
                     )
-                    try:
-                        self.signal_callback(chain, address, combined)
-                    except Exception as e:
-                        log.warning("TG signal callback error: %s", e)
+                    # Run screening in thread pool — event loop returns immediately
+                    # so the next Telegram message isn't delayed by HTTP calls
+                    loop = asyncio.get_event_loop()
+                    loop.run_in_executor(
+                        self._executor,
+                        self._screen_and_signal, chain, address, combined, 1
+                    )
 
             await client.run_until_disconnected()

@@ -47,6 +47,12 @@ from memecoin.signals import (
 )
 from app import alerts
 
+
+class _NoDexData(Exception):
+    """Raised by _on_telegram_signal when DexScreener has no data yet.
+    TelegramMonitor catches this and schedules a retry."""
+    pass
+
 log = logging.getLogger(__name__)
 
 # Max signals kept in memory / JSON
@@ -521,11 +527,11 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         screen = screen_token(chain, address)
         reason = screen.get("reason", "")
 
-        # Hard reject: no data or confirmed rug/honeypot
+        # Hard reject: no data yet — raise so TelegramMonitor knows to retry
         if reason == "no_dex_data":
             log.info("TG REJECT %s — no_dex_data (DexScreener not indexed yet, screen took %.1fs)",
                      address[:8], _time.time() - _t0)
-            return
+            raise _NoDexData(address)
         if any(r in reason for r in ("rugcheck_fail", "honeypot", "rug_detector")):
             log.info("TG REJECT %s — rug/safety: %s", address[:8], reason)
             return
