@@ -92,6 +92,49 @@ def alert_tp_hit(pos, tp_pct: float, locked_usd: float) -> bool:
     return _send("\n".join(lines))
 
 
+def alert_live_buy(pos, tx_sig: str, sol_spent: float) -> bool:
+    """Fired when a live on-chain buy is confirmed."""
+    chain_short = "SOL" if pos.chain == "solana" else "BSC"
+    lines = [
+        f"[LIVE BUY] {pos.token_symbol} ({chain_short})",
+        f"Fill:     ${pos.entry_price:.8g}",
+        f"Size:     ${pos.size_usd:.2f}  ({sol_spent:.4f} SOL)",
+        f"Stop:     {pos.hard_stop_pct*100:.0f}%  |  DEX: {pos.dex_id or 'n/a'}",
+        f"Tx:       {tx_sig[:24]}...",
+    ]
+    if getattr(pos, "dexscreener_url", ""):
+        lines.append(pos.dexscreener_url)
+    return _send("\n".join(lines))
+
+
+def alert_live_close(pos, tx_sig: str = "") -> bool:
+    """Fired when a live position is closed on-chain."""
+    pnl_pct = pos.pnl_pct * 100
+    pnl_usd = pos.pnl_usd
+    sign    = "+" if pnl_usd >= 0 else ""
+    chain_short = "SOL" if pos.chain == "solana" else "BSC"
+    lines = [
+        f"[LIVE CLOSE] {pos.token_symbol} ({chain_short})",
+        f"Reason:   {pos.exit_reason}",
+        f"PnL:      {sign}{pnl_pct:.1f}%  ({sign}${pnl_usd:.2f})",
+        f"Entry:    ${pos.entry_price:.8g}  ->  Exit: ${pos.exit_price:.8g}",
+        f"Peak:     ${pos.peak_price:.8g}",
+    ]
+    if tx_sig:
+        lines.append(f"Tx:       {tx_sig[:24]}...")
+    return _send("\n".join(lines))
+
+
+def alert_live_sell(pos, sol_received: float, tx_sig: str = "") -> bool:
+    """Fired when a live sell is confirmed on-chain."""
+    return alert_live_close(pos, tx_sig)
+
+
+def alert_live_skip(token_symbol: str, reason: str) -> bool:
+    """Fired when the live gate is reached but blocked (dex_id check, circuit breaker, etc.)."""
+    return _send(f"[LIVE SKIP] {token_symbol}\nReason: {reason}")
+
+
 # ---------------------------------------------------------------------------
 # Setup helper — run once to find your chat_id
 # ---------------------------------------------------------------------------

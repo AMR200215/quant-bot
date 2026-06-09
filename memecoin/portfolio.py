@@ -392,26 +392,43 @@ class Portfolio:
         log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s",
                  pos.id, pos.chain, pos.token_symbol, pos.entry_price, pos.dex_id)
 
-        # ── Live position (parallel, independent — social_alert+pump only) ──
+        # ── Live position (parallel, independent — social_alert on Solana only) ──
+        # Previously gated on dex_id containing "pump", which silently blocked
+        # graduated pump.fun tokens whose dex_id is "raydium" after migration.
+        # All social_alert signals come from the pump.fun Telegram channel on Solana;
+        # Jupiter handles both pumpswap and raydium, so chain check is sufficient.
         _is_live_signal = (
             LIVE_TRADING
             and signal.signal_type == "social_alert"
-            and "pump" in getattr(signal, "dex_id", "").lower()
+            and signal.chain == "solana"
         )
+        if not _is_live_signal and LIVE_TRADING and signal.signal_type == "social_alert":
+            _skip_reason = f"chain={signal.chain} (only SOL supported)"
+            log.warning("LIVE GATE: skipping %s — %s", signal.token_symbol, _skip_reason)
+            try:
+                alerts.alert_live_skip(signal.token_symbol or signal.token_address[:8], _skip_reason)
+            except Exception:
+                pass
         if _is_live_signal:
             # ── Circuit breaker 1: daily loss limit ──────────────────────────
             daily_loss = self._live_daily_pnl()
             if daily_loss <= -15.0:
-                log.warning(
-                    "CIRCUIT BREAKER: daily live PnL=$%.2f — skipping live trade for %s",
-                    daily_loss, signal.token_symbol,
-                )
+                _cb_reason = f"daily live PnL=${daily_loss:.2f} (limit -$15)"
+                log.warning("CIRCUIT BREAKER: %s — skipping live trade for %s",
+                            _cb_reason, signal.token_symbol)
+                try:
+                    alerts.alert_live_skip(signal.token_symbol or signal.token_address[:8], _cb_reason)
+                except Exception:
+                    pass
             # ── Circuit breaker 2: max concurrent live positions ─────────────
             elif self._count_open_live() >= 2:
-                log.warning(
-                    "CIRCUIT BREAKER: %d live positions already open — skipping %s",
-                    self._count_open_live(), signal.token_symbol,
-                )
+                open_count = self._count_open_live()
+                _cb_reason = f"{open_count} live positions already open (limit 2)"
+                log.warning("CIRCUIT BREAKER: %s — skipping %s", _cb_reason, signal.token_symbol)
+                try:
+                    alerts.alert_live_skip(signal.token_symbol or signal.token_address[:8], _cb_reason)
+                except Exception:
+                    pass
             else:
                 self._open_live_position(signal, pos)
 
