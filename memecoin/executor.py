@@ -143,14 +143,12 @@ def _execute_swap(quote: dict, wallet_pubkey: str) -> str:
     swap_resp.raise_for_status()
     tx_bytes = base64.b64decode(swap_resp.json()["swapTransaction"])
 
-    # Deserialize, inject Jito tip, re-sign
+    # Deserialize and re-sign with our keypair.
+    # Jupiter already adds a priority fee via prioritizationFeeLamports="auto",
+    # which satisfies Jito's landing criteria. Injecting a manual tip instruction
+    # into a VersionedTransaction corrupts the compiled account index list and
+    # causes Jito to return 400 Bad Request.
     tx = VersionedTransaction.from_bytes(tx_bytes)
-    tip_ix = transfer_fn(TransferParams(
-        from_pubkey=keypair.pubkey(),
-        to_pubkey=Pubkey.from_string(random.choice(_JITO_TIP_ACCOUNTS)),
-        lamports=JITO_TIP_LAMPORTS,
-    ))
-    tx.message.instructions.append(tip_ix)
     signed_tx = VersionedTransaction(tx.message, [keypair])
 
     # Send via Jito block engine
