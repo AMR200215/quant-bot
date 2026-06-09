@@ -171,7 +171,7 @@ def _execute_swap(quote: dict, wallet_pubkey: str) -> str:
 
 
 def _confirm_tx(sig: str, max_wait: int = 30) -> bool:
-    """Poll until tx is confirmed or timeout."""
+    """Poll until tx is confirmed or timeout. Backs off on 429."""
     deadline = time.time() + max_wait
     while time.time() < deadline:
         try:
@@ -184,6 +184,9 @@ def _confirm_tx(sig: str, max_wait: int = 30) -> bool:
                 },
                 timeout=10,
             )
+            if resp.status_code == 429:
+                time.sleep(5)
+                continue
             status = (resp.json().get("result", {}).get("value") or [None])[0]
             if status and status.get("confirmationStatus") in ("confirmed", "finalized"):
                 return True
