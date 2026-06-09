@@ -45,7 +45,7 @@ _JITO_TIP_ACCOUNTS = [
     "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
 ]
 JITO_TIP_LAMPORTS = 1_000_000        # 0.001 SOL (~$0.17)
-JITO_RPC_URL      = "https://mainnet.block-engine.jito.labs.io/api/v1/transactions"
+JITO_RPC_URL      = "https://mainnet.block-engine.jito.wtf/api/v1/transactions"
 
 SOLANA_RPC = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 
