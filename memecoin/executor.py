@@ -336,7 +336,22 @@ class MemeExecutor:
             log.info("BUY tx sent  sig=%s  token=%s  size=$%.2f", sig[:12], token_address[:8], size_usd)
 
             if not _confirm_tx(sig):
-                log.warning("BUY tx unconfirmed  sig=%s", sig[:12])
+                # Confirmation polling failed (timeout or 429). Check actual on-chain
+                # balance — if tokens arrived the swap went through and we must track
+                # the position so exit logic can fire. Losing track = no stop-loss.
+                actual_balance = _token_balance(wallet, token_address)
+                token_decimals = int(quote.get("outputDecimals") or 6)
+                if actual_balance > 0:
+                    tokens_out = actual_balance / (10 ** token_decimals)
+                    fill_price = size_usd / tokens_out if tokens_out > 0 else None
+                    log.warning(
+                        "BUY confirm-poll timed out but tokens found on-chain "
+                        "— treating as success  sig=%s  balance=%d  fill=$%.10f",
+                        sig[:12], actual_balance, fill_price or 0,
+                    )
+                    return {"success": True, "fill_price": fill_price, "tx_sig": sig,
+                            "confirm_fallback": True}
+                log.warning("BUY tx unconfirmed and zero balance  sig=%s", sig[:12])
                 return {"success": False, "unconfirmed": True, "tx_sig": sig}
 
             token_decimals = int(quote.get("outputDecimals") or 6)
