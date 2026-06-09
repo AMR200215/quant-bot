@@ -105,6 +105,7 @@ class Position:
     tp_levels_hit: list = field(default_factory=list)
     remaining_fraction: float = 1.0  # 1.0 = full position still open
     notes: str = ""
+    sell_attempts: int = 0    # retry counter — if > MAX_SELL_RETRIES give up
     # --- model training features (captured at entry) ---
     price_change_5m: float = 0.0
     price_change_1h: float = 0.0
@@ -441,10 +442,12 @@ class Portfolio:
         return total
 
     def _count_open_live(self) -> int:
-        """Count currently open live positions."""
+        """Count active live positions. Excludes sell_pending (stuck retries)."""
         return sum(
             1 for p in self._positions.values()
-            if p.id.startswith("L") and p.status == "open"
+            if p.id.startswith("L")
+            and p.status == "open"
+            and "|sell_pending" not in (p.notes or "")
         )
 
     def _open_live_position(self, signal, paper_pos: "Position") -> None:
@@ -575,6 +578,7 @@ class Portfolio:
 
         # Live execution gate — only sell on-chain if this position was a live buy
         _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
+        MAX_SELL_RETRIES = 5
         if LIVE_TRADING and _was_live_buy:
             from memecoin.executor import MemeExecutor
             try:
@@ -590,31 +594,56 @@ class Portfolio:
                         alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
                     except Exception:
                         pass
+                elif result.get("reason") == "zero_balance":
+                    # Tokens already gone (prev unconfirmed sell went through) — close cleanly
+                    log.warning("Live sell %s — zero balance, tokens already sold. Closing.",
+                                pos.token_symbol)
+                    pos.notes = (pos.notes or "") + "|sell_already_gone"
                 else:
-                    # Sell failed or unconfirmed — keep position alive so the monitor
-                    # loop retries the sell on the next cycle. Tokens remain in wallet.
+                    # Sell failed or unconfirmed — retry up to MAX_SELL_RETRIES
+                    pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
                     reason_tag = "sell_unconf" if result.get("unconfirmed") else "sell_failed"
                     tx_tag = f":{result.get('tx_sig','')[:12]}" if result.get("tx_sig") else ""
-                    pos.notes = (pos.notes or "") + f"|{reason_tag}{tx_tag}"
-                    pos.status = "open"          # revert to open so monitor keeps watching
+                    pos.notes = (pos.notes or "") + f"|{reason_tag}{tx_tag}(attempt {pos.sell_attempts})"
+                    if pos.sell_attempts < MAX_SELL_RETRIES:
+                        pos.status = "open"
+                        pos.exit_price  = 0.0
+                        pos.exit_time   = 0.0
+                        pos.exit_reason = ""
+                        # Mark as sell_pending so _count_open_live excludes it from the cap
+                        if "|sell_pending" not in (pos.notes or ""):
+                            pos.notes = (pos.notes or "") + "|sell_pending"
+                        self._positions[pos_id] = pos
+                        _save_positions(self._positions)
+                        log.error("Live sell %s for %s (attempt %d/%d) — retrying next cycle. err=%s",
+                                  reason_tag, pos.token_symbol, pos.sell_attempts, MAX_SELL_RETRIES,
+                                  result.get("error") or result.get("tx_sig",""))
+                        return pos
+                    else:
+                        log.error("Live sell GAVE UP after %d attempts for %s — TOKENS MAY REMAIN IN WALLET",
+                                  MAX_SELL_RETRIES, pos.token_symbol)
+                        try:
+                            from app.alerts import _send
+                            _send(f"ALERT: sell gave up after {MAX_SELL_RETRIES} retries for {pos.token_symbol} — check wallet manually")
+                        except Exception:
+                            pass
+            except Exception as e:
+                pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
+                pos.notes = (pos.notes or "") + f"|sell_error(attempt {pos.sell_attempts})"
+                if pos.sell_attempts < MAX_SELL_RETRIES:
+                    pos.status = "open"
                     pos.exit_price  = 0.0
                     pos.exit_time   = 0.0
                     pos.exit_reason = ""
+                    if "|sell_pending" not in (pos.notes or ""):
+                        pos.notes = (pos.notes or "") + "|sell_pending"
                     self._positions[pos_id] = pos
                     _save_positions(self._positions)
-                    log.error("Live sell %s for %s — keeping position open for retry. err=%s",
-                              reason_tag, pos.token_symbol, result.get("error") or result.get("tx_sig",""))
-                    return pos                   # skip journal — position not closed yet
-            except Exception as e:
-                pos.notes = (pos.notes or "") + f"|sell_error"
-                pos.status = "open"
-                pos.exit_price  = 0.0
-                pos.exit_time   = 0.0
-                pos.exit_reason = ""
-                self._positions[pos_id] = pos
-                _save_positions(self._positions)
-                log.error("Executor error during sell for %s: %s — keeping open for retry", pos.token_symbol, e)
-                return pos
+                    log.error("Executor error during sell for %s (attempt %d/%d): %s — retrying",
+                              pos.token_symbol, pos.sell_attempts, MAX_SELL_RETRIES, e)
+                    return pos
+                log.error("Live sell GAVE UP after %d attempts for %s: %s",
+                          MAX_SELL_RETRIES, pos.token_symbol, e)
 
         _append_journal(pos)
         promote_to_winners(pos)

@@ -515,12 +515,16 @@ def _pumpfun_thread():
 
 def _on_telegram_signal(chain: str, address: str, message_text: str):
     """Called by TelegramMonitor when a token address is found in a channel message."""
+    import time as _time
+    _t0 = _time.time()
     try:
         screen = screen_token(chain, address)
         reason = screen.get("reason", "")
 
         # Hard reject: no data or confirmed rug/honeypot
         if reason == "no_dex_data":
+            log.info("TG REJECT %s — no_dex_data (DexScreener not indexed yet, screen took %.1fs)",
+                     address[:8], _time.time() - _t0)
             return
         if any(r in reason for r in ("rugcheck_fail", "honeypot", "rug_detector")):
             log.info("TG REJECT %s — rug/safety: %s", address[:8], reason)
@@ -546,6 +550,9 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             return
 
         screen["passed"] = True
+        _screen_latency = _time.time() - _t0
+        log.info("TG PASS %s — bs=%.2f vol5m=%.0f vh1=%.0f pc5m=%.0f screen_took=%.1fs",
+                 address[:8], bs, v5m, vh1, pc5m, _screen_latency)
 
         channel = "pumpdotfunalert"
         sig = make_social_alert_signal(chain, address, screen, source="telegram", channel=channel)
