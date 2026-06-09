@@ -398,6 +398,14 @@ class Portfolio:
             and signal.signal_type == "social_alert"
             and "pump" in getattr(signal, "dex_id", "").lower()
         )
+        if not _is_live_signal and LIVE_TRADING:
+            _why = []
+            if signal.signal_type != "social_alert":
+                _why.append(f"type={signal.signal_type}")
+            if "pump" not in getattr(signal, "dex_id", "").lower():
+                _why.append(f"dex={getattr(signal, 'dex_id', 'n/a')}")
+            if _why:
+                log.info("LIVE GATE BLOCKED %s — paper only: %s", signal.token_symbol, ", ".join(_why))
         if _is_live_signal:
             # ── Circuit breaker 1: daily loss limit ──────────────────────────
             daily_loss = self._live_daily_pnl()
