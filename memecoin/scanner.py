@@ -563,6 +563,8 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         channel = "pumpdotfunalert"
         sig = make_social_alert_signal(chain, address, screen, source="telegram", channel=channel)
         _add_signal(sig)
+    except _NoDexData:
+        raise  # propagate to TelegramMonitor for 45s retry
     except Exception as e:
         log.warning("TG signal processing error %s: %s", address[:8], e)
 
