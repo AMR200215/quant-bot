@@ -573,8 +573,6 @@ class Portfolio:
                 ex = MemeExecutor()
                 result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
                 if result.get("success"):
-                    # Keep DexScreener price as exit_price — matches paper methodology
-                    # Jupiter fill stored in notes for real PnL accounting
                     fill = result.get("fill_price") or pos.exit_price
                     pos.notes = (pos.notes or "") + f"|sell_tx:{result.get('tx_sig','')[:12]}|sell_fill:{fill:.10f}"
                     log.info("Live sell confirmed %s  tx=%s  fill=%.10f",
@@ -584,19 +582,31 @@ class Portfolio:
                         alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
                     except Exception:
                         pass
-                elif result.get("unconfirmed"):
-                    pos.notes = (pos.notes or "") + f"|sell_unconf:{result.get('tx_sig','')[:12]}"
-                    log.error("Live sell UNCONFIRMED for %s — journaling at paper price. "
-                              "Check on-chain: %s", pos.token_symbol, result.get("tx_sig", ""))
                 else:
-                    # Sell failed — journal at paper price, tokens remain in wallet
-                    pos.notes = (pos.notes or "") + f"|sell_failed"
-                    log.error("Live sell FAILED for %s: %s — "
-                              "TOKENS REMAIN IN WALLET. Journaling at paper price.",
-                              pos.token_symbol, result.get("error"))
+                    # Sell failed or unconfirmed — keep position alive so the monitor
+                    # loop retries the sell on the next cycle. Tokens remain in wallet.
+                    reason_tag = "sell_unconf" if result.get("unconfirmed") else "sell_failed"
+                    tx_tag = f":{result.get('tx_sig','')[:12]}" if result.get("tx_sig") else ""
+                    pos.notes = (pos.notes or "") + f"|{reason_tag}{tx_tag}"
+                    pos.status = "open"          # revert to open so monitor keeps watching
+                    pos.exit_price  = 0.0
+                    pos.exit_time   = 0.0
+                    pos.exit_reason = ""
+                    self._positions[pos_id] = pos
+                    _save_positions(self._positions)
+                    log.error("Live sell %s for %s — keeping position open for retry. err=%s",
+                              reason_tag, pos.token_symbol, result.get("error") or result.get("tx_sig",""))
+                    return pos                   # skip journal — position not closed yet
             except Exception as e:
                 pos.notes = (pos.notes or "") + f"|sell_error"
-                log.error("Executor error during sell for %s: %s", pos.token_symbol, e)
+                pos.status = "open"
+                pos.exit_price  = 0.0
+                pos.exit_time   = 0.0
+                pos.exit_reason = ""
+                self._positions[pos_id] = pos
+                _save_positions(self._positions)
+                log.error("Executor error during sell for %s: %s — keeping open for retry", pos.token_symbol, e)
+                return pos
 
         _append_journal(pos)
         promote_to_winners(pos)
@@ -628,13 +638,28 @@ class Portfolio:
             if pos.status != "open":
                 continue
 
-            # fetch latest price
+            # fetch latest price — fall back to Jupiter quote if DexScreener is down
             pair = dex_get_token(pos.chain, pos.token_address)
             if pair:
                 price = float(pair.get("priceUsd") or 0)
                 if price > 0:
                     pos.current_price = price
                     pos.peak_price = max(pos.peak_price, price)
+            if (not pair or pos.current_price == 0) and pos.chain == "solana":
+                try:
+                    from memecoin.executor import _get_quote, _sol_price_usd, SOL_MINT, SOL_DECIMALS
+                    _sol = _sol_price_usd()
+                    _q   = _get_quote(SOL_MINT, pos.token_address, int(pos.size_usd / _sol * 10**SOL_DECIMALS))
+                    _decimals = int(_q.get("outputDecimals") or 6)
+                    _tokens   = int(_q["outAmount"]) / (10 ** _decimals)
+                    _price    = pos.size_usd / _tokens if _tokens > 0 else 0
+                    if _price > 0:
+                        pos.current_price = _price
+                        pos.peak_price = max(pos.peak_price, _price)
+                        log.warning("DexScreener unavailable — using Jupiter quote price for %s: $%.10f",
+                                    pos.token_symbol, _price)
+                except Exception:
+                    pass   # both sources failed — price stays stale, time stop will still fire
 
             # T+10 buy-velocity snapshot (8–12 min window, logged once per position)
             age_min = (time.time() - pos.entry_time) / 60
