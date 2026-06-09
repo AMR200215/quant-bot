@@ -523,7 +523,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         if reason == "no_dex_data":
             return
         if any(r in reason for r in ("rugcheck_fail", "honeypot", "rug_detector")):
-            log.debug("TG token %s rejected (rug): %s", address[:8], reason)
+            log.info("TG REJECT %s — rug/safety: %s", address[:8], reason)
             return
 
         # Social alert entry filters (data-derived from v5+v6, 192 trades)
@@ -533,16 +533,16 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         pc5m = screen.get("price_change_5m") or 0
 
         if bs < MIN_BUY_SELL_RATIO_SOCIAL:
-            log.debug("TG token %s rejected (bs=%.2f < %.2f)", address[:8], bs, MIN_BUY_SELL_RATIO_SOCIAL)
+            log.info("TG REJECT %s — bs=%.2f < %.2f (buy pressure too low)", address[:8], bs, MIN_BUY_SELL_RATIO_SOCIAL)
             return
         if not (MIN_VOL_5M_SOCIAL <= v5m < MAX_VOL_5M_SOCIAL):
-            log.debug("TG token %s rejected (vol_5m=%.0f not in %d-%d)", address[:8], v5m, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL)
+            log.info("TG REJECT %s — vol_5m=%.0f not in $%d-$%d", address[:8], v5m, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL)
             return
         if vh1 >= MAX_VOL_H1_SOCIAL:
-            log.debug("TG token %s rejected (vol_h1=%.0f >= %d)", address[:8], vh1, MAX_VOL_H1_SOCIAL)
+            log.info("TG REJECT %s — vol_h1=%.0f >= $%d (already pumped)", address[:8], vh1, MAX_VOL_H1_SOCIAL)
             return
         if 0 < pc5m >= MAX_PRICE_CHANGE_5M_SOCIAL:
-            log.debug("TG token %s rejected (pc5m=%.0f >= %d)", address[:8], pc5m, MAX_PRICE_CHANGE_5M_SOCIAL)
+            log.info("TG REJECT %s — pc5m=%.0f >= %d%% (blow-off top)", address[:8], pc5m, MAX_PRICE_CHANGE_5M_SOCIAL)
             return
 
         screen["passed"] = True
