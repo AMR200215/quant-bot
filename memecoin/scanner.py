@@ -9,6 +9,7 @@ All discovered signals are stored in a shared signal queue and written
 to data/memecoin_signals.json so the web UI can read them.
 """
 
+import csv
 import json
 import logging
 import os
@@ -75,6 +76,172 @@ _seen: dict[str, float] = {}   # f"{chain}:{address}:{type}" → timestamp
 # per-token-per-day blacklist: once a position is opened on a token today, block all
 # re-entries for the rest of the day — prevents re-entering dying tokens after close
 _traded_today: dict[str, str] = {}   # f"{chain}:{address}" → ISO date string
+
+
+# ---------------------------------------------------------------------------
+# PumpPortal screening accumulator
+# ---------------------------------------------------------------------------
+
+# Seconds after subscribe at which we check entry conditions
+_SCREENING_CHECK_TIMES = (30, 60, 120)
+# Give up after this many seconds with no entry
+_SCREENING_TIMEOUT = 180
+# Minimum unique buyers before considering an entry
+_SCREENING_MIN_BUYERS = 8
+# CSV file for screening outcome diagnostics
+_SCREENING_OUTCOMES_FILE = DATA_DIR / "screening_outcomes.csv"
+_SCREENING_OUTCOME_FIELDS = [
+    "ts", "mint", "chain", "elapsed_s",
+    "unique_buyers", "buy_count", "sell_count", "net_sol",
+    "creator_sold", "price_first", "price_last", "entry_made",
+]
+
+# mint → {ts, chain, checks_done}
+_screening_queue: dict[str, dict] = {}
+_sq_lock = threading.Lock()
+
+
+def _screening_conditions_met(state) -> bool:
+    """Return True if PumpPortal-screened token meets paper-entry conditions."""
+    price_ok = (
+        state.first_seen_price <= 0                              # no reference yet
+        or state.latest_price >= state.first_seen_price * 0.90  # not >10% below entry
+    )
+    return (
+        state.unique_buyer_count >= _SCREENING_MIN_BUYERS
+        and state.net_sol_inflow > 0
+        and not state.creator_sold
+        and price_ok
+    )
+
+
+def _log_screening_outcome(mint: str, entry: dict, state, entry_made: bool):
+    try:
+        _SCREENING_OUTCOMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        write_hdr = (
+            not _SCREENING_OUTCOMES_FILE.exists()
+            or _SCREENING_OUTCOMES_FILE.stat().st_size == 0
+        )
+        with open(_SCREENING_OUTCOMES_FILE, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=_SCREENING_OUTCOME_FIELDS)
+            if write_hdr:
+                w.writeheader()
+            elapsed = time.time() - entry["ts"]
+            w.writerow({
+                "ts":            time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(entry["ts"])),
+                "mint":          mint,
+                "chain":         entry["chain"],
+                "elapsed_s":     round(elapsed, 1),
+                "unique_buyers": state.unique_buyer_count if state else 0,
+                "buy_count":     state.buy_count          if state else 0,
+                "sell_count":    state.sell_count         if state else 0,
+                "net_sol":       round(state.net_sol_inflow, 4) if state else 0,
+                "creator_sold":  state.creator_sold       if state else "",
+                "price_first":   state.first_seen_price   if state else 0,
+                "price_last":    state.latest_price       if state else 0,
+                "entry_made":    entry_made,
+            })
+    except Exception as e:
+        log.debug("screening_outcomes log error: %s", e)
+
+
+def _fire_screening_entry(chain: str, mint: str, state):
+    """Open a paper-only position from PumpPortal screening data."""
+    price       = state.latest_price or state.first_seen_price
+    total_txns  = state.buy_count + state.sell_count
+    age_min     = (time.time() - state.first_seen_ts) / 60
+
+    # Minimal screen dict — no DexScreener data available
+    screen = {
+        "passed":             True,
+        "chain":              chain,
+        "price_usd":          price,
+        "volume_5m":          0,
+        "volume_h1":          0,
+        "volume_h24":         0,
+        "liquidity_usd":      0,
+        "mcap_usd":           0,
+        "fdv":                0,
+        "age_minutes":        round(age_min, 2),
+        "buy_sell_ratio_5m":  state.buy_count / max(total_txns, 1),
+        "price_change_5m":    0,
+        "price_change_1h":    0,
+        "price_change_6h":    0,
+        "buys_5m":            state.buy_count,
+        "sells_5m":           state.sell_count,
+        "buys_h1":            0,
+        "sells_h1":           0,
+        "buy_sell_ratio_h1":  0,
+        "dex_id":             "pumpfun",
+        "dexscreener_url":    f"https://dexscreener.com/solana/{mint}",
+        "has_twitter":        False,
+        "has_telegram":       False,
+        "has_website":        False,
+        "rugcheck_score":     0,
+        "buy_tax":            0,
+        "sell_tax":           0,
+        "pair":               {},
+    }
+    sig = make_social_alert_signal(chain, mint, screen,
+                                   source="pumpportal_screen",
+                                   channel="pumpdotfunalert")
+    if sig is None:
+        return
+    # Paper-only gate: override signal_type so live gate in portfolio.py
+    # (requires signal_type=="social_alert") does not trigger.
+    # These signals are paper-only for the 7-day evaluation window.
+    sig.signal_type = "pumpportal_screen"
+    sig.notes += (f" | screen: buyers={state.unique_buyer_count}"
+                  f" net_sol={state.net_sol_inflow:.3f}")
+
+    _add_signal(sig)
+    log.warning(
+        "SCREEN ENTRY %s — buyers=%d net_sol=%.3f price=$%.8f",
+        mint[:8], state.unique_buyer_count, state.net_sol_inflow, price,
+    )
+
+
+def _run_screening_checks():
+    """
+    Called every portfolio-poll cycle (~2s).
+    Checks PumpPortal-screened tokens at T+30/60/120s; evicts at T+180s.
+    """
+    now = time.time()
+    to_evict = []
+
+    with _sq_lock:
+        items = list(_screening_queue.items())
+
+    for mint, entry in items:
+        elapsed     = now - entry["ts"]
+        checks_done = entry["checks_done"]
+
+        # Run the next scheduled check if it's time
+        if checks_done < len(_SCREENING_CHECK_TIMES):
+            check_at = _SCREENING_CHECK_TIMES[checks_done]
+            if elapsed >= check_at:
+                state = _pp_monitor.get_screening_state(mint)
+                if state and _screening_conditions_met(state):
+                    _fire_screening_entry(entry["chain"], mint, state)
+                    _log_screening_outcome(mint, entry, state, entry_made=True)
+                    to_evict.append(mint)
+                    continue
+                # Conditions not met yet — advance check counter
+                with _sq_lock:
+                    if mint in _screening_queue:
+                        _screening_queue[mint]["checks_done"] += 1
+
+        # Hard timeout — give up
+        if elapsed >= _SCREENING_TIMEOUT:
+            if mint not in to_evict:
+                state = _pp_monitor.get_screening_state(mint)
+                _log_screening_outcome(mint, entry, state, entry_made=False)
+                to_evict.append(mint)
+
+    for mint in to_evict:
+        with _sq_lock:
+            _screening_queue.pop(mint, None)
+        _pp_monitor.evict_screening({mint})
 
 
 def _mark_traded(chain: str, address: str):
@@ -528,8 +695,22 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         screen = screen_token(chain, address)
         reason = screen.get("reason", "")
 
-        # Hard reject: no data yet — raise so TelegramMonitor knows to retry
+        # Hard reject: no DexScreener data yet.
+        # Subscribe to PumpPortal screening in parallel with the DexScreener retry.
+        # scanner._run_screening_checks() will fire a paper-only entry at T+30/60/120s
+        # if on-chain demand is strong enough.  The DexScreener retry path (_NoDexData)
+        # continues unchanged — two independent entry chances for the same token.
         if reason == "no_dex_data":
+            with _sq_lock:
+                if address not in _screening_queue:
+                    _pp_monitor.subscribe_screening(address)
+                    _screening_queue[address] = {
+                        "ts":          _t0,
+                        "chain":       chain,
+                        "checks_done": 0,
+                    }
+                    log.info("TG SCREEN-QUEUE %s — PumpPortal accumulator started",
+                             address[:8])
             log.info("TG REJECT %s — no_dex_data (DexScreener not indexed yet, screen took %.1fs)",
                      address[:8], _time.time() - _t0)
             raise _NoDexData(address)
@@ -665,6 +846,13 @@ def _portfolio_thread():
                 for e in exits:
                     log.info("EXIT %s  reason=%s  pnl=%.1f%%",
                              e["token_symbol"], e["reason"], e["pnl_pct"])
+
+            # Check PumpPortal-screened tokens for paper entry conditions
+            try:
+                _run_screening_checks()
+            except Exception as e:
+                log.debug("screening checks error: %s", e)
+
         except Exception as e:
             log.warning("Portfolio monitor error: %s", e)
         time.sleep(2)
