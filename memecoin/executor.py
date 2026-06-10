@@ -49,6 +49,17 @@ SLIPPAGE_SELL_PCT = 35
 
 PRIORITY_FEE_SOL  = 0.0005   # ~$0.085 at $170 SOL — enough for Helius landing
 
+# Sell ladder: on revert, escalate slippage and fee immediately.
+# 3 attempts max; every sig is returned in all_sigs for journaling.
+#   Step 1: 35% / normal fee  — covers routine price movement
+#   Step 2: 60% / 3× fee     — covers fast dump during stop-loss window
+#   Step 3: 98% / max fee    — last resort; get out at any cost
+SELL_LADDER = [
+    (35,  0.0005),   # (slippage_pct, priority_fee_sol)
+    (60,  0.0015),
+    (98,  0.005),
+]
+
 # 8 Jito tip accounts (only used when EXECUTOR_BACKEND == "jupiter" + JITO_TIPS = True)
 _JITO_TIP_ACCOUNTS = [
     "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
@@ -261,6 +272,7 @@ def _pumpportal_build_tx(
     amount,               # SOL float (buy) | "100%" or token count str (sell)
     denominated_in_sol: bool,
     slippage_pct: int,
+    priority_fee_sol: float = PRIORITY_FEE_SOL,
 ) -> bytes:
     """
     Call PumpPortal trade-local API to get a pre-built serialized transaction.
@@ -275,8 +287,8 @@ def _pumpportal_build_tx(
         "amount":          amount,
         "denominatedInSol": "true" if denominated_in_sol else "false",
         "slippage":        slippage_pct,
-        "priorityFee":     PRIORITY_FEE_SOL,
-        "pool":            "auto",   # routes bonding-curve and graduated tokens
+        "priorityFee":     priority_fee_sol,
+        "pool":            "auto",   # routes bonding-curve and graduated tokens; handles migration
     }
     resp = requests.post(PUMPPORTAL_TRADE_URL, data=payload, timeout=15)
     if resp.status_code != 200:
@@ -495,10 +507,17 @@ class MemeExecutor:
         chain: str = "solana",
     ) -> dict:
         """
-        Swap all held token_address → SOL.
-        Returns dict: {success, fill_price, tx_sig} or {success: False, reason, ...}
+        Swap all held token_address → SOL using a 3-step escalating sell ladder.
 
-        fill_price is derived from SOL balance delta, not from quote outAmount.
+        Ladder: on revert, immediately escalate slippage + fee (no delay).
+          Step 1: 35% slippage, normal fee  (~$0.085)
+          Step 2: 60% slippage, 3× fee     (~$0.255)
+          Step 3: 98% slippage, max fee    (~$0.85)
+
+        Returns: {success, fill_price, tx_sig, all_sigs, ladder_step}
+                 all_sigs contains every submitted sig for journaling.
+
+        fill_price derived from SOL balance delta (not quote outAmount).
         """
         try:
             _, VersionedTransaction, _ = _load_solders()
@@ -510,54 +529,105 @@ class MemeExecutor:
                 log.warning("SELL skipped — zero balance  token=%s", token_address[:8])
                 return {"success": False, "reason": "zero_balance"}
 
-            # Snapshot SOL balance before swap for fill calculation
+            # Snapshot SOL balance before first attempt
             sol_bal_before = _sol_balance(wallet)
 
-            if EXECUTOR_BACKEND == "pumpportal":
-                tx_bytes = _pumpportal_build_tx(
-                    wallet_pubkey=wallet,
-                    action="sell",
-                    token_mint=token_address,
-                    amount="100%",
-                    denominated_in_sol=False,
-                    slippage_pct=SLIPPAGE_SELL_PCT,
-                )
-            else:
-                # Jupiter fallback
-                quote    = _jup_get_quote(token_address, SOL_MINT, balance)
-                tx_bytes = _jup_build_swap_tx(quote, wallet)
+            all_sigs: list[str] = []
 
-            tx        = VersionedTransaction.from_bytes(tx_bytes)
-            signed_tx = VersionedTransaction(tx.message, [keypair])
+            for step, (slip_pct, fee_sol) in enumerate(SELL_LADDER, 1):
+                try:
+                    if EXECUTOR_BACKEND == "pumpportal":
+                        tx_bytes = _pumpportal_build_tx(
+                            wallet_pubkey=wallet,
+                            action="sell",
+                            token_mint=token_address,
+                            amount="100%",
+                            denominated_in_sol=False,
+                            slippage_pct=slip_pct,
+                            priority_fee_sol=fee_sol,
+                        )
+                    else:
+                        # Jupiter fallback — slippage via dynamicSlippage, fee via
+                        # prioritizationFeeLamports
+                        quote    = _jup_get_quote(token_address, SOL_MINT, balance)
+                        tx_bytes = _jup_build_swap_tx(
+                            quote, wallet,
+                            slippage_bps=slip_pct * 100,
+                            priority_fee_lamports=int(fee_sol * 1e9),
+                        )
 
-            sig = _send_transaction(bytes(signed_tx))
-            log.info("SELL tx sent  sig=%s  token=%s  backend=%s",
-                     sig[:16], token_address[:8], EXECUTOR_BACKEND)
+                    tx        = VersionedTransaction.from_bytes(tx_bytes)
+                    signed_tx = VersionedTransaction(tx.message, [keypair])
+                    sig       = _send_transaction(bytes(signed_tx))
+                    all_sigs.append(sig)
 
-            confirmed, err = _confirm_tx(sig)
-            if not confirmed:
-                if err is not None:
-                    log.warning("SELL reverted on-chain  sig=%s  err=%s", sig[:16], err)
-                    return {"success": False, "reason": "tx_reverted",
-                            "tx_sig": sig, "on_chain_err": str(err)}
-                log.warning("SELL tx unconfirmed  sig=%s", sig[:16])
-                return {"success": False, "reason": "unconfirmed", "tx_sig": sig}
+                    log.info(
+                        "SELL ladder step %d/%d  sig=%s  slip=%d%%  fee=%.4f  token=%s",
+                        step, len(SELL_LADDER), sig[:16], slip_pct, fee_sol, token_address[:8],
+                    )
 
-            # Fill from SOL balance delta
-            sol_bal_after     = _sol_balance(wallet)
-            sol_received_lam  = sol_bal_after - sol_bal_before   # may be negative due to fees
-            # If fee > sol received (shouldn't happen but be safe):
-            if sol_received_lam < 0:
-                sol_received_lam = 0
-            sol_price      = _sol_price_usd()
-            decimals       = _token_decimals_from_rpc(wallet, token_address)
-            tokens_sold    = balance / (10 ** decimals)
-            sol_received   = sol_received_lam / 1e9
-            fill_price     = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
+                    confirmed, err = _confirm_tx(sig)
 
-            log.info("SELL confirmed  sig=%s  sol_received=%.6f  fill=$%.10f",
-                     sig[:16], sol_received, fill_price or 0)
-            return {"success": True, "fill_price": fill_price, "tx_sig": sig}
+                    if confirmed:
+                        # Success — compute fill from SOL balance delta
+                        sol_bal_after    = _sol_balance(wallet)
+                        sol_recv_lam     = max(0, sol_bal_after - sol_bal_before)
+                        sol_price        = _sol_price_usd()
+                        decimals         = _token_decimals_from_rpc(wallet, token_address)
+                        tokens_sold      = balance / (10 ** decimals)
+                        sol_received     = sol_recv_lam / 1e9
+                        fill_price       = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
+                        log.info(
+                            "SELL confirmed step %d  sig=%s  sol_recv=%.6f  fill=$%.10f",
+                            step, sig[:16], sol_received, fill_price or 0,
+                        )
+                        return {
+                            "success":     True,
+                            "fill_price":  fill_price,
+                            "tx_sig":      sig,
+                            "all_sigs":    all_sigs,
+                            "ladder_step": step,
+                        }
+
+                    if err is not None:
+                        # On-chain revert → escalate immediately
+                        log.warning(
+                            "SELL reverted step %d/%d  sig=%s  err=%s — escalating",
+                            step, len(SELL_LADDER), sig[:16], err,
+                        )
+                        continue   # next ladder rung
+
+                    else:
+                        # Unconfirmed (timeout) — tx may be in-flight; don't double-sell
+                        log.warning(
+                            "SELL unconfirmed step %d/%d  sig=%s — stopping ladder",
+                            step, len(SELL_LADDER), sig[:16],
+                        )
+                        return {
+                            "success":     False,
+                            "reason":      "unconfirmed",
+                            "tx_sig":      sig,
+                            "all_sigs":    all_sigs,
+                            "ladder_step": step,
+                            "unconfirmed": True,
+                        }
+
+                except Exception as _step_err:
+                    log.warning("SELL ladder step %d build/send error: %s — escalating",
+                                step, _step_err)
+                    continue
+
+            # All 3 steps reverted
+            log.error(
+                "SELL ladder EXHAUSTED — all %d steps reverted  token=%s  sigs=%s",
+                len(SELL_LADDER), token_address[:8], all_sigs,
+            )
+            return {
+                "success":     False,
+                "reason":      "all_steps_reverted",
+                "all_sigs":    all_sigs,
+                "ladder_step": len(SELL_LADDER),
+            }
 
         except Exception as e:
             log.error("SELL failed  token=%s  err=%s", token_address[:8], e)

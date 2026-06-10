@@ -894,6 +894,15 @@ def _portfolio_thread():
                     continue   # graduated / BSC — DexScreener covers it, skip
                 pp_age  = _pp_monitor.get_last_seen(mint)
                 dex_age = now - _dex_last_seen.get(mint, 0) if _dex_last_seen.get(mint) else float("inf")
+                # Suppress blind-exit during migration window (30s after graduation)
+                mig_age = _pp_monitor.migration_age(mint)
+                if mig_age < 30.0:
+                    log.info(
+                        "Blind-exit suppressed for %s — migration %.0fs ago",
+                        pos.token_symbol, mig_age,
+                    )
+                    continue
+
                 if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC:
                     log.error(
                         "FEED BLIND — both PP (%.0fs) and DexScreener (%.0fs) silent "
@@ -968,6 +977,22 @@ def _on_pp_price_tick(mint: str, price_usd: float) -> None:
                     return
 
 
+def _on_pp_creator_sell(mint: str, price_usd: float) -> None:
+    """
+    Called when PumpPortal detects the token deployer selling on a held mint.
+    Triggers immediate exit via sell ladder with exit_reason='dev_dump'.
+    Never blocks — pushes to _exit_queue.
+    """
+    for pos in portfolio.open_positions():
+        if pos.token_address != mint:
+            continue
+        if not (pos.notes and "live|tx:" in pos.notes):
+            continue
+        _exit_queue.put_nowait((pos.id, "dev_dump", price_usd or pos.current_price))
+        log.warning("DEV DUMP exit queued for %s (%s)", pos.token_symbol, pos.id)
+        return
+
+
 def _pp_exit_thread() -> None:
     """
     Drains _exit_queue and calls close_position immediately.
@@ -1007,6 +1032,61 @@ def _pp_exit_thread() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Reconciler: journal-open vs on-chain balance (60s loop)
+# ---------------------------------------------------------------------------
+# For every live position, verify the token balance on-chain.
+# Zero balance = tokens are gone (sell confirmed via alternate path, or rug
+# with zero liquidity). Close as reconciled_gone + Telegram alert.
+# ---------------------------------------------------------------------------
+
+def _reconciler_thread() -> None:
+    """
+    Every 60s: check on-chain token balance for every open live position.
+    If balance == 0 → close as reconciled_gone + alert.
+    Runs independently of the portfolio monitor so it catches edge cases
+    (sell confirmed off-band, tokens transferred out, etc.).
+    """
+    log.info("Reconciler thread started")
+    while True:
+        try:
+            from memecoin.executor import _get_keypair, _token_balance
+            keypair = _get_keypair()
+            wallet  = str(keypair.pubkey())
+
+            for pos in list(portfolio.open_positions()):
+                if not (pos.notes and "live|tx:" in pos.notes):
+                    continue   # paper position — no on-chain balance to check
+                if "|sell_pending" in (pos.notes or ""):
+                    continue   # in-flight retry — don't race with sell thread
+
+                try:
+                    on_chain = _token_balance(wallet, pos.token_address)
+                except Exception as _be:
+                    log.debug("Reconciler balance check failed %s: %s", pos.token_symbol, _be)
+                    continue
+
+                if on_chain == 0:
+                    log.warning(
+                        "RECONCILER: zero on-chain balance for open live position %s (%s) — "
+                        "closing as reconciled_gone",
+                        pos.token_symbol, pos.id,
+                    )
+                    try:
+                        from app.alerts import _send
+                        _send(
+                            f"⚠️ RECONCILER {pos.token_symbol} — on-chain balance is 0 "
+                            f"but position shows open. Closing as reconciled_gone."
+                        )
+                    except Exception:
+                        pass
+                    portfolio.close_position(pos.id, "reconciled_gone", pos.current_price)
+
+        except Exception as e:
+            log.warning("Reconciler error: %s", e)
+        time.sleep(60)
+
+
+# ---------------------------------------------------------------------------
 # Public API — start / query
 # ---------------------------------------------------------------------------
 
@@ -1029,6 +1109,7 @@ def start(daemon: bool = True):
 
     _pp_monitor.start(daemon=daemon)
     _pp_monitor.add_price_callback(_on_pp_price_tick)
+    _pp_monitor.add_creator_sell_callback(_on_pp_creator_sell)
 
     for target, kwargs in [
         (_wallet_thread,       {"wallets": wallets, "ranks": ranks}),
@@ -1037,6 +1118,7 @@ def start(daemon: bool = True):
         (_pumpfun_thread,      {}),
         (_near_miss_poller_thread, {}),
         (_pp_exit_thread,      {}),
+        (_reconciler_thread,   {}),
     ]:
         t = threading.Thread(target=target, kwargs=kwargs, daemon=daemon)
         t.start()

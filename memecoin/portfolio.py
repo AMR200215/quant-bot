@@ -138,6 +138,7 @@ class Position:
     t10_logged: bool = False   # True once T+10 buy-velocity snapshot is written
     t30_logged: bool = False   # True once T+30s post-signal price is recorded
     t60_logged: bool = False   # True once T+60s post-signal price is recorded
+    creator_wallet: str = ""   # token deployer — triggers dev_dump exit if they sell
 
     @property
     def pnl_pct(self) -> float:
@@ -511,32 +512,74 @@ class Portfolio:
         )
 
         try:
-            # ── PumpPortal pre-flight: check live price before spending any SOL ────
-            # If the token has already moved >30% above signal price since screening,
-            # block the trade entirely — no SOL spent, no abort-sell needed.
+            # ── PumpPortal pre-flight (fail-closed) ──────────────────────────────
+            # Require a live PP price before spending any SOL.
+            # No cached price → subscribe + poll up to 2s.
+            # Still no price → fail-closed (trade blocked, no SOL spent).
+            # Price present → check 30% drift gate.
+            _pf_blocked = False
             try:
                 from memecoin import pumpportal_monitor as _pp_monitor
-                _pp_price = _pp_monitor.monitor.get_prices().get(signal.token_address, 0)
+                _pp      = _pp_monitor.monitor
+                _mint    = signal.token_address
                 _sig_price = paper_pos.signal_price
-                if _pp_price and _sig_price and _pp_price > _sig_price * 1.30:
+
+                # Ensure subscribed so ticks start arriving immediately
+                _pp.subscribe({_mint})
+
+                # Poll up to 2s for a fresh price (100ms intervals)
+                _pp_price = 0.0
+                _pf_deadline = time.time() + 2.0
+                while time.time() < _pf_deadline:
+                    _p = _pp.get_prices().get(_mint, 0)
+                    if _p > 0:
+                        _pp_price = _p
+                        break
+                    time.sleep(0.1)
+
+                if _pp_price == 0:
+                    log.warning(
+                        "LIVE PREFLIGHT NO PRICE %s — PP returned no price in 2s, "
+                        "blocking trade (fail-closed)",
+                        live_pos.token_symbol,
+                    )
+                    try:
+                        from app.alerts import _send
+                        _send(
+                            f"🚫 PREFLIGHT NO PRICE {live_pos.token_symbol} — "
+                            f"PP silent 2s. Trade blocked, no SOL spent."
+                        )
+                    except Exception:
+                        pass
+                    _pf_blocked = True
+
+                elif _sig_price and _pp_price > _sig_price * 1.30:
                     _pf_slip = (_pp_price / _sig_price - 1) * 100
                     log.warning(
-                        "LIVE PREFLIGHT BLOCKED %s — PumpPortal price %.10f is %.1f%% "
-                        "above signal price %.10f (>30%% gate)",
+                        "LIVE PREFLIGHT BLOCKED %s — PP %.10f is %.1f%% above signal "
+                        "%.10f (>30%% gate)",
                         live_pos.token_symbol, _pp_price, _pf_slip, _sig_price,
                     )
                     try:
                         from app.alerts import _send
                         _send(
-                            f"🚫 LIVE PREFLIGHT BLOCKED {live_pos.token_symbol} — "
-                            f"PP price ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
+                            f"🚫 PREFLIGHT BLOCKED {live_pos.token_symbol} — "
+                            f"PP ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
                             f"${_sig_price:.8f}. No SOL spent."
                         )
                     except Exception:
                         pass
-                    return
+                    _pf_blocked = True
+
             except Exception as _pf_err:
-                log.debug("PumpPortal pre-flight skipped: %s", _pf_err)
+                log.warning(
+                    "PumpPortal pre-flight error for %s: %s — blocking (fail-closed)",
+                    live_pos.token_symbol, _pf_err,
+                )
+                _pf_blocked = True
+
+            if _pf_blocked:
+                return
 
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
@@ -635,6 +678,31 @@ class Portfolio:
                     alert_live_buy(live_pos, result.get("tx_sig",""), result.get("sol_spent", _live_size / 70))
                 except Exception:
                     pass
+                # ── Fetch creator wallet (best-effort, non-blocking) ──────────
+                # Used by PP tick handler for dev_dump exit detection.
+                # Done in background thread so it doesn't delay position storage.
+                def _fetch_and_store_creator(pos_id: str, mint: str, sym: str):
+                    try:
+                        from memecoin.data_client import sol_get_token_creator
+                        creator = sol_get_token_creator(mint) or ""
+                        if creator:
+                            p = self._positions.get(pos_id)
+                            if p:
+                                p.creator_wallet = creator
+                                _save_positions(self._positions)
+                            from memecoin.pumpportal_monitor import monitor as _ppmon
+                            _ppmon.set_creator(mint, creator)
+                            log.info("Creator wallet resolved %s: %s", sym, creator[:8])
+                    except Exception as _ce:
+                        log.debug("Creator fetch failed for %s: %s", sym, _ce)
+
+                import threading as _threading
+                _threading.Thread(
+                    target=_fetch_and_store_creator,
+                    args=(live_pos.id, signal.token_address, live_pos.token_symbol),
+                    daemon=True,
+                ).start()
+
                 # Store live position — it will be monitored independently
                 self._positions[live_pos.id] = live_pos
                 _save_positions(self._positions)
@@ -675,7 +743,15 @@ class Portfolio:
                 result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
                 if result.get("success"):
                     fill = result.get("fill_price") or pos.exit_price
-                    pos.notes = (pos.notes or "") + f"|sell_tx:{result.get('tx_sig','')}|sell_fill:{fill:.10f}"
+                    _step = result.get("ladder_step", 1)
+                    _all  = result.get("all_sigs", [])
+                    _sigs_tag = f"|all_sigs:{','.join(_all)}" if len(_all) > 1 else ""
+                    pos.notes = (
+                        (pos.notes or "")
+                        + f"|sell_tx:{result.get('tx_sig','')}|sell_fill:{fill:.10f}"
+                        + (f"|sell_step:{_step}" if _step > 1 else "")
+                        + _sigs_tag
+                    )
                     log.info("Live sell confirmed %s  tx=%s  fill=%.10f",
                              pos.token_symbol, result.get("tx_sig","")[:16], fill)
                     try:
@@ -738,6 +814,12 @@ class Portfolio:
         promote_to_winners(pos)
         del self._positions[pos_id]
         _save_positions(self._positions)
+        # Clean up creator mapping in PP monitor
+        try:
+            from memecoin.pumpportal_monitor import monitor as _ppmon
+            _ppmon.clear_creator(pos.token_address)
+        except Exception:
+            pass
         log.info("Closed position %s  reason=%s  pnl=%.1f%%",
                  pos_id, reason, pos.pnl_pct * 100)
         try:

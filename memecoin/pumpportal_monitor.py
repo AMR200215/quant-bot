@@ -136,6 +136,22 @@ class PumpPortalMonitor:
         self._price_callbacks: list  = []
         self._cb_lock                = threading.Lock()
 
+        # ── Creator-sell callbacks ────────────────────────────────────────
+        # Fired when the token deployer sells on a held mint.
+        # Signature: fn(mint: str, price_usd: float) — must not block.
+        self._creator_sell_callbacks: list = []
+        self._cs_cb_lock             = threading.Lock()
+
+        # mint → creator_wallet mapping for held positions
+        self._creator_map: dict[str, str] = {}
+        self._creator_lock               = threading.Lock()
+
+        # ── Migration tracking ────────────────────────────────────────────
+        # mint → timestamp when migration event received
+        # Used to suppress blind-exit during the ~30s migration window.
+        self._migration_ts: dict[str, float] = {}
+        self._migration_lock                 = threading.Lock()
+
         # ── SOL price (written by _sol_price_thread, read by _compute_price) ──
         self._sol_price: float       = 170.0
         self._sol_price_lock         = threading.Lock()
@@ -249,6 +265,33 @@ class PumpPortalMonitor:
         """
         with self._cb_lock:
             self._price_callbacks.append(fn)
+
+    def add_creator_sell_callback(self, fn) -> None:
+        """
+        Register a callback fired when the token deployer sells on a held mint.
+        Signature: fn(mint: str, price_usd: float) → None  — must not block.
+        """
+        with self._cs_cb_lock:
+            self._creator_sell_callbacks.append(fn)
+
+    def set_creator(self, mint: str, creator_wallet: str) -> None:
+        """Store creator wallet for a held mint — used for dev_dump detection."""
+        with self._creator_lock:
+            self._creator_map[mint] = creator_wallet
+        log.debug("Creator registered mint=%s creator=%s", mint[:8], creator_wallet[:8])
+
+    def clear_creator(self, mint: str) -> None:
+        """Remove creator mapping when position closes."""
+        with self._creator_lock:
+            self._creator_map.pop(mint, None)
+        with self._migration_lock:
+            self._migration_ts.pop(mint, None)
+
+    def migration_age(self, mint: str) -> float:
+        """Seconds since migration event for this mint, or inf if none received."""
+        with self._migration_lock:
+            ts = self._migration_ts.get(mint, 0)
+        return (time.time() - ts) if ts > 0 else float("inf")
 
     def increment_blind_exit_count(self) -> None:
         """Called by scanner when a feed_blind exit fires — tracked in daily telemetry."""
@@ -538,13 +581,33 @@ class PumpPortalMonitor:
 
     def _handle_message(self, msg: dict):
         """
-        Parse a PumpPortal trade event.
+        Parse a PumpPortal trade/migration event.
         Updates position-monitoring price cache and any active ScreeningState.
         Called only from the WS recv thread.
         """
         mint = msg.get("mint")
         if not mint:
             return
+
+        tx_type = msg.get("txType", "")
+
+        # ── Migration event ───────────────────────────────────────────────
+        # Fired when a bonding curve token graduates to Raydium/pump.swap.
+        # Suppress blind-exit for this mint for 30s; sells stay pool:"auto".
+        if tx_type == "migrate":
+            with self._migration_lock:
+                self._migration_ts[mint] = time.time()
+            with self._sub_lock:
+                held = mint in self._subscribed
+            if held:
+                log.warning(
+                    "PumpPortal migration event for HELD mint %s — "
+                    "blind-exit suppressed 30s, sells stay pool:auto",
+                    mint[:8],
+                )
+            else:
+                log.debug("PumpPortal migration event: %s", mint[:8])
+            return   # no price to process on migration events
 
         price_usd = self._compute_price(msg)
 
@@ -555,7 +618,7 @@ class PumpPortalMonitor:
             log.debug("PumpPortal price update %s: $%.10f  (vSol=%s vTok=%s)",
                       mint[:8], price_usd,
                       msg.get("vSolInBondingCurve"), msg.get("vTokensInBondingCurve"))
-            # Fire registered callbacks — must not block
+            # Fire price callbacks — must not block
             with self._cb_lock:
                 cbs = list(self._price_callbacks)
             for cb in cbs:
@@ -563,6 +626,29 @@ class PumpPortalMonitor:
                     cb(mint, price_usd)
                 except Exception as _e:
                     log.debug("price callback error: %s", _e)
+
+        # ── Creator-sell detection (dev_dump) ─────────────────────────────
+        # Only checked for held positions (in _subscribed) to avoid false fires
+        # on screening tokens whose creator also trades other mints.
+        if tx_type == "sell":
+            with self._sub_lock:
+                held = mint in self._subscribed
+            if held:
+                with self._creator_lock:
+                    creator = self._creator_map.get(mint, "")
+                trader = msg.get("traderPublicKey", "")
+                if creator and trader and trader == creator:
+                    log.warning(
+                        "DEV DUMP DETECTED %s — creator %s sold on held position",
+                        mint[:8], creator[:8],
+                    )
+                    with self._cs_cb_lock:
+                        cs_cbs = list(self._creator_sell_callbacks)
+                    for cb in cs_cbs:
+                        try:
+                            cb(mint, price_usd)
+                        except Exception as _e:
+                            log.debug("creator_sell callback error: %s", _e)
 
         # ── Screening accumulator ─────────────────────────────────────────
         with self._screening_lock:
