@@ -844,18 +844,20 @@ def _portfolio_thread():
             price_overrides = _pp_monitor.get_prices()
 
             # ── DexScreener staleness tracking ───────────────────────────────
-            # Probe DexScreener for each subscribed pumpfun mint not covered by
-            # a fresh PP price. Update _dex_last_seen when data arrives.
+            # Probe DexScreener for mints not covered by a fresh PP price, but
+            # throttled to once per 10s per mint to avoid rate-limit false blinds.
             from memecoin.data_client import dex_get_token as _dex_get
             now = time.time()
             for mint in open_pumpfun:
                 if mint not in price_overrides:
-                    try:
-                        pair = _dex_get("solana", mint)
-                        if pair and float(pair.get("priceUsd") or 0) > 0:
-                            _dex_last_seen[mint] = now
-                    except Exception:
-                        pass
+                    last_dex = _dex_last_seen.get(mint, 0)
+                    if now - last_dex >= 10:   # throttle: 1 probe per 10s max
+                        try:
+                            pair = _dex_get("solana", mint)
+                            if pair and float(pair.get("priceUsd") or 0) > 0:
+                                _dex_last_seen[mint] = now
+                        except Exception:
+                            pass
 
             exits = portfolio.update_prices(
                 whale_sells=whale_sells_snapshot,
