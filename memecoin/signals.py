@@ -70,6 +70,7 @@ class Signal:
     freeze_disabled: bool = True
     buy_tax: float = 0.0
     sell_tax: float = 0.0
+    creator_wallet: str = ""        # token deployer — used for dev_dump detection
     # paper-trade tracking
     paper_entry_price: float = 0.0
     paper_entry_time: float = 0.0

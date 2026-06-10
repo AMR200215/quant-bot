@@ -96,6 +96,8 @@ _SCREENING_OUTCOME_FIELDS = [
     "ts", "mint", "chain", "elapsed_s",
     "unique_buyers", "buy_count", "sell_count", "net_sol",
     "creator_sold", "price_first", "price_last", "entry_made",
+    # Manufactured-momentum features (log-only, no threshold gates yet)
+    "buy_size_cv", "inter_buy_time_cv", "max_buys_per_slot", "early_buyer_sell_count",
 ]
 
 # mint → {ts, chain, checks_done}
@@ -142,6 +144,11 @@ def _log_screening_outcome(mint: str, entry: dict, state, entry_made: bool):
                 "price_first":   state.first_seen_price   if state else 0,
                 "price_last":    state.latest_price       if state else 0,
                 "entry_made":    entry_made,
+                # Manufactured-momentum features (log-only)
+                "buy_size_cv":             round(state.buy_size_cv, 4)          if state else "",
+                "inter_buy_time_cv":       round(state.inter_buy_time_cv, 4)    if state else "",
+                "max_buys_per_slot":       state.max_buys_per_slot              if state else "",
+                "early_buyer_sell_count":  state.early_buyer_sell_count         if state else "",
             })
     except Exception as e:
         log.debug("screening_outcomes log error: %s", e)
@@ -195,6 +202,8 @@ def _fire_screening_entry(chain: str, mint: str, state):
     sig.signal_type = "pumpportal_screen"
     sig.notes += (f" | screen: buyers={state.unique_buyer_count}"
                   f" net_sol={state.net_sol_inflow:.3f}")
+    # Task 2: carry creator from ScreeningState so dev_dump is wired from day 1
+    sig.creator_wallet = state.creator_pubkey or ""
 
     _add_signal(sig)
     log.warning(
@@ -689,10 +698,42 @@ def _pumpfun_thread():
 # Telegram social signal callback
 # ---------------------------------------------------------------------------
 
+def _start_creator_fetch(address: str) -> tuple:
+    """
+    Start an async SOL token creator fetch.
+    Returns (event, holder) — event.wait(timeout) blocks until done,
+    holder[0] contains the creator address ('' on any failure).
+    Starts immediately; caller decides how long to wait.
+    """
+    event  = threading.Event()
+    holder = [""]
+
+    def _fetch():
+        try:
+            from memecoin.data_client import sol_get_token_creator
+            holder[0] = sol_get_token_creator(address) or ""
+        except Exception:
+            holder[0] = ""
+        finally:
+            event.set()
+
+    threading.Thread(target=_fetch, daemon=True).start()
+    return event, holder
+
+
 def _on_telegram_signal(chain: str, address: str, message_text: str):
     """Called by TelegramMonitor when a token address is found in a channel message."""
     import time as _time
     _t0 = _time.time()
+
+    # Task 2: start creator fetch immediately, in parallel with screening.
+    # The screen typically takes 1-2s, so the fetch (0.3-1s) is usually done by then.
+    # For the DexScreener success path: fail-closed if creator not resolved.
+    # For the no_dex_data path: update screening state when fetch completes.
+    _creator_event, _creator_holder = (None, None)
+    if chain == "solana":
+        _creator_event, _creator_holder = _start_creator_fetch(address)
+
     try:
         screen = screen_token(chain, address)
         reason = screen.get("reason", "")
@@ -705,14 +746,37 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         if reason == "no_dex_data":
             with _sq_lock:
                 if address not in _screening_queue:
-                    _pp_monitor.subscribe_screening(address)
+                    # Task 2: try to carry creator into the screening state so
+                    # type-1 entries have dev_dump coverage from the start.
+                    # The fetch may still be in-flight — wire it when done.
+                    _creator_for_screen = ""
+                    if _creator_event is not None:
+                        _creator_event.wait(timeout=0.2)   # quick non-blocking poll
+                        _creator_for_screen = _creator_holder[0]
+                    _pp_monitor.subscribe_screening(address,
+                                                    creator_pubkey=_creator_for_screen or None)
                     _screening_queue[address] = {
                         "ts":          _t0,
                         "chain":       chain,
                         "checks_done": 0,
                     }
-                    log.info("TG SCREEN-QUEUE %s — PumpPortal accumulator started",
-                             address[:8])
+                    log.info("TG SCREEN-QUEUE %s — PumpPortal accumulator started (creator=%s)",
+                             address[:8],
+                             (_creator_for_screen[:8] if _creator_for_screen else "pending"))
+                    # If creator wasn't ready yet, wire it into the screening state
+                    # once the fetch completes (background, best-effort).
+                    if not _creator_for_screen and _creator_event is not None:
+                        def _late_wire_creator(_evt=_creator_event, _hld=_creator_holder,
+                                               _addr=address):
+                            _evt.wait(timeout=5.0)
+                            c = _hld[0]
+                            if c:
+                                st = _pp_monitor.get_screening_state(_addr)
+                                if st is not None:
+                                    st.creator_pubkey = c
+                                    log.debug("Creator late-wired to screening state %s: %s",
+                                              _addr[:8], c[:8])
+                        threading.Thread(target=_late_wire_creator, daemon=True).start()
             log.info("TG REJECT %s — no_dex_data (DexScreener not indexed yet, screen took %.1fs)",
                      address[:8], _time.time() - _t0)
             raise _NoDexData(address)
@@ -751,6 +815,21 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         sig._t_tg_receive  = _t0
         sig._t_screen_end  = _t_screen_end
         sig._price_dex     = screen.get("price_usd") or 0  # stale DexScreener baseline
+
+        # Task 2: resolve creator for fail-closed live gate.
+        # Screen took ~1-2s so the parallel fetch is usually already done.
+        # Wait up to remaining budget (total 3s from signal receipt).
+        if _creator_event is not None:
+            _elapsed = _time.time() - _t0
+            _remaining = max(0.1, 3.0 - _elapsed)
+            _creator_event.wait(timeout=_remaining)
+            sig.creator_wallet = _creator_holder[0]
+            if sig.creator_wallet:
+                log.info("TG creator resolved %s: %s (elapsed %.1fs)",
+                         address[:8], sig.creator_wallet[:8], _time.time() - _t0)
+            else:
+                log.warning("TG creator UNRESOLVED %s after %.1fs — live entry will be blocked",
+                            address[:8], _time.time() - _t0)
         _add_signal(sig)
     except _NoDexData:
         raise  # propagate to TelegramMonitor for 45s retry

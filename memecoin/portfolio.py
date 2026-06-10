@@ -8,6 +8,7 @@ and writes closed trades to the journal CSV.
 import csv
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass, asdict, field
@@ -327,6 +328,84 @@ class Portfolio:
         # Not persisted — resets on restart. Fine for short pumpfun trades.
         self._stall_tracker: dict[str, dict] = {}
 
+        # ── Pre-signed emergency exits ─────────────────────────────────────
+        # mint → signed tx bytes (step-3 ladder: 98% slippage, 0.005 SOL fee)
+        # Refreshed every 45s by _presigned_refresh_loop.
+        # Only used for rug-path exits (dev_dump, rug_lp, velocity) where
+        # the 300-500ms build step matters most.  Orderly exits (time_stop,
+        # trailing_stop) still build on demand via the normal ladder.
+        self._presigned_exits: dict = {}   # mint → bytes
+        self._presigned_ts:    dict = {}   # mint → last-sign time (float)
+        self._presigned_lock        = threading.Lock()
+        threading.Thread(
+            target=self._presigned_refresh_loop,
+            daemon=True,
+            name="presign-refresh",
+        ).start()
+
+    # ---- pre-signed emergency exit management ----
+
+    def _build_presigned_exit(self, mint: str) -> None:
+        """
+        Build and sign the step-3 sell tx (98% slippage, 0.005 SOL fee) for
+        a held mint and store it in _presigned_exits.  Called immediately after
+        a live buy confirms and then every 45s by _presigned_refresh_loop.
+
+        PumpPortal re-fetches the latest blockhash server-side on each call, so
+        the tx stays valid.  The refresh ensures we never hold a stale tx longer
+        than ~90s (Solana blockhash TTL).
+        """
+        try:
+            from memecoin.executor import (
+                _get_keypair, _load_solders, _pumpportal_build_tx,
+                EXECUTOR_BACKEND,
+            )
+            if EXECUTOR_BACKEND != "pumpportal":
+                return
+            _t0 = time.time()
+            _, VersionedTransaction, _ = _load_solders()
+            keypair = _get_keypair()
+            wallet  = str(keypair.pubkey())
+            tx_bytes = _pumpportal_build_tx(
+                wallet_pubkey=wallet,
+                action="sell",
+                token_mint=mint,
+                amount="100%",
+                denominated_in_sol=False,
+                slippage_pct=98,
+                priority_fee_sol=0.005,
+            )
+            tx        = VersionedTransaction.from_bytes(tx_bytes)
+            signed    = VersionedTransaction(tx.message, [keypair])
+            signed_b  = bytes(signed)
+            with self._presigned_lock:
+                self._presigned_exits[mint] = signed_b
+                self._presigned_ts[mint]    = time.time()
+            log.info(
+                "Presigned exit built  mint=%s  build_ms=%.0f",
+                mint[:8], (time.time() - _t0) * 1000,
+            )
+        except Exception as e:
+            log.warning("Presigned exit build failed for %s: %s", mint[:8], e)
+
+    def _schedule_presigned_exit(self, mint: str) -> None:
+        """Build presigned exit immediately (non-blocking) after live buy confirms."""
+        threading.Thread(
+            target=self._build_presigned_exit,
+            args=(mint,),
+            daemon=True,
+            name=f"presign-build-{mint[:8]}",
+        ).start()
+
+    def _presigned_refresh_loop(self) -> None:
+        """Refresh all held presigned exits every 45s (< Solana blockhash TTL)."""
+        while True:
+            time.sleep(45)
+            with self._presigned_lock:
+                mints = list(self._presigned_exits.keys())
+            for mint in mints:
+                self._build_presigned_exit(mint)
+
     # ---- open ----
 
     def open_position(self, signal) -> Position:
@@ -382,6 +461,7 @@ class Portfolio:
             rugcheck_score=getattr(signal, "rugcheck_score", 0.0),
             buy_tax=getattr(signal, "buy_tax", 0.0),
             sell_tax=getattr(signal, "sell_tax", 0.0),
+            creator_wallet=getattr(signal, "creator_wallet", ""),
         )
         # Pre-graduation tokens on pumpswap experience more jitter before breakout.
         # Widen hard stop to -40% so normal price oscillation doesn't stop us out early.
@@ -581,6 +661,27 @@ class Portfolio:
             if _pf_blocked:
                 return
 
+            # ── Creator fail-closed gate (type-2 / telegram social_alert) ─────
+            # Type-1 (pumpportal_screen) carry creator from ScreeningState.
+            # Type-2 (social_alert from Telegram) must have a resolved creator
+            # before we spend SOL — ensures dev_dump detection is wired from
+            # the first tick rather than catching up via a background fetch.
+            _sig_creator = getattr(signal, "creator_wallet", "")
+            if signal.signal_type == "social_alert" and not _sig_creator:
+                log.warning(
+                    "LIVE GATE BLOCKED %s — creator unresolved (fail-closed, type-2)",
+                    live_pos.token_symbol,
+                )
+                try:
+                    from app.alerts import _send
+                    _send(
+                        f"🚫 CREATOR GATE {live_pos.token_symbol} — "
+                        f"creator unresolved after 3s. Trade blocked."
+                    )
+                except Exception:
+                    pass
+                return
+
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
                             signal_price=paper_pos.signal_price,
@@ -678,30 +779,49 @@ class Portfolio:
                     alert_live_buy(live_pos, result.get("tx_sig",""), result.get("sol_spent", _live_size / 70))
                 except Exception:
                     pass
-                # ── Fetch creator wallet (best-effort, non-blocking) ──────────
-                # Used by PP tick handler for dev_dump exit detection.
-                # Done in background thread so it doesn't delay position storage.
-                def _fetch_and_store_creator(pos_id: str, mint: str, sym: str):
+                # ── Wire creator wallet ───────────────────────────────────────
+                # If already resolved (type-1 or resolved type-2) → wire immediately.
+                # Otherwise → background fetch (should only be non-social_alert paths
+                # that passed the creator gate above without a pre-resolved creator).
+                _sig_creator = getattr(signal, "creator_wallet", "")
+                if _sig_creator:
+                    live_pos.creator_wallet = _sig_creator
                     try:
-                        from memecoin.data_client import sol_get_token_creator
-                        creator = sol_get_token_creator(mint) or ""
-                        if creator:
-                            p = self._positions.get(pos_id)
-                            if p:
-                                p.creator_wallet = creator
-                                _save_positions(self._positions)
-                            from memecoin.pumpportal_monitor import monitor as _ppmon
-                            _ppmon.set_creator(mint, creator)
-                            log.info("Creator wallet resolved %s: %s", sym, creator[:8])
-                    except Exception as _ce:
-                        log.debug("Creator fetch failed for %s: %s", sym, _ce)
+                        from memecoin.pumpportal_monitor import monitor as _ppmon2
+                        _ppmon2.set_creator(signal.token_address, _sig_creator)
+                        log.info("Creator wired immediately %s: %s",
+                                 live_pos.token_symbol, _sig_creator[:8])
+                    except Exception as _cw_err:
+                        log.debug("Creator immediate wire error: %s", _cw_err)
+                else:
+                    # Background fallback for paths that don't go through the
+                    # social_alert gate (dev_launch, copy_trade, etc.)
+                    def _fetch_and_store_creator(pos_id: str, mint: str, sym: str):
+                        try:
+                            from memecoin.data_client import sol_get_token_creator
+                            creator = sol_get_token_creator(mint) or ""
+                            if creator:
+                                p = self._positions.get(pos_id)
+                                if p:
+                                    p.creator_wallet = creator
+                                    _save_positions(self._positions)
+                                from memecoin.pumpportal_monitor import monitor as _ppmon
+                                _ppmon.set_creator(mint, creator)
+                                log.info("Creator wallet resolved %s: %s", sym, creator[:8])
+                        except Exception as _ce:
+                            log.debug("Creator fetch failed for %s: %s", sym, _ce)
 
-                import threading as _threading
-                _threading.Thread(
-                    target=_fetch_and_store_creator,
-                    args=(live_pos.id, signal.token_address, live_pos.token_symbol),
-                    daemon=True,
-                ).start()
+                    threading.Thread(
+                        target=_fetch_and_store_creator,
+                        args=(live_pos.id, signal.token_address, live_pos.token_symbol),
+                        daemon=True,
+                    ).start()
+
+                # ── Pre-signed emergency exit ─────────────────────────────────
+                # Build step-3 sell tx immediately; refresh every 45s.
+                # Dev-dump, rug_lp, and velocity exits use this directly, saving
+                # the ~300-500ms PumpPortal build step at the worst possible moment.
+                self._schedule_presigned_exit(signal.token_address)
 
                 # Store live position — it will be monitored independently
                 self._positions[live_pos.id] = live_pos
@@ -739,59 +859,100 @@ class Portfolio:
         if LIVE_TRADING and _was_live_buy:
             from memecoin.executor import MemeExecutor
             try:
-                ex = MemeExecutor()
-                result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
-                if result.get("success"):
-                    fill = result.get("fill_price") or pos.exit_price
-                    _step = result.get("ladder_step", 1)
-                    _all  = result.get("all_sigs", [])
-                    _sigs_tag = f"|all_sigs:{','.join(_all)}" if len(_all) > 1 else ""
-                    pos.notes = (
-                        (pos.notes or "")
-                        + f"|sell_tx:{result.get('tx_sig','')}|sell_fill:{fill:.10f}"
-                        + (f"|sell_step:{_step}" if _step > 1 else "")
-                        + _sigs_tag
-                    )
-                    log.info("Live sell confirmed %s  tx=%s  fill=%.10f",
-                             pos.token_symbol, result.get("tx_sig","")[:16], fill)
-                    try:
-                        from app.alerts import alert_live_sell
-                        alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
-                    except Exception:
-                        pass
-                elif result.get("reason") == "zero_balance":
-                    # Tokens already gone (prev unconfirmed sell went through) — close cleanly
-                    log.warning("Live sell %s — zero balance, tokens already sold. Closing.",
-                                pos.token_symbol)
-                    pos.notes = (pos.notes or "") + "|sell_already_gone"
-                else:
-                    # Sell failed or unconfirmed — retry up to MAX_SELL_RETRIES
-                    pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
-                    reason_tag = "sell_unconf" if result.get("unconfirmed") else "sell_failed"
-                    tx_tag = f":{result.get('tx_sig','')}" if result.get("tx_sig") else ""
-                    pos.notes = (pos.notes or "") + f"|{reason_tag}{tx_tag}(attempt {pos.sell_attempts})"
-                    if pos.sell_attempts < MAX_SELL_RETRIES:
-                        pos.status = "open"
-                        pos.exit_price  = 0.0
-                        pos.exit_time   = 0.0
-                        pos.exit_reason = ""
-                        # Mark as sell_pending so _count_open_live excludes it from the cap
-                        if "|sell_pending" not in (pos.notes or ""):
-                            pos.notes = (pos.notes or "") + "|sell_pending"
-                        self._positions[pos_id] = pos
-                        _save_positions(self._positions)
-                        log.error("Live sell %s for %s (attempt %d/%d) — retrying next cycle. err=%s",
-                                  reason_tag, pos.token_symbol, pos.sell_attempts, MAX_SELL_RETRIES,
-                                  result.get("error") or result.get("tx_sig",""))
-                        return pos
-                    else:
-                        log.error("Live sell GAVE UP after %d attempts for %s — TOKENS MAY REMAIN IN WALLET",
-                                  MAX_SELL_RETRIES, pos.token_symbol)
+                # ── Rug-path: pre-signed emergency exit ──────────────────────────
+                # For dev_dump / rug_lp / velocity we skip the ~300-500ms
+                # PumpPortal build step and send the pre-built tx directly.
+                # Baseline: build-on-demand ~350ms detect→land.
+                # Target:   presigned ~10ms detect→send.
+                _RUG_REASONS    = frozenset({"dev_dump", "rug_lp", "velocity"})
+                _presigned_used = False
+                if reason in _RUG_REASONS:
+                    with self._presigned_lock:
+                        _ps_bytes = self._presigned_exits.pop(pos.token_address, None)
+                        self._presigned_ts.pop(pos.token_address, None)
+                    if _ps_bytes:
+                        from memecoin.executor import _send_transaction, _confirm_tx
+                        _t_detect = time.time()
                         try:
-                            from app.alerts import _send
-                            _send(f"ALERT: sell gave up after {MAX_SELL_RETRIES} retries for {pos.token_symbol} — check wallet manually")
+                            _psig    = _send_transaction(_ps_bytes)
+                            _t_send  = time.time()
+                            log.warning(
+                                "PRESIGNED EXIT %s (%s)  sig=%s  detect→send=%.0fms",
+                                pos.token_symbol, reason, _psig[:16],
+                                (_t_send - _t_detect) * 1000,
+                            )
+                            pos.notes = (pos.notes or "") + f"|presigned:{_psig}"
+                            _pconf, _perr = _confirm_tx(_psig)
+                            if _pconf:
+                                log.info("Presigned exit confirmed %s  sig=%s",
+                                         pos.token_symbol, _psig[:16])
+                            else:
+                                log.warning("Presigned exit unconfirmed %s  sig=%s  err=%s",
+                                            pos.token_symbol, _psig[:16], _perr)
+                                pos.notes += "|presigned_unconf"
+                            _presigned_used = True
+                        except Exception as _pe:
+                            log.warning(
+                                "Presigned exit send failed %s: %s — falling back to ladder",
+                                pos.token_symbol, _pe,
+                            )
+                            # Restore for ladder attempt
+                            if _ps_bytes:
+                                with self._presigned_lock:
+                                    self._presigned_exits[pos.token_address] = _ps_bytes
+
+                if not _presigned_used:
+                    ex     = MemeExecutor()
+                    result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
+                    if result.get("success"):
+                        fill  = result.get("fill_price") or pos.exit_price
+                        _step = result.get("ladder_step", 1)
+                        _all  = result.get("all_sigs", [])
+                        _sigs_tag = f"|all_sigs:{','.join(_all)}" if len(_all) > 1 else ""
+                        pos.notes = (
+                            (pos.notes or "")
+                            + f"|sell_tx:{result.get('tx_sig','')}|sell_fill:{fill:.10f}"
+                            + (f"|sell_step:{_step}" if _step > 1 else "")
+                            + _sigs_tag
+                        )
+                        log.info("Live sell confirmed %s  tx=%s  fill=%.10f",
+                                 pos.token_symbol, result.get("tx_sig","")[:16], fill)
+                        try:
+                            from app.alerts import alert_live_sell
+                            alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
                         except Exception:
                             pass
+                    elif result.get("reason") == "zero_balance":
+                        log.warning("Live sell %s — zero balance, tokens already sold. Closing.",
+                                    pos.token_symbol)
+                        pos.notes = (pos.notes or "") + "|sell_already_gone"
+                    else:
+                        # Sell failed or unconfirmed — retry up to MAX_SELL_RETRIES
+                        pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
+                        reason_tag = "sell_unconf" if result.get("unconfirmed") else "sell_failed"
+                        tx_tag = f":{result.get('tx_sig','')}" if result.get("tx_sig") else ""
+                        pos.notes = (pos.notes or "") + f"|{reason_tag}{tx_tag}(attempt {pos.sell_attempts})"
+                        if pos.sell_attempts < MAX_SELL_RETRIES:
+                            pos.status = "open"
+                            pos.exit_price  = 0.0
+                            pos.exit_time   = 0.0
+                            pos.exit_reason = ""
+                            if "|sell_pending" not in (pos.notes or ""):
+                                pos.notes = (pos.notes or "") + "|sell_pending"
+                            self._positions[pos_id] = pos
+                            _save_positions(self._positions)
+                            log.error("Live sell %s for %s (attempt %d/%d) — retrying next cycle. err=%s",
+                                      reason_tag, pos.token_symbol, pos.sell_attempts, MAX_SELL_RETRIES,
+                                      result.get("error") or result.get("tx_sig",""))
+                            return pos
+                        else:
+                            log.error("Live sell GAVE UP after %d attempts for %s — TOKENS MAY REMAIN IN WALLET",
+                                      MAX_SELL_RETRIES, pos.token_symbol)
+                            try:
+                                from app.alerts import _send
+                                _send(f"ALERT: sell gave up after {MAX_SELL_RETRIES} retries for {pos.token_symbol} — check wallet manually")
+                            except Exception:
+                                pass
             except Exception as e:
                 pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
                 pos.notes = (pos.notes or "") + f"|sell_error(attempt {pos.sell_attempts})"
@@ -820,6 +981,10 @@ class Portfolio:
             _ppmon.clear_creator(pos.token_address)
         except Exception:
             pass
+        # Clean up presigned exit (if not already consumed by rug-path)
+        with self._presigned_lock:
+            self._presigned_exits.pop(pos.token_address, None)
+            self._presigned_ts.pop(pos.token_address, None)
         log.info("Closed position %s  reason=%s  pnl=%.1f%%",
                  pos_id, reason, pos.pnl_pct * 100)
         try:

@@ -195,6 +195,33 @@ def screen_token(chain: str, token_address: str) -> dict:
         result["reason"] = f"rug_detector:{rug_report.summary()}"
         return result
 
+    # ---- Creator / dev history check (Solana only) ----
+    # Fetch creator wallet and look up in dev_wallets.json.
+    # Serial ruggers (rug_count ≥ 2) are blocked outright.
+    # Known winner devs get their score logged for downstream use.
+    result["creator_wallet"] = ""
+    result["dev_score"]      = 0.0
+    if chain == "solana":
+        try:
+            from memecoin.data_client import sol_get_token_creator
+            from memecoin.dev_tracker import is_known_dev, is_serial_rugger
+            creator = sol_get_token_creator(token_address) or ""
+            result["creator_wallet"] = creator
+            if creator:
+                if is_serial_rugger(chain, creator):
+                    result["reason"] = f"serial_rugger:{creator[:8]}"
+                    return result
+                dev_entry = is_known_dev(chain, creator)
+                if dev_entry:
+                    ds = dev_entry.get("score", 0.0)
+                    result["dev_score"] = ds
+                    log.info("Known dev %s  token=%s  score=%.2f  wins=%d  rugs=%d",
+                             creator[:8], token_address[:8], ds,
+                             dev_entry.get("win_count", 0),
+                             dev_entry.get("rug_count", 0))
+        except Exception as _de:
+            log.debug("Dev history check failed for %s: %s", token_address[:8], _de)
+
     result["passed"] = True
     return result
 

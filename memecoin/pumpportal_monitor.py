@@ -69,6 +69,21 @@ HEARTBEAT_GRACE_SEC    = 10   # close socket if silent for interval + grace = 30
 # Data structures
 # ---------------------------------------------------------------------------
 
+_EARLY_BUYER_N = 10   # number of early buyers to track for sell-count feature
+
+
+def _cv(vals: list) -> float:
+    """Coefficient of variation (stdev/mean). Returns 0.0 if < 2 data points."""
+    n = len(vals)
+    if n < 2:
+        return 0.0
+    mean = sum(vals) / n
+    if mean <= 0:
+        return 0.0
+    variance = sum((x - mean) ** 2 for x in vals) / (n - 1)
+    return round((variance ** 0.5) / mean, 4)
+
+
 @dataclass
 class ScreeningState:
     """
@@ -87,6 +102,15 @@ class ScreeningState:
     creator_sold:     bool          = False
     lru_ts:           float         = field(default_factory=time.time)
 
+    # ── Manufactured-momentum raw data ──────────────────────────────────────
+    # Used to detect bot-manufactured buy walls: uniform size, machine-gun timing,
+    # multi-buy per slot, early flippers.  Log-only for 7-day evaluation window.
+    _buy_sizes:          list = field(default_factory=list)  # SOL per buy
+    _buy_timestamps:     list = field(default_factory=list)  # unix ts per buy
+    _slot_buy_counts:    dict = field(default_factory=dict)  # slot_id → count
+    _early_buyer_set:    set  = field(default_factory=set)   # first N unique buyers
+    _early_buyer_sellers: set = field(default_factory=set)   # early buyers who sold
+
     @property
     def net_sol_inflow(self) -> float:
         return self.sol_in - self.sol_out
@@ -94,6 +118,35 @@ class ScreeningState:
     @property
     def unique_buyer_count(self) -> int:
         return len(self.unique_buyers)
+
+    # ── Manufactured-momentum computed features ──────────────────────────────
+
+    @property
+    def buy_size_cv(self) -> float:
+        """Coefficient of variation of buy SOL amounts. Uniform = bot (CV ≈ 0)."""
+        return _cv(self._buy_sizes)
+
+    @property
+    def inter_buy_time_cv(self) -> float:
+        """CV of time gaps between consecutive buys. Machine-gun = bot (CV ≈ 0)."""
+        if len(self._buy_timestamps) < 3:
+            return 0.0
+        gaps = [
+            self._buy_timestamps[i] - self._buy_timestamps[i - 1]
+            for i in range(1, len(self._buy_timestamps))
+            if self._buy_timestamps[i] > self._buy_timestamps[i - 1]
+        ]
+        return _cv(gaps)
+
+    @property
+    def max_buys_per_slot(self) -> int:
+        """Max buys in a single ~400ms Solana slot window."""
+        return max(self._slot_buy_counts.values()) if self._slot_buy_counts else 0
+
+    @property
+    def early_buyer_sell_count(self) -> int:
+        """Count of early buyers (first N) who have since sold."""
+        return len(self._early_buyer_sellers)
 
 
 # ---------------------------------------------------------------------------
@@ -660,24 +713,39 @@ class PumpPortalMonitor:
         tx_type = msg.get("txType", "")
         trader  = msg.get("traderPublicKey", "")
         sol_amt = float(msg.get("solAmount") or 0)
+        now     = time.time()
 
         if tx_type == "buy":
             state.buy_count += 1
             state.sol_in    += sol_amt
             if trader:
                 state.unique_buyers.add(trader)
+            # ── Manufactured-momentum data collection ────────────────────────
+            if sol_amt > 0:
+                state._buy_sizes.append(sol_amt)
+            state._buy_timestamps.append(now)
+            # Slot = 400ms bin; max buys per slot detects coordinated bot bursts
+            slot_id = int(now / 0.4)
+            state._slot_buy_counts[slot_id] = state._slot_buy_counts.get(slot_id, 0) + 1
+            # Track the first _EARLY_BUYER_N unique buyers for flip detection
+            if trader and len(state._early_buyer_set) < _EARLY_BUYER_N:
+                state._early_buyer_set.add(trader)
+
         elif tx_type == "sell":
             state.sell_count += 1
             state.sol_out    += sol_amt
             if trader and trader == state.creator_pubkey:
                 state.creator_sold = True
+            # Check if an early buyer is now selling (early flip = weak hands / bot)
+            if trader and trader in state._early_buyer_set:
+                state._early_buyer_sellers.add(trader)
 
         if price_usd > 0:
             if state.first_seen_price <= 0:
                 state.first_seen_price = price_usd
             state.latest_price = price_usd
 
-        state.lru_ts = time.time()
+        state.lru_ts = now
 
     def _refresh_sol_price(self):
         """Fetch current SOL/USD price via Jupiter quote. Called from _sol_price_thread."""

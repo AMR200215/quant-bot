@@ -116,6 +116,46 @@ def is_known_dev(chain: str, dev_address: str) -> Optional[dict]:
     )
 
 
+def is_serial_rugger(chain: str, dev_address: str) -> bool:
+    """True if this wallet has ≥ 2 confirmed rugs in dev_wallets.json."""
+    entry = is_known_dev(chain, dev_address)
+    if entry is None:
+        return False
+    return int(entry.get("rug_count", 0)) >= 2
+
+
+def register_rugger_dev(chain: str, dev_address: str, token_symbol: str,
+                         pnl_pct: float = 0.0):
+    """
+    Increment the rug_count for a dev wallet.  Creates a minimal entry if
+    the dev is not yet tracked (rug-only devs may have no winning history).
+    Called from portfolio.close_position() on dev_dump or hard_stop_pp exits.
+    """
+    devs  = load_dev_wallets()
+    entry = next(
+        (d for d in devs if d["address"] == dev_address and d["chain"] == chain),
+        None,
+    )
+    if entry is None:
+        entry = {
+            "address":     dev_address,
+            "chain":       chain,
+            "name":        "auto",
+            "wins":        [],
+            "win_count":   0,
+            "avg_pnl_pct": 0.0,
+            "rug_count":   1,
+            "score":       0.0,
+            "added_at":    time.strftime("%Y-%m-%d"),
+        }
+        devs.append(entry)
+    else:
+        entry["rug_count"] = int(entry.get("rug_count", 0)) + 1
+    save_dev_wallets(devs)
+    log.info("Rug registered dev=%s  token=%s  total_rugs=%d",
+             dev_address[:8], token_symbol, entry["rug_count"])
+
+
 # ---------------------------------------------------------------------------
 # Registration — called after every profitable close
 # ---------------------------------------------------------------------------
@@ -153,6 +193,7 @@ def register_winner_dev(chain: str, token_address: str, token_symbol: str,
             "wins":        [win_record],
             "win_count":   1,
             "avg_pnl_pct": round(pnl_pct, 2),
+            "rug_count":   0,
             "score":       0.0,
             "added_at":    time.strftime("%Y-%m-%d"),
         }
