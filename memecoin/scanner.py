@@ -949,14 +949,15 @@ _exit_queue: queue.Queue = queue.Queue()
 def _on_pp_price_tick(mint: str, price_usd: float) -> None:
     """
     Called by PumpPortal monitor on every price update (WS recv thread).
-    Checks hard stop and trailing stop for live positions on this mint.
+    Checks hard stop and trailing stop for ALL positions on this mint —
+    both live and paper. Paper close_position() is safe (no on-chain sell).
+    Applying to paper positions ensures paper PnL reflects realistic exit
+    timing, not the slower 2s poll which can reach -80%+ on fast rugs.
     Pushes (pos_id, reason, price) to _exit_queue — never blocks.
     """
     for pos in portfolio.open_positions():
         if pos.token_address != mint:
             continue
-        if not (pos.notes and "live|tx:" in pos.notes):
-            continue   # paper position — no urgency
         if pos.entry_price <= 0:
             continue
 
@@ -980,13 +981,12 @@ def _on_pp_price_tick(mint: str, price_usd: float) -> None:
 def _on_pp_creator_sell(mint: str, price_usd: float) -> None:
     """
     Called when PumpPortal detects the token deployer selling on a held mint.
-    Triggers immediate exit via sell ladder with exit_reason='dev_dump'.
+    Triggers immediate exit for both live and paper positions (paper is safe —
+    close_position skips the on-chain sell for paper).
     Never blocks — pushes to _exit_queue.
     """
     for pos in portfolio.open_positions():
         if pos.token_address != mint:
-            continue
-        if not (pos.notes and "live|tx:" in pos.notes):
             continue
         _exit_queue.put_nowait((pos.id, "dev_dump", price_usd or pos.current_price))
         log.warning("DEV DUMP exit queued for %s (%s)", pos.token_symbol, pos.id)
