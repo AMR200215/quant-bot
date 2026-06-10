@@ -30,6 +30,7 @@ from memecoin.config import (
     TP_LEVELS, TRADE_SIZE_USD,
     get_signal_settings,
     LIVE_TRADING,
+    DAILY_LOSS_LIMIT,
 )
 from memecoin.data_client import dex_get_token
 from memecoin.candidate_log import promote_to_winners
@@ -410,7 +411,7 @@ class Portfolio:
         if _is_live_signal:
             # ── Circuit breaker 1: daily loss limit ──────────────────────────
             daily_loss = self._live_daily_pnl()
-            if daily_loss <= -15.0:
+            if daily_loss <= DAILY_LOSS_LIMIT:
                 log.warning(
                     "CIRCUIT BREAKER: daily live PnL=$%.2f — skipping live trade for %s",
                     daily_loss, signal.token_symbol,
@@ -510,27 +511,81 @@ class Portfolio:
         )
 
         try:
+            # ── PumpPortal pre-flight: check live price before spending any SOL ────
+            # If the token has already moved >30% above signal price since screening,
+            # block the trade entirely — no SOL spent, no abort-sell needed.
+            try:
+                from memecoin import pumpportal_monitor as _pp_monitor
+                _pp_price = _pp_monitor.monitor.get_prices().get(signal.token_address, 0)
+                _sig_price = paper_pos.signal_price
+                if _pp_price and _sig_price and _pp_price > _sig_price * 1.30:
+                    _pf_slip = (_pp_price / _sig_price - 1) * 100
+                    log.warning(
+                        "LIVE PREFLIGHT BLOCKED %s — PumpPortal price %.10f is %.1f%% "
+                        "above signal price %.10f (>30%% gate)",
+                        live_pos.token_symbol, _pp_price, _pf_slip, _sig_price,
+                    )
+                    try:
+                        from app.alerts import _send
+                        _send(
+                            f"🚫 LIVE PREFLIGHT BLOCKED {live_pos.token_symbol} — "
+                            f"PP price ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
+                            f"${_sig_price:.8f}. No SOL spent."
+                        )
+                    except Exception:
+                        pass
+                    return
+            except Exception as _pf_err:
+                log.debug("PumpPortal pre-flight skipped: %s", _pf_err)
+
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
                             signal_price=paper_pos.signal_price,
-                            max_slippage_pct=0.50)
+                            max_slippage_pct=0.30)
             if result.get("success"):
                 fill_price = result.get("fill_price") or live_pos.entry_price
                 signal_price = live_pos.entry_price
-                # Abort if entry slippage > 40% — we'd need a massive recovery just to
-                # break even, and the hard stop would fire at -60%+ from actual fill.
-                if signal_price > 0 and fill_price > signal_price * 1.40:
+                buy_tx_sig = result.get("tx_sig", "")
+                # Abort if fill slippage > 80% — anything below this is recoverable
+                # (40% fill needs only a 1.4x to break even; 80% needs 1.8x but hard stop
+                # at -35% from fill still gives a defined loss, not a guaranteed wipeout).
+                if signal_price > 0 and fill_price > signal_price * 1.80:
+                    _abort_slip = (fill_price / signal_price - 1) * 100
                     log.warning(
-                        "LIVE BUY ABORTED %s — fill slippage %.1f%% > 40%% limit  "
-                        "fill=%.10f  signal=%.10f",
-                        live_pos.token_symbol, (fill_price / signal_price - 1) * 100,
-                        fill_price, signal_price,
+                        "LIVE BUY ABORTED %s — fill slippage %.1f%% > 80%% limit  "
+                        "fill=%.10f  signal=%.10f  buy_tx=%s",
+                        live_pos.token_symbol, _abort_slip,
+                        fill_price, signal_price, buy_tx_sig,
                     )
+                    sell_tx_sig = ""
                     try:
                         ex2 = MemeExecutor()
-                        ex2.sell(live_pos.token_address, _live_size, fill_price, live_pos.chain)
+                        abort_sell = ex2.sell(live_pos.token_address, _live_size, fill_price, live_pos.chain)
+                        sell_tx_sig = abort_sell.get("tx_sig", "") if abort_sell else ""
                     except Exception as _e:
                         log.error("Abort-sell failed %s: %s", live_pos.token_symbol, _e)
+                    # Write abort row to live journal so the burn is visible and auditable
+                    live_pos.entry_price = fill_price
+                    live_pos.current_price = fill_price
+                    live_pos.peak_price = fill_price
+                    live_pos.exit_price = fill_price  # approximate — immediate sell
+                    live_pos.exit_time = time.time()
+                    live_pos.exit_reason = "abort_tripwire"
+                    live_pos.status = "closed"
+                    live_pos.notes = (
+                        f"live|tx:{buy_tx_sig}|fill:{fill_price:.10f}"
+                        f"|abort_slip:{_abort_slip:.1f}%"
+                        + (f"|sell_tx:{sell_tx_sig}" if sell_tx_sig else "")
+                    )
+                    _append_journal(live_pos)
+                    try:
+                        from app.alerts import _send
+                        _send(
+                            f"⚠️ LIVE ABORT {live_pos.token_symbol} — fill slippage {_abort_slip:.1f}% > 80%% "
+                            f"buy_tx={buy_tx_sig} sell_tx={sell_tx_sig or 'pending'}"
+                        )
+                    except Exception:
+                        pass
                     return
                 # Anchor stops to actual fill price, not signal detection price.
                 # Without this the hard stop fires at -48% from fill even though it
@@ -538,7 +593,7 @@ class Portfolio:
                 live_pos.entry_price   = fill_price
                 live_pos.current_price = fill_price
                 live_pos.peak_price    = fill_price
-                live_pos.notes = f"live|tx:{result.get('tx_sig', '')[:12]}|fill:{fill_price:.10f}"
+                live_pos.notes = f"live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}"
                 log.info("LIVE BUY confirmed %s  tx=%s  fill=%.10f",
                          live_pos.token_symbol, result.get("tx_sig","")[:16], result.get("fill_price",0))
 
@@ -586,7 +641,7 @@ class Portfolio:
                 log.info("Opened LIVE position %s  size=$%.2f  entry=$%.8f",
                          live_pos.id, live_pos.size_usd, live_pos.entry_price)
             elif result.get("unconfirmed"):
-                live_pos.notes = f"unconfirmed|tx:{result.get('tx_sig', '')[:12]}"
+                live_pos.notes = f"unconfirmed|tx:{result.get('tx_sig', '')}"
                 self._positions[live_pos.id] = live_pos
                 _save_positions(self._positions)
                 log.error("LIVE BUY UNCONFIRMED %s — check on-chain: %s",
@@ -620,7 +675,7 @@ class Portfolio:
                 result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
                 if result.get("success"):
                     fill = result.get("fill_price") or pos.exit_price
-                    pos.notes = (pos.notes or "") + f"|sell_tx:{result.get('tx_sig','')[:12]}|sell_fill:{fill:.10f}"
+                    pos.notes = (pos.notes or "") + f"|sell_tx:{result.get('tx_sig','')}|sell_fill:{fill:.10f}"
                     log.info("Live sell confirmed %s  tx=%s  fill=%.10f",
                              pos.token_symbol, result.get("tx_sig","")[:16], fill)
                     try:
@@ -637,7 +692,7 @@ class Portfolio:
                     # Sell failed or unconfirmed — retry up to MAX_SELL_RETRIES
                     pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
                     reason_tag = "sell_unconf" if result.get("unconfirmed") else "sell_failed"
-                    tx_tag = f":{result.get('tx_sig','')[:12]}" if result.get("tx_sig") else ""
+                    tx_tag = f":{result.get('tx_sig','')}" if result.get("tx_sig") else ""
                     pos.notes = (pos.notes or "") + f"|{reason_tag}{tx_tag}(attempt {pos.sell_attempts})"
                     if pos.sell_attempts < MAX_SELL_RETRIES:
                         pos.status = "open"

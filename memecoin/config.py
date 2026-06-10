@@ -46,6 +46,9 @@ CAPITAL_USD = 100   # ← set this to your actual capital
 # ---------------------------------------------------------------------------
 LIVE_TRADING = True
 
+# Daily live loss limit — circuit breaker stops all live trades for the day
+DAILY_LOSS_LIMIT = -5.0   # was -$15; tighter to limit exposure while validating executor
+
 # ---------------------------------------------------------------------------
 # Executor backend
 # "pumpportal" — POST pumpportal.fun/api/trade-local → sign → Helius RPC
