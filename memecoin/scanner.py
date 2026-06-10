@@ -806,10 +806,15 @@ def _near_miss_poller_thread():
 # Portfolio monitor thread
 # ---------------------------------------------------------------------------
 
+_FEED_BLIND_SEC = 20.0   # both feeds silent for this long → market-sell live position
+
+
 def _portfolio_thread():
-    """Update open position prices and check exit conditions every 10s."""
+    """Update open position prices and check exit conditions every 2s."""
     log.info("Portfolio monitor started")
     _subscribed_mints: set[str] = set()
+    # mint → timestamp when we last got a DexScreener price for it
+    _dex_last_seen: dict[str, float] = {}
 
     while True:
         try:
@@ -838,6 +843,20 @@ def _portfolio_thread():
             # Fresh PumpPortal prices override DexScreener for subscribed tokens
             price_overrides = _pp_monitor.get_prices()
 
+            # ── DexScreener staleness tracking ───────────────────────────────
+            # Probe DexScreener for each subscribed pumpfun mint not covered by
+            # a fresh PP price. Update _dex_last_seen when data arrives.
+            from memecoin.data_client import dex_get_token as _dex_get
+            now = time.time()
+            for mint in open_pumpfun:
+                if mint not in price_overrides:
+                    try:
+                        pair = _dex_get("solana", mint)
+                        if pair and float(pair.get("priceUsd") or 0) > 0:
+                            _dex_last_seen[mint] = now
+                    except Exception:
+                        pass
+
             exits = portfolio.update_prices(
                 whale_sells=whale_sells_snapshot,
                 price_overrides=price_overrides,
@@ -846,6 +865,32 @@ def _portfolio_thread():
                 for e in exits:
                     log.info("EXIT %s  reason=%s  pnl=%.1f%%",
                              e["token_symbol"], e["reason"], e["pnl_pct"])
+
+            # ── Blind-exit check: both feeds silent >20s for live positions ──
+            # Fires a market-sell so we don't hold through an unobservable dump.
+            for pos in list(portfolio.open_positions()):
+                if not (pos.notes and "live|tx:" in pos.notes):
+                    continue   # paper-only — no money at risk
+                mint = pos.token_address
+                if mint not in open_pumpfun:
+                    continue   # graduated / BSC — DexScreener covers it, skip
+                pp_age  = _pp_monitor.get_last_seen(mint)
+                dex_age = now - _dex_last_seen.get(mint, 0) if _dex_last_seen.get(mint) else float("inf")
+                if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC:
+                    log.error(
+                        "FEED BLIND — both PP (%.0fs) and DexScreener (%.0fs) silent "
+                        "for live position %s (%s). Triggering market-sell.",
+                        pp_age, dex_age, pos.token_symbol, pos.id,
+                    )
+                    try:
+                        from app.alerts import _send
+                        _send(
+                            f"⚠️ FEED BLIND {pos.token_symbol} — PP silent {pp_age:.0f}s, "
+                            f"DEX silent {dex_age:.0f}s. Executing market-sell to protect capital."
+                        )
+                    except Exception:
+                        pass
+                    portfolio.close_position(pos.id, "feed_blind", pos.current_price)
 
             # Check PumpPortal-screened tokens for paper entry conditions
             try:

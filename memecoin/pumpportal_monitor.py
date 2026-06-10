@@ -167,6 +167,18 @@ class PumpPortalMonitor:
                 if now - ts <= max_age
             }
 
+    def get_last_seen(self, mint: str) -> float:
+        """
+        Seconds since PumpPortal last sent a price tick for this mint.
+        Returns float('inf') if the mint has never been seen.
+        """
+        with self._cache_lock:
+            entry = self._price_cache.get(mint)
+        if entry is None:
+            return float("inf")
+        _, ts = entry
+        return time.time() - ts
+
     def is_active(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
