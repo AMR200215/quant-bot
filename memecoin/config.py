@@ -46,6 +46,14 @@ CAPITAL_USD = 100   # ← set this to your actual capital
 # ---------------------------------------------------------------------------
 LIVE_TRADING = True
 
+# ---------------------------------------------------------------------------
+# Executor backend
+# "pumpportal" — POST pumpportal.fun/api/trade-local → sign → Helius RPC
+#               Purpose-built for pump.fun; no Jito, no routing complexity.
+# "jupiter"    — Jupiter quote + swap API (legacy fallback for A/B testing)
+# ---------------------------------------------------------------------------
+EXECUTOR_BACKEND = "pumpportal"
+
 def _stage(capital: float) -> int:
     if capital < 1_000:  return 1
     if capital < 5_000:  return 2
