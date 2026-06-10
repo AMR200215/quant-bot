@@ -49,6 +49,7 @@ from memecoin.signals import (
 )
 from app import alerts
 from memecoin.pumpportal_monitor import monitor as _pp_monitor
+from memecoin.helius_account_monitor import helius_monitor as _helius_monitor
 
 
 class _NoDexData(Exception):
@@ -844,6 +845,20 @@ def _portfolio_thread():
             # Fresh PumpPortal prices override DexScreener for subscribed tokens
             price_overrides = _pp_monitor.get_prices()
 
+            # ── Helius standby feed management ───────────────────────────────
+            # Activates per-mint only when PP has been silent >5s for a live pos.
+            # Merges Helius prices for mints NOT already covered by fresh PP ticks.
+            # Steady-state: no Helius WS connection (zero credits used).
+            live_positions = [
+                p for p in portfolio.open_positions()
+                if p.notes and "live|tx:" in p.notes
+            ]
+            _helius_monitor.update(live_positions, _pp_monitor)
+            helius_prices = _helius_monitor.get_prices()
+            for mint, price in helius_prices.items():
+                if mint not in price_overrides:
+                    price_overrides[mint] = price
+
             # ── DexScreener staleness tracking ───────────────────────────────
             # Probe DexScreener for mints not covered by a fresh PP price, but
             # throttled to once per 10s per mint to avoid rate-limit false blinds.
@@ -893,6 +908,7 @@ def _portfolio_thread():
                         )
                     except Exception:
                         pass
+                    _pp_monitor.increment_blind_exit_count()
                     portfolio.close_position(pos.id, "feed_blind", pos.current_price)
 
             # Check PumpPortal-screened tokens for paper entry conditions
