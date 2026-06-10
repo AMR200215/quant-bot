@@ -306,42 +306,48 @@ class MemeExecutor:
     def buy(self, token_address: str, size_usd: float, chain: str = "solana",
             signal_price: float = 0.0, max_slippage_pct: float = 0.10) -> dict:
         """
-        Swap SOL → token. Returns dict: {success, fill_price, tx_sig} or
+        Swap SOL → token. Returns dict: {success, fill_price, tx_sig, timing} or
         {success: False, reason, ...} on abort/failure.
-        Pre-flight: if Jupiter quote implies price > signal_price * (1 + max_slippage_pct),
-        abort before paying any Jito tip.
-        """
-        try:
-            sol_price = _sol_price_usd()
-            lamports  = int((size_usd / sol_price) * 10 ** SOL_DECIMALS)
-            quote     = _get_quote(SOL_MINT, token_address, lamports)
 
-            # ── Pre-flight slippage check (free — no tip spent) ──────────────
-            if signal_price > 0:
-                token_decimals = int(quote.get("outputDecimals") or 6)
-                tokens_out     = int(quote["outAmount"]) / (10 ** token_decimals)
-                quote_price    = size_usd / tokens_out if tokens_out > 0 else 0
-                slippage       = (quote_price / signal_price - 1) if signal_price > 0 else 0
+        timing dict keys (all wall-clock seconds from buy() entry):
+          t_quote, t_swap_build, t_submit, t_confirm
+        Also returns jupiter_quote_price — the clean (non-DexScreener) baseline
+        for entry slippage measurement.
+        """
+        _t0 = time.time()
+        try:
+            sol_price  = _sol_price_usd()
+            lamports   = int((size_usd / sol_price) * 10 ** SOL_DECIMALS)
+            quote      = _get_quote(SOL_MINT, token_address, lamports)
+            _t_quoted  = time.time()
+
+            # ── Derive Jupiter quote price (clean baseline, no DexScreener lag) ─
+            token_decimals  = int(quote.get("outputDecimals") or 6)
+            tokens_out_quot = int(quote["outAmount"]) / (10 ** token_decimals)
+            jupiter_quote_price = size_usd / tokens_out_quot if tokens_out_quot > 0 else 0
+
+            # ── Pre-flight slippage check ─────────────────────────────────────
+            if signal_price > 0 and jupiter_quote_price > 0:
+                slippage = (jupiter_quote_price / signal_price - 1)
                 if slippage > max_slippage_pct:
                     log.warning(
                         "BUY skipped — slippage %.1f%% > max %.0f%%  token=%s  "
                         "signal=$%.10f  quote=$%.10f",
                         slippage * 100, max_slippage_pct * 100,
-                        token_address[:8], signal_price, quote_price,
+                        token_address[:8], signal_price, jupiter_quote_price,
                     )
                     return {"success": False, "reason": "slippage",
                             "slippage_pct": round(slippage * 100, 1),
-                            "quote_price": quote_price}
+                            "quote_price": jupiter_quote_price,
+                            "jupiter_quote_price": jupiter_quote_price}
 
-            keypair = _get_keypair()
-            wallet  = str(keypair.pubkey())
-            sig     = _execute_swap(quote, wallet)
+            keypair     = _get_keypair()
+            wallet      = str(keypair.pubkey())
+            sig         = _execute_swap(quote, wallet)
+            _t_submitted = time.time()
             log.info("BUY tx sent  sig=%s  token=%s  size=$%.2f", sig[:12], token_address[:8], size_usd)
 
             if not _confirm_tx(sig):
-                # Confirmation polling failed (timeout or 429). Check actual on-chain
-                # balance — if tokens arrived the swap went through and we must track
-                # the position so exit logic can fire. Losing track = no stop-loss.
                 actual_balance = _token_balance(wallet, token_address)
                 token_decimals = int(quote.get("outputDecimals") or 6)
                 if actual_balance > 0:
@@ -353,15 +359,31 @@ class MemeExecutor:
                         sig[:12], actual_balance, fill_price or 0,
                     )
                     return {"success": True, "fill_price": fill_price, "tx_sig": sig,
-                            "confirm_fallback": True}
+                            "confirm_fallback": True,
+                            "jupiter_quote_price": jupiter_quote_price,
+                            "timing": {"t_quote": _t_quoted - _t0,
+                                       "t_submit": _t_submitted - _t0,
+                                       "t_confirm": time.time() - _t0}}
                 log.warning("BUY tx unconfirmed and zero balance  sig=%s", sig[:12])
-                return {"success": False, "unconfirmed": True, "tx_sig": sig}
+                return {"success": False, "unconfirmed": True, "tx_sig": sig,
+                        "jupiter_quote_price": jupiter_quote_price}
 
+            _t_confirmed   = time.time()
             token_decimals = int(quote.get("outputDecimals") or 6)
             tokens_out     = int(quote["outAmount"]) / (10 ** token_decimals)
             fill_price     = size_usd / tokens_out if tokens_out > 0 else None
             log.info("BUY confirmed  sig=%s  fill=$%.10f", sig[:12], fill_price or 0)
-            return {"success": True, "fill_price": fill_price, "tx_sig": sig}
+            return {
+                "success":             True,
+                "fill_price":          fill_price,
+                "tx_sig":              sig,
+                "jupiter_quote_price": jupiter_quote_price,
+                "timing": {
+                    "t_quote":   round(_t_quoted    - _t0, 3),
+                    "t_submit":  round(_t_submitted - _t0, 3),
+                    "t_confirm": round(_t_confirmed - _t0, 3),
+                },
+            }
 
         except Exception as e:
             log.error("BUY failed  token=%s  err=%s", token_address[:8], e)

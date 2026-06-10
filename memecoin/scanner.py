@@ -557,12 +557,17 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             return
 
         screen["passed"] = True
-        _screen_latency = _time.time() - _t0
+        _t_screen_end = _time.time()
+        _screen_latency = _t_screen_end - _t0
         log.info("TG PASS %s — bs=%.2f vol5m=%.0f vh1=%.0f pc5m=%.0f screen_took=%.1fs",
                  address[:8], bs, v5m, vh1, pc5m, _screen_latency)
 
         channel = "pumpdotfunalert"
         sig = make_social_alert_signal(chain, address, screen, source="telegram", channel=channel)
+        # Attach timing for entry latency instrumentation (Step 2)
+        sig._t_tg_receive  = _t0
+        sig._t_screen_end  = _t_screen_end
+        sig._price_dex     = screen.get("price_usd") or 0  # stale DexScreener baseline
         _add_signal(sig)
     except _NoDexData:
         raise  # propagate to TelegramMonitor for 45s retry

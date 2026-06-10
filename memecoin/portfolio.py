@@ -541,6 +541,40 @@ class Portfolio:
                 live_pos.notes = f"live|tx:{result.get('tx_sig', '')[:12]}|fill:{fill_price:.10f}"
                 log.info("LIVE BUY confirmed %s  tx=%s  fill=%.10f",
                          live_pos.token_symbol, result.get("tx_sig","")[:16], result.get("fill_price",0))
+
+                # ── Entry latency / slippage instrumentation (Step 2) ──────────
+                # Separates DexScreener measurement artifact from real execution cost.
+                # dex_price  = DexScreener at screening time (stale baseline)
+                # jup_price  = Jupiter quote at execution time (clean baseline)
+                # fill_price = actual on-chain fill
+                # artifact   = (jup/dex - 1)  — indexer lag, not real cost
+                # real_slip  = (fill/jup - 1)  — movement during execution window
+                _t_now     = time.time()
+                _dex_price = getattr(signal, "_price_dex", 0) or 0
+                _jup_price = result.get("jupiter_quote_price") or 0
+                _timing    = result.get("timing") or {}
+                _t_receive = getattr(signal, "_t_tg_receive", 0) or 0
+                _t_screen  = getattr(signal, "_t_screen_end", 0) or 0
+                _artifact  = (_jup_price / _dex_price - 1) * 100 if _dex_price and _jup_price else None
+                _real_slip = (fill_price / _jup_price - 1) * 100 if _jup_price and fill_price else None
+                _total     = (_t_now - _t_receive) if _t_receive else None
+                _leg_screen = (_t_screen - _t_receive) if _t_receive and _t_screen else None
+                _leg_exec   = _timing.get("t_confirm")
+                log.warning(
+                    "ENTRY TIMING %s | "
+                    "dex=$%.8f  jup=$%.8f  fill=$%.8f | "
+                    "artifact=%s%%  real_slip=%s%% | "
+                    "screen=%.1fs  quote=%.2fs  submit=%.2fs  confirm=%.2fs  total=%.1fs",
+                    live_pos.token_symbol,
+                    _dex_price, _jup_price or 0, fill_price,
+                    f"{_artifact:.1f}" if _artifact is not None else "?",
+                    f"{_real_slip:.1f}" if _real_slip is not None else "?",
+                    _leg_screen or 0,
+                    _timing.get("t_quote", 0),
+                    _timing.get("t_submit", 0),
+                    _leg_exec or 0,
+                    _total or 0,
+                )
                 try:
                     from app.alerts import alert_live_buy
                     alert_live_buy(live_pos, result.get("tx_sig",""), result.get("sol_spent", _live_size / 70))
