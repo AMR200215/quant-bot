@@ -659,44 +659,59 @@ class Portfolio:
 
     # ---- update prices & evaluate exit conditions ----
 
-    def update_prices(self, whale_sells: dict[str, list[str]] = None) -> list[dict]:
+    def update_prices(self, whale_sells: dict[str, list[str]] = None,
+                      price_overrides: dict[str, float] = None) -> list[dict]:
         """
         Fetch current prices for all open positions, evaluate exit conditions.
 
-        whale_sells: { token_address: [wallet1, wallet2] } — wallets that just sold
+        whale_sells:     { token_address: [wallet1, wallet2] } — wallets that just sold
+        price_overrides: { token_address: price_usd } — real-time prices from PumpPortal.
+                         When present and fresh, these replace DexScreener for that token.
 
         Returns list of exit events: [{"pos_id", "reason", "pnl_pct"}]
         """
         if whale_sells is None:
             whale_sells = {}
+        if price_overrides is None:
+            price_overrides = {}
 
         exits = []
         for pos in list(self._positions.values()):
             if pos.status != "open":
                 continue
 
-            # fetch latest price — fall back to Jupiter quote if DexScreener is down
-            pair = dex_get_token(pos.chain, pos.token_address)
-            if pair:
-                price = float(pair.get("priceUsd") or 0)
-                if price > 0:
-                    pos.current_price = price
-                    pos.peak_price = max(pos.peak_price, price)
-            if (not pair or pos.current_price == 0) and pos.chain == "solana":
-                try:
-                    from memecoin.executor import _get_quote, _sol_price_usd, SOL_MINT, SOL_DECIMALS
-                    _sol = _sol_price_usd()
-                    _q   = _get_quote(SOL_MINT, pos.token_address, int(pos.size_usd / _sol * 10**SOL_DECIMALS))
-                    _decimals = int(_q.get("outputDecimals") or 6)
-                    _tokens   = int(_q["outAmount"]) / (10 ** _decimals)
-                    _price    = pos.size_usd / _tokens if _tokens > 0 else 0
-                    if _price > 0:
-                        pos.current_price = _price
-                        pos.peak_price = max(pos.peak_price, _price)
-                        log.warning("DexScreener unavailable — using Jupiter quote price for %s: $%.10f",
-                                    pos.token_symbol, _price)
-                except Exception:
-                    pass   # both sources failed — price stays stale, time stop will still fire
+            # ── Price source priority ─────────────────────────────────────────
+            # 1. PumpPortal real-time (sub-second, from bonding curve reserves)
+            # 2. DexScreener poll (5-30s lag — fallback heartbeat)
+            # 3. Jupiter quote (last resort when DexScreener is down)
+            pp_price = price_overrides.get(pos.token_address)
+            if pp_price and pp_price > 0:
+                pos.current_price = pp_price
+                pos.peak_price = max(pos.peak_price, pp_price)
+            else:
+                # DexScreener fallback — used when PumpPortal has no fresh data
+                # (graduated tokens, or token not yet subscribed)
+                pair = dex_get_token(pos.chain, pos.token_address)
+                if pair:
+                    price = float(pair.get("priceUsd") or 0)
+                    if price > 0:
+                        pos.current_price = price
+                        pos.peak_price = max(pos.peak_price, price)
+                if (not pair or pos.current_price == 0) and pos.chain == "solana":
+                    try:
+                        from memecoin.executor import _get_quote, _sol_price_usd, SOL_MINT, SOL_DECIMALS
+                        _sol = _sol_price_usd()
+                        _q   = _get_quote(SOL_MINT, pos.token_address, int(pos.size_usd / _sol * 10**SOL_DECIMALS))
+                        _decimals = int(_q.get("outputDecimals") or 6)
+                        _tokens   = int(_q["outAmount"]) / (10 ** _decimals)
+                        _price    = pos.size_usd / _tokens if _tokens > 0 else 0
+                        if _price > 0:
+                            pos.current_price = _price
+                            pos.peak_price = max(pos.peak_price, _price)
+                            log.warning("DexScreener unavailable — using Jupiter quote price for %s: $%.10f",
+                                        pos.token_symbol, _price)
+                    except Exception:
+                        pass   # both sources failed — price stays stale, time stop will still fire
 
             # T+10 buy-velocity snapshot (8–12 min window, logged once per position)
             age_min = (time.time() - pos.entry_time) / 60

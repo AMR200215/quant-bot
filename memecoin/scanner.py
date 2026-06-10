@@ -46,6 +46,7 @@ from memecoin.signals import (
     make_new_launch_signal, make_dev_launch_signal, make_social_alert_signal,
 )
 from app import alerts
+from memecoin.pumpportal_monitor import monitor as _pp_monitor
 
 
 class _NoDexData(Exception):
@@ -622,12 +623,39 @@ def _near_miss_poller_thread():
 def _portfolio_thread():
     """Update open position prices and check exit conditions every 10s."""
     log.info("Portfolio monitor started")
+    _subscribed_mints: set[str] = set()
+
     while True:
         try:
             with _lock:
                 whale_sells_snapshot = dict(_whale_sells)
                 _whale_sells.clear()
-            exits = portfolio.update_prices(whale_sells=whale_sells_snapshot)
+
+            # ── PumpPortal subscription management ───────────────────────────
+            # Diff open pumpfun positions against what we're subscribed to.
+            # Subscribe new; unsubscribe closed. Graduated/BSC tokens skip PP.
+            open_pumpfun = {
+                p.token_address
+                for p in portfolio.open_positions()
+                if p.chain == "solana"
+                and "pump" in (p.dex_id or "").lower()
+            }
+            new_mints   = open_pumpfun - _subscribed_mints
+            stale_mints = _subscribed_mints - open_pumpfun
+            if new_mints:
+                _pp_monitor.subscribe(new_mints)
+                _subscribed_mints |= new_mints
+            if stale_mints:
+                _pp_monitor.unsubscribe(stale_mints)
+                _subscribed_mints -= stale_mints
+
+            # Fresh PumpPortal prices override DexScreener for subscribed tokens
+            price_overrides = _pp_monitor.get_prices()
+
+            exits = portfolio.update_prices(
+                whale_sells=whale_sells_snapshot,
+                price_overrides=price_overrides,
+            )
             if exits:
                 for e in exits:
                     log.info("EXIT %s  reason=%s  pnl=%.1f%%",
@@ -657,6 +685,8 @@ def start(daemon: bool = True):
 
     wallets = load_all_wallets()
     ranks   = build_wallet_ranks(wallets)
+
+    _pp_monitor.start(daemon=daemon)
 
     for target, kwargs in [
         (_wallet_thread,       {"wallets": wallets, "ranks": ranks}),
