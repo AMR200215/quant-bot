@@ -13,6 +13,7 @@ import csv
 import json
 import logging
 import os
+import queue
 import threading
 import time
 from collections import defaultdict, deque
@@ -906,6 +907,90 @@ def _portfolio_thread():
 
 
 # ---------------------------------------------------------------------------
+# Event-driven stop detection (PumpPortal callback → immediate exit)
+# ---------------------------------------------------------------------------
+# Problem: poll-based stops have up to 2s detection lag. On a fast rug that's
+# the difference between exiting at -35% and -60%+. Solution: PP fires a
+# callback on every price tick → we check stops inline → push to exit queue →
+# dedicated thread calls close_position immediately.
+#
+# The callback itself is on the WS recv thread and must not block.
+# The exit thread does the blocking sell. This keeps the WS loop unblocked.
+# ---------------------------------------------------------------------------
+
+_exit_queue: queue.Queue = queue.Queue()
+
+
+def _on_pp_price_tick(mint: str, price_usd: float) -> None:
+    """
+    Called by PumpPortal monitor on every price update (WS recv thread).
+    Checks hard stop and trailing stop for live positions on this mint.
+    Pushes (pos_id, reason, price) to _exit_queue — never blocks.
+    """
+    for pos in portfolio.open_positions():
+        if pos.token_address != mint:
+            continue
+        if not (pos.notes and "live|tx:" in pos.notes):
+            continue   # paper position — no urgency
+        if pos.entry_price <= 0:
+            continue
+
+        gain = (price_usd - pos.entry_price) / pos.entry_price
+
+        # Hard stop
+        if gain <= pos.hard_stop_pct:
+            _exit_queue.put_nowait((pos.id, "hard_stop_pp", price_usd))
+            return
+
+        # Trailing stop — only once past activation threshold
+        if pos.peak_price > 0 and pos.entry_price > 0:
+            peak_gain = (pos.peak_price - pos.entry_price) / pos.entry_price
+            if peak_gain >= pos.trail_activates_pct:
+                trail = (price_usd - pos.peak_price) / pos.peak_price
+                if trail <= pos.trailing_stop_pct:
+                    _exit_queue.put_nowait((pos.id, "trailing_stop_pp", price_usd))
+                    return
+
+
+def _pp_exit_thread() -> None:
+    """
+    Drains _exit_queue and calls close_position immediately.
+    Runs in its own thread so WS recv loop stays unblocked.
+    Deduplicates: once a pos_id is in-flight, skip duplicate events for it.
+    """
+    in_flight: set[str] = set()
+    while True:
+        try:
+            pos_id, reason, price = _exit_queue.get(timeout=1)
+            if pos_id in in_flight:
+                continue
+            pos = portfolio._positions.get(pos_id)
+            if not pos or pos.status != "open":
+                continue
+            in_flight.add(pos_id)
+            log.warning(
+                "PP EVENT-DRIVEN EXIT %s  reason=%s  price=%.10f  entry=%.10f  gain=%.1f%%",
+                pos.token_symbol, reason, price, pos.entry_price,
+                (price / pos.entry_price - 1) * 100,
+            )
+            try:
+                from app.alerts import _send
+                _send(
+                    f"🔴 PP STOP {pos.token_symbol} ({reason}) — "
+                    f"price ${price:.8f}  entry ${pos.entry_price:.8f}  "
+                    f"gain {(price / pos.entry_price - 1) * 100:.1f}%"
+                )
+            except Exception:
+                pass
+            portfolio.close_position(pos_id, reason, price)
+            in_flight.discard(pos_id)
+        except queue.Empty:
+            pass
+        except Exception as e:
+            log.warning("PP exit thread error: %s", e)
+
+
+# ---------------------------------------------------------------------------
 # Public API — start / query
 # ---------------------------------------------------------------------------
 
@@ -927,6 +1012,7 @@ def start(daemon: bool = True):
     ranks   = build_wallet_ranks(wallets)
 
     _pp_monitor.start(daemon=daemon)
+    _pp_monitor.add_price_callback(_on_pp_price_tick)
 
     for target, kwargs in [
         (_wallet_thread,       {"wallets": wallets, "ranks": ranks}),
@@ -934,6 +1020,7 @@ def start(daemon: bool = True):
         (_portfolio_thread,    {}),
         (_pumpfun_thread,      {}),
         (_near_miss_poller_thread, {}),
+        (_pp_exit_thread,      {}),
     ]:
         t = threading.Thread(target=target, kwargs=kwargs, daemon=daemon)
         t.start()

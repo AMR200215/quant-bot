@@ -106,6 +106,12 @@ class PumpPortalMonitor:
         self._screening: OrderedDict[str, ScreeningState] = OrderedDict()
         self._screening_lock         = threading.Lock()
 
+        # ── Price update callbacks (event-driven stop detection) ──────────
+        # Each callback is called with (mint: str, price_usd: float) from the
+        # WS recv thread. Must be non-blocking — long work belongs in a queue.
+        self._price_callbacks: list  = []
+        self._cb_lock                = threading.Lock()
+
         # ── Shared infrastructure ─────────────────────────────────────────
         self._sol_price: float       = 170.0
         self._sol_price_ts: float    = 0.0
@@ -178,6 +184,15 @@ class PumpPortalMonitor:
             return float("inf")
         _, ts = entry
         return time.time() - ts
+
+    def add_price_callback(self, fn) -> None:
+        """
+        Register a callback invoked on every position-monitoring price update.
+        Signature: fn(mint: str, price_usd: float) → None
+        Called from the WS recv thread — must not block. Use a queue for heavy work.
+        """
+        with self._cb_lock:
+            self._price_callbacks.append(fn)
 
     def is_active(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -362,6 +377,14 @@ class PumpPortalMonitor:
             log.debug("PumpPortal price update %s: $%.10f  (vSol=%s vTok=%s)",
                       mint[:8], price_usd,
                       msg.get("vSolInBondingCurve"), msg.get("vTokensInBondingCurve"))
+            # Fire registered callbacks (non-blocking — callers must use queues)
+            with self._cb_lock:
+                cbs = list(self._price_callbacks)
+            for cb in cbs:
+                try:
+                    cb(mint, price_usd)
+                except Exception as _e:
+                    log.debug("price callback error: %s", _e)
 
         # ── Screening accumulator ─────────────────────────────────────────
         # Fetch state reference outside the lock; mutations are only from this
