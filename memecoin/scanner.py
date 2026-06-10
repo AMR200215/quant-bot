@@ -662,7 +662,7 @@ def _portfolio_thread():
                              e["token_symbol"], e["reason"], e["pnl_pct"])
         except Exception as e:
             log.warning("Portfolio monitor error: %s", e)
-        time.sleep(10)
+        time.sleep(2)
 
 
 # ---------------------------------------------------------------------------
