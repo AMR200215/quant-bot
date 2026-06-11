@@ -50,6 +50,25 @@ LIVE_TRADING = True
 DAILY_LOSS_LIMIT = -5.0   # was -$15; tighter to limit exposure while validating executor
 
 # ---------------------------------------------------------------------------
+# Realtime price feed
+#
+# When True:  signal_price baseline = PumpPortal live price captured after
+#             screening (~T+1-2s).  Eliminates DexScreener indexer lag
+#             (~15-30%) from PnL calculation and stop anchor.
+#             Preflight gate tightened to SLIPPAGE_GATE_RT_PCT (20%) since
+#             we're now measuring real movement only, not indexer artifact.
+#
+# When False: signal_price = stale DexScreener price (legacy behaviour).
+#             Preflight gate uses SLIPPAGE_GATE_DEX_PCT (15%).
+#
+# Falls back to DexScreener automatically if PP has no price yet — zero
+# behaviour change on miss.
+# ---------------------------------------------------------------------------
+REALTIME_PRICE_FEED   = True
+SLIPPAGE_GATE_RT_PCT  = 0.20   # 20% gate vs PP signal price (real movement only)
+SLIPPAGE_GATE_DEX_PCT = 0.15   # 15% gate vs DexScreener baseline (legacy / fallback)
+
+# ---------------------------------------------------------------------------
 # Executor backend
 # "pumpportal" — POST pumpportal.fun/api/trade-local → sign → Helius RPC
 #               Purpose-built for pump.fun; no Jito, no routing complexity.

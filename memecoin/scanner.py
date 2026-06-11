@@ -28,6 +28,7 @@ from memecoin.config import (
     MIN_LIQUIDITY_USD, MAX_AGE_MINUTES_NEW,
     MIN_BUY_SELL_RATIO_SOCIAL, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL,
     MAX_VOL_H1_SOCIAL, MAX_PRICE_CHANGE_5M_SOCIAL,
+    REALTIME_PRICE_FEED,
 )
 from memecoin.data_client import (
     dex_get_new_pairs, dex_get_boosted, gmgn_new_sol, gmgn_trending_sol,
@@ -999,6 +1000,26 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         sig._t_tg_receive  = _t0
         sig._t_screen_end  = _t_screen_end
         sig._price_dex     = screen.get("price_usd") or 0  # stale DexScreener baseline
+
+        # Realtime price baseline: PP has been accumulating since T=0 subscribe.
+        # By the time screen passes (~T+1-2s) there are typically 1-3 live ticks.
+        # Falls back to 0 silently if PP has no price yet (DexScreener used instead).
+        _price_pp = 0.0
+        if REALTIME_PRICE_FEED and chain == "solana":
+            try:
+                _price_pp = _pp_monitor.get_prices().get(address, 0.0)
+            except Exception:
+                pass
+        sig._price_pp      = _price_pp
+        sig._price_source  = "pp" if _price_pp > 0 else "dex"
+        log.info(
+            "SIGNAL PRICE %s  dex=$%.8f  pp=$%.8f  source=%s  "
+            "pp_vs_dex=%s%%",
+            address[:8],
+            sig._price_dex, _price_pp, sig._price_source,
+            f"{(_price_pp / sig._price_dex - 1) * 100:.1f}"
+            if sig._price_dex and _price_pp else "n/a",
+        )
 
         # Task 2: resolve creator for fail-closed live gate.
         # Screen took ~1-2s so the parallel fetch is usually already done.

@@ -32,6 +32,8 @@ from memecoin.config import (
     get_signal_settings,
     LIVE_TRADING,
     DAILY_LOSS_LIMIT,
+    REALTIME_PRICE_FEED,
+    SLIPPAGE_GATE_RT_PCT, SLIPPAGE_GATE_DEX_PCT,
 )
 from memecoin.data_client import dex_get_token
 from memecoin.candidate_log import promote_to_winners
@@ -386,6 +388,14 @@ class Portfolio:
 
     def open_position(self, signal) -> Position:
         """Open a paper position from a Signal object."""
+        # Determine the signal price baseline.
+        # REALTIME_PRICE_FEED=True: use PP live price captured after screening —
+        # eliminates DexScreener indexer lag (~15-30%) from stop anchor and PnL.
+        # Falls back to DexScreener price if PP had no tick yet (safe default).
+        _sig_price_pp  = getattr(signal, "_price_pp", 0) or 0
+        _use_pp        = REALTIME_PRICE_FEED and _sig_price_pp > 0
+        _baseline_price = _sig_price_pp if _use_pp else signal.price_usd
+
         pos = Position(
             id=str(uuid.uuid4())[:8],
             signal_id=signal.id,
@@ -397,9 +407,9 @@ class Portfolio:
             whale_count=getattr(signal, "whale_count", 0),
             whale_tiers=list(getattr(signal, "whale_tiers", [])),
             whales_involved=list(getattr(signal, "whales_involved", [])),
-            signal_price=signal.price_usd,   # snapshot at signal fire — never changes
+            signal_price=_baseline_price,   # PP live price (or DexScreener fallback) — stop anchor
             signal_time=time.time(),
-            entry_price=signal.price_usd,
+            entry_price=_baseline_price,
             entry_time=time.time(),
             size_usd=getattr(signal, "_tier1_size", None)
                      or get_signal_settings(signal.signal_type)["trade_size_usd"],
@@ -407,8 +417,8 @@ class Portfolio:
             trailing_stop_pct=get_signal_settings(signal.signal_type)["trailing_stop_pct"],
             trail_activates_pct=get_signal_settings(signal.signal_type)["trail_activates_pct"],
             time_stop_minutes=get_signal_settings(signal.signal_type)["time_stop_minutes"],
-            current_price=signal.price_usd,
-            peak_price=signal.price_usd,
+            current_price=_baseline_price,
+            peak_price=_baseline_price,
             # enriched model features
             price_change_5m=getattr(signal, "price_change_5m", 0.0),
             price_change_1h=getattr(signal, "price_change_1h", 0.0),
@@ -678,31 +688,46 @@ class Portfolio:
                         pass
                     _pf_blocked = True
 
-                elif _sig_price and _pp_price > _sig_price * 1.15:
-                    _pf_slip = (_pp_price / _sig_price - 1) * 100
-                    log.warning(
-                        "LIVE PREFLIGHT BLOCKED %s — PP %.10f is %.1f%% above signal "
-                        "%.10f (>15%% gate)",
-                        live_pos.token_symbol, _pp_price, _pf_slip, _sig_price,
-                    )
-                    try:
-                        from app.alerts import _send
-                        _send(
-                            f"🚫 PREFLIGHT BLOCKED {live_pos.token_symbol} — "
-                            f"PP ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
-                            f"${_sig_price:.8f}. No SOL spent."
+                else:
+                    # Drift gate: how much has price moved since signal?
+                    # When REALTIME_PRICE_FEED is True and signal_price is a PP
+                    # price, we compare PP-to-PP (real movement only — no indexer
+                    # lag artifact).  Gate is tighter (20%) because we're measuring
+                    # genuine movement, not the DexScreener delay.
+                    # When signal_price is a DexScreener price (fallback), use the
+                    # legacy 15% gate which must accommodate the indexer lag.
+                    _price_source = getattr(signal, "_price_source", "dex")
+                    _gate = (SLIPPAGE_GATE_RT_PCT
+                             if REALTIME_PRICE_FEED and _price_source == "pp"
+                             else SLIPPAGE_GATE_DEX_PCT)
+
+                    if _sig_price and _pp_price > _sig_price * (1 + _gate):
+                        _pf_slip = (_pp_price / _sig_price - 1) * 100
+                        log.warning(
+                            "LIVE PREFLIGHT BLOCKED %s — PP %.10f is %.1f%% above signal "
+                            "%.10f (>%.0f%% %s gate)",
+                            live_pos.token_symbol, _pp_price, _pf_slip, _sig_price,
+                            _gate * 100, _price_source,
                         )
-                    except Exception:
-                        pass
-                    try:
-                        from memecoin.gate_logger import log_gate_block as _lgb
-                        _lgb("preflight_price", live_pos.chain, live_pos.token_address,
-                             live_pos.token_symbol, pp_price=_pp_price,
-                             signal_price=_sig_price or 0,
-                             size_usd=_live_size)
-                    except Exception:
-                        pass
-                    _pf_blocked = True
+                        try:
+                            from app.alerts import _send
+                            _send(
+                                f"🚫 PREFLIGHT BLOCKED {live_pos.token_symbol} — "
+                                f"PP ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
+                                f"${_sig_price:.8f} (>{_gate*100:.0f}% {_price_source} gate). "
+                                f"No SOL spent."
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            from memecoin.gate_logger import log_gate_block as _lgb
+                            _lgb("preflight_price", live_pos.chain, live_pos.token_address,
+                                 live_pos.token_symbol, pp_price=_pp_price,
+                                 signal_price=_sig_price or 0,
+                                 size_usd=_live_size)
+                        except Exception:
+                            pass
+                        _pf_blocked = True
 
             except Exception as _pf_err:
                 log.warning(
@@ -824,8 +849,8 @@ class Portfolio:
                 live_pos.peak_price    = fill_price
                 live_pos.notes = f"live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}"
                 # ── Paper twin: mirror live fill price for honest P&L comparison ──
-                # Paper used DexScreener price (stale) at signal time.  Rebase it to
-                # actual fill so paper and live stops trigger at the same token price.
+                # Rebase paper entry to actual fill so paper and live stops
+                # trigger at the same token price regardless of price source.
                 paper_pos.entry_price   = fill_price
                 paper_pos.current_price = fill_price
                 paper_pos.peak_price    = fill_price
@@ -833,31 +858,36 @@ class Portfolio:
                          live_pos.token_symbol, result.get("tx_sig","")[:16], result.get("fill_price",0))
 
                 # ── Entry latency / slippage instrumentation (Step 2) ──────────
-                # Separates DexScreener measurement artifact from real execution cost.
-                # dex_price  = DexScreener at screening time (stale baseline)
-                # jup_price  = Jupiter quote at execution time (clean baseline)
-                # fill_price = actual on-chain fill
-                # artifact   = (jup/dex - 1)  — indexer lag, not real cost
-                # real_slip  = (fill/jup - 1)  — movement during execution window
-                _t_now     = time.time()
-                _dex_price = getattr(signal, "_price_dex", 0) or 0
-                _jup_price = result.get("jupiter_quote_price") or 0
-                _timing    = result.get("timing") or {}
-                _t_receive = getattr(signal, "_t_tg_receive", 0) or 0
-                _t_screen  = getattr(signal, "_t_screen_end", 0) or 0
-                _artifact  = (_jup_price / _dex_price - 1) * 100 if _dex_price and _jup_price else None
-                _real_slip = (fill_price / _jup_price - 1) * 100 if _jup_price and fill_price else None
-                _total     = (_t_now - _t_receive) if _t_receive else None
+                # dex_price   = DexScreener at screening time (stale — indexer lag)
+                # pp_sig      = PumpPortal at decision time (live — no lag)
+                # jup_price   = Jupiter quote at execution time
+                # fill_price  = actual on-chain fill
+                # artifact    = (pp_sig/dex - 1) — DexScreener indexer lag %
+                # screen_slip = (jup/pp_sig - 1) — movement during screen window
+                # real_slip   = (fill/jup - 1)   — movement during execution window
+                _t_now      = time.time()
+                _dex_price  = getattr(signal, "_price_dex", 0) or 0
+                _pp_sig     = getattr(signal, "_price_pp", 0) or 0
+                _price_src  = getattr(signal, "_price_source", "dex")
+                _jup_price  = result.get("jupiter_quote_price") or 0
+                _timing     = result.get("timing") or {}
+                _t_receive  = getattr(signal, "_t_tg_receive", 0) or 0
+                _t_screen   = getattr(signal, "_t_screen_end", 0) or 0
+                _artifact   = (_pp_sig / _dex_price - 1) * 100 if _dex_price and _pp_sig else None
+                _screen_slip = (_jup_price / _pp_sig - 1) * 100 if _pp_sig and _jup_price else None
+                _real_slip  = (fill_price / _jup_price - 1) * 100 if _jup_price and fill_price else None
+                _total      = (_t_now - _t_receive) if _t_receive else None
                 _leg_screen = (_t_screen - _t_receive) if _t_receive and _t_screen else None
                 _leg_exec   = _timing.get("t_confirm")
                 log.warning(
-                    "ENTRY TIMING %s | "
-                    "dex=$%.8f  jup=$%.8f  fill=$%.8f | "
-                    "artifact=%s%%  real_slip=%s%% | "
+                    "ENTRY TIMING %s | src=%s | "
+                    "dex=$%.8f  pp_sig=$%.8f  jup=$%.8f  fill=$%.8f | "
+                    "artifact=%s%%  screen_slip=%s%%  real_slip=%s%% | "
                     "screen=%.1fs  quote=%.2fs  submit=%.2fs  confirm=%.2fs  total=%.1fs",
-                    live_pos.token_symbol,
-                    _dex_price, _jup_price or 0, fill_price,
+                    live_pos.token_symbol, _price_src,
+                    _dex_price, _pp_sig or 0, _jup_price or 0, fill_price,
                     f"{_artifact:.1f}" if _artifact is not None else "?",
+                    f"{_screen_slip:.1f}" if _screen_slip is not None else "?",
                     f"{_real_slip:.1f}" if _real_slip is not None else "?",
                     _leg_screen or 0,
                     _timing.get("t_quote", 0),
