@@ -1042,8 +1042,15 @@ def _on_pp_price_tick(mint: str, price_usd: float) -> None:
 
         gain = (price_usd - pos.entry_price) / pos.entry_price
 
-        # Hard stop
-        if gain <= pos.hard_stop_pct:
+        # Hard stop — signal-anchored when fill > signal price.
+        # If fill slipped above signal, anchor stop level to signal structure so
+        # a normal post-signal dip (e.g. -18% from signal = -35% from fill) doesn't
+        # stop us out prematurely.  For paper positions entry_price == signal_price
+        # so the fallback is identical to the old fill-anchored behaviour.
+        _stop_level = pos.entry_price * (1 + pos.hard_stop_pct)
+        if pos.signal_price > 0 and pos.entry_price > pos.signal_price:
+            _stop_level = pos.signal_price * (1 + pos.hard_stop_pct)
+        if price_usd <= _stop_level:
             _exit_queue.put_nowait((pos.id, "hard_stop_pp", price_usd))
             return
 

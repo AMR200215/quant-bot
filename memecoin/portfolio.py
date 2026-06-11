@@ -470,6 +470,20 @@ class Portfolio:
 
         # Live execution gate — only fire for social_alert pumpfun signals
         # ── Paper position (always opened, independent of live) ──────────────
+        # For pump social_alert: use live PP price as entry rather than stale
+        # DexScreener snapshot.  If PP monitor has no price yet keep the signal
+        # price — the paper twin will be rebased to fill price once live buys.
+        if signal.signal_type == "social_alert" and "pump" in getattr(signal, "dex_id", "").lower():
+            try:
+                from memecoin import pumpportal_monitor as _ppm_entry
+                _ppm_price = _ppm_entry.monitor.get_prices().get(signal.token_address, 0)
+                if _ppm_price > 0:
+                    pos.entry_price   = _ppm_price
+                    pos.current_price = _ppm_price
+                    pos.peak_price    = _ppm_price
+            except Exception:
+                pass
+
         self._positions[pos.id] = pos
         _save_positions(self._positions)
         log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s",
@@ -489,6 +503,16 @@ class Portfolio:
                 _why.append(f"dex={getattr(signal, 'dex_id', 'n/a')}")
             if _why:
                 log.info("LIVE GATE BLOCKED %s — paper only: %s", signal.token_symbol, ", ".join(_why))
+        if _is_live_signal:
+            # ── Type-2 cohort auto-gate ──────────────────────────────────────
+            # After 50 live social_alert trades: if net PnL < 0, close live gate.
+            _cohort = self.live_cohort_stats().get("social_alert", {})
+            if _cohort.get("trade_count", 0) >= 50 and _cohort.get("net_pnl_usd", 0.0) < 0:
+                log.warning(
+                    "TYPE-2 LIVE GATE CLOSED — %d trades net=$%.2f — paper only",
+                    _cohort["trade_count"], _cohort["net_pnl_usd"],
+                )
+                _is_live_signal = False
         if _is_live_signal:
             # ── Circuit breaker 1: daily loss limit ──────────────────────────
             daily_loss = self._live_daily_pnl()
@@ -522,6 +546,27 @@ class Portfolio:
         except Exception:
             pass
         return total
+
+    def live_cohort_stats(self) -> dict:
+        """
+        Per-signal_type live trade stats from live_journal.csv.
+        Returns {signal_type: {trade_count, gross_pnl_pct, net_pnl_usd}}.
+        Used by the type-2 auto-gate and for reporting.
+        """
+        import csv as _csv
+        stats: dict = {}
+        try:
+            with open(LIVE_JOURNAL_FILE) as f:
+                for row in _csv.DictReader(f):
+                    st = row.get("signal_type") or "unknown"
+                    if st not in stats:
+                        stats[st] = {"trade_count": 0, "gross_pnl_pct": 0.0, "net_pnl_usd": 0.0}
+                    stats[st]["trade_count"]   += 1
+                    stats[st]["gross_pnl_pct"] += float(row.get("pnl_pct", 0) or 0)
+                    stats[st]["net_pnl_usd"]   += float(row.get("pnl_usd", 0) or 0)
+        except Exception:
+            pass
+        return stats
 
     def _count_open_live(self) -> int:
         """Count active live positions. Excludes sell_pending (stuck retries)."""
@@ -633,11 +678,11 @@ class Portfolio:
                         pass
                     _pf_blocked = True
 
-                elif _sig_price and _pp_price > _sig_price * 1.30:
+                elif _sig_price and _pp_price > _sig_price * 1.15:
                     _pf_slip = (_pp_price / _sig_price - 1) * 100
                     log.warning(
                         "LIVE PREFLIGHT BLOCKED %s — PP %.10f is %.1f%% above signal "
-                        "%.10f (>30%% gate)",
+                        "%.10f (>15%% gate)",
                         live_pos.token_symbol, _pp_price, _pf_slip, _sig_price,
                     )
                     try:
@@ -681,6 +726,30 @@ class Portfolio:
                 except Exception:
                     pass
                 return
+
+            # ── Size normalisation: equalise $ at risk regardless of fill slip ──
+            # stop_level is signal-anchored (same formula as the stop check above).
+            # stop_dist_from_fill = (pp_price - stop_level) / pp_price
+            # size_mult = base_stop_pct / stop_dist  →  floors at 0.5×, caps at 1.0×
+            # Example: signal=1.00, pp=1.25, hard_stop=-0.35
+            #   stop_level = 0.65; stop_dist = (1.25-0.65)/1.25 = 0.48
+            #   size_mult = 0.35/0.48 = 0.73  →  73% of base size
+            _base_stop_pct = abs(paper_pos.hard_stop_pct)
+            if _sig_price and _pp_price > 0:
+                _sa_stop_level = _sig_price * (1 + paper_pos.hard_stop_pct)
+                if _pp_price > _sa_stop_level > 0:
+                    _stop_dist_fill = (_pp_price - _sa_stop_level) / _pp_price
+                    if _stop_dist_fill > 0:
+                        _size_mult = _base_stop_pct / _stop_dist_fill
+                        _size_mult = max(0.5, min(1.0, _size_mult))
+                        _orig_size = _live_size
+                        _live_size = round(_live_size * _size_mult, 2)
+                        log.info(
+                            "SIZE NORM %s: pp=%.8f stop=%.8f dist=%.1f%% "
+                            "mult=%.2f  size $%.2f→$%.2f",
+                            live_pos.token_symbol, _pp_price, _sa_stop_level,
+                            _stop_dist_fill * 100, _size_mult, _orig_size, _live_size,
+                        )
 
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
@@ -738,6 +807,12 @@ class Portfolio:
                 live_pos.current_price = fill_price
                 live_pos.peak_price    = fill_price
                 live_pos.notes = f"live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}"
+                # ── Paper twin: mirror live fill price for honest P&L comparison ──
+                # Paper used DexScreener price (stale) at signal time.  Rebase it to
+                # actual fill so paper and live stops trigger at the same token price.
+                paper_pos.entry_price   = fill_price
+                paper_pos.current_price = fill_price
+                paper_pos.peak_price    = fill_price
                 log.info("LIVE BUY confirmed %s  tx=%s  fill=%.10f",
                          live_pos.token_symbol, result.get("tx_sig","")[:16], result.get("fill_price",0))
 
@@ -1155,9 +1230,13 @@ class Portfolio:
                     (time.time() - stall["stall_since"]) >= _pl_sec):
                 reason = "profit_lock"
 
-            # 1. Hard stop
-            if not reason and gain <= pos.hard_stop_pct:
-                reason = "hard_stop"
+            # 1. Hard stop — signal-anchored when fill > signal price
+            if not reason:
+                _stop_lvl = pos.entry_price * (1 + pos.hard_stop_pct)
+                if pos.signal_price > 0 and pos.entry_price > pos.signal_price:
+                    _stop_lvl = pos.signal_price * (1 + pos.hard_stop_pct)
+                if pos.current_price <= _stop_lvl:
+                    reason = "hard_stop"
 
             # 2. Trailing stop
             elif not reason and pos.peak_price > 0 and gain >= pos.trail_activates_pct:
