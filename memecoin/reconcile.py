@@ -32,17 +32,25 @@ DISCREPANCY_THRESHOLD_USD = 0.50
 
 
 def _get_sol_balance() -> float:
-    """Return current SOL balance of the bot wallet in SOL."""
+    """Return current SOL balance of the bot wallet in SOL.
+
+    Requires WALLET_PUBKEY env var (base58 public key string).
+    In paper-trading mode this env var is typically not set — function
+    returns 0.0 silently and reconciliation is skipped.
+    """
+    import os
+    import requests as _req
+    pubkey_str = os.getenv("WALLET_PUBKEY", "").strip()
+    if not pubkey_str:
+        # Paper-trading mode: no real wallet to check — expected, not an error.
+        return 0.0
     try:
-        from memecoin.executor import _get_keypair
-        from solders.rpc.api import Client           # type: ignore
-        from solders.pubkey import Pubkey            # type: ignore
-        kp   = _get_keypair()
-        pubkey = kp.pubkey()
-        # Use public mainnet RPC (Helius may be rate-limited)
-        client = Client("https://api.mainnet-beta.solana.com")
-        resp   = client.get_balance(pubkey)
-        lamports = resp.value
+        resp = _req.post(
+            "https://api.mainnet-beta.solana.com",
+            json={"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [pubkey_str]},
+            timeout=10,
+        )
+        lamports = resp.json()["result"]["value"]
         return lamports / 1e9
     except Exception as e:
         log.warning("reconcile: get_sol_balance failed: %s", e)
@@ -112,8 +120,8 @@ def reconcile(force: bool = False) -> dict:
         sol_bal   = _get_sol_balance()
         sol_price = _get_sol_price()
         if sol_bal == 0:
-            log.warning("reconcile: could not read SOL balance — skipping baseline setup")
-            return {"ok": True, "message": "baseline skipped (balance unavailable)"}
+            log.info("reconcile: WALLET_PUBKEY not set or balance unavailable — skipping (paper mode)")
+            return {"ok": True, "message": "baseline skipped (paper mode / WALLET_PUBKEY not set)"}
         _save_state({
             "last_ts": now,
             "last_sol_bal": sol_bal,
