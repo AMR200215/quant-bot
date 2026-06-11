@@ -49,6 +49,12 @@ LIVE_TRADING = True
 # Daily live loss limit — circuit breaker stops all live trades for the day
 DAILY_LOSS_LIMIT = -5.0   # was -$15; tighter to limit exposure while validating executor
 
+# Shadow-live mode: full live path traversal, tx built but NOT sent.
+# Every gate decision logged with DRY_RUN prefix.
+# Run for 24h, then read logs to get the funnel report.
+# Set to False only when going truly live.
+LIVE_DRY_RUN = True
+
 # ---------------------------------------------------------------------------
 # Realtime price feed
 #
