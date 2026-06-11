@@ -61,8 +61,11 @@ _RECONNECT_DELAY_BASE = 0.5
 _RECONNECT_DELAY_MAX  = 5     # ≤ 5s as required
 
 # Heartbeat: ping every N seconds; force-reconnect if no frame in ping+grace
+# Grace is 50s (not 10s) because subscribe-on-signal subscribes up to 30 screening
+# tokens that may have no trade activity for long stretches — frame gaps of 40-50s
+# are normal and should not trigger a reconnect.  Total silence threshold = 70s.
 HEARTBEAT_INTERVAL_SEC = 20
-HEARTBEAT_GRACE_SEC    = 10   # close socket if silent for interval + grace = 30s
+HEARTBEAT_GRACE_SEC    = 50
 
 
 # ---------------------------------------------------------------------------
