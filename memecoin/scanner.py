@@ -52,6 +52,7 @@ from memecoin.signals import (
 from app import alerts
 from memecoin.pumpportal_monitor import monitor as _pp_monitor
 from memecoin.helius_account_monitor import helius_monitor as _helius_monitor
+import memecoin.health_monitor as _health
 
 
 class _NoDexData(Exception):
@@ -299,6 +300,7 @@ def _fire_screening_entry(chain: str, mint: str, state):
     # (requires signal_type=="social_alert") does not trigger.
     # These signals are paper-only for the 7-day evaluation window.
     sig.signal_type = "pumpportal_screen"
+    sig.token_cohort = "pumpfun_stream"   # type-1 cohort for live gate (Item 1)
     sig.notes += (f" | screen: buyers={state.unique_buyer_count}"
                   f" net_sol={state.net_sol_inflow:.3f}")
     # Task 2: carry creator from ScreeningState so dev_dump is wired from day 1
@@ -824,6 +826,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     """Called by TelegramMonitor when a token address is found in a channel message."""
     import time as _time
     _t0 = _time.time()
+    _health.bump_tg_message()
 
     # ── Subscribe-on-signal (preflight_no_price reduction) ──────────────────
     # Fire PP subscribeTokenTrade immediately — before screen_token() runs.
@@ -1012,6 +1015,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                 pass
         sig._price_pp      = _price_pp
         sig._price_source  = "pp" if _price_pp > 0 else "dex"
+        sig.token_cohort   = "telegram_pump"   # type-2 cohort for live gate (Item 1)
         log.info(
             "SIGNAL PRICE %s  dex=$%.8f  pp=$%.8f  source=%s  "
             "pp_vs_dex=%s%%",
@@ -1035,6 +1039,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             else:
                 log.warning("TG creator UNRESOLVED %s after %.1fs — live entry will be blocked",
                             address[:8], _time.time() - _t0)
+        _health.bump_live_eligible()
         _add_signal(sig)
     except _NoDexData:
         raise  # propagate to TelegramMonitor for 45s retry
@@ -1433,6 +1438,8 @@ def start(daemon: bool = True):
 
     wallets = load_all_wallets()
     ranks   = build_wallet_ranks(wallets)
+
+    _health.start()
 
     _pp_monitor.start(daemon=daemon)
     _pp_monitor.add_price_callback(_on_pp_price_tick)

@@ -32,6 +32,7 @@ from memecoin.config import (
     get_signal_settings,
     LIVE_TRADING,
     DAILY_LOSS_LIMIT,
+    LIVE_DRY_RUN,
     REALTIME_PRICE_FEED,
     SLIPPAGE_GATE_RT_PCT, SLIPPAGE_GATE_DEX_PCT,
 )
@@ -454,12 +455,13 @@ class Portfolio:
         if pos.dex_id.lower() == "pumpswap":
             pos.hard_stop_pct = -0.40
 
-        # Live execution gate — only fire for social_alert pumpfun signals
+        # Live execution gate — fire for pumpfun_stream + telegram_pump cohorts
         # ── Paper position (always opened, independent of live) ──────────────
-        # For pump social_alert: use live PP price as entry rather than stale
+        # For pump cohort signals: use live PP price as entry rather than stale
         # DexScreener snapshot.  If PP monitor has no price yet keep the signal
         # price — the paper twin will be rebased to fill price once live buys.
-        if signal.signal_type == "social_alert" and "pump" in getattr(signal, "dex_id", "").lower():
+        _token_cohort = getattr(signal, "token_cohort", "")
+        if _token_cohort in ("pumpfun_stream", "telegram_pump"):
             try:
                 from memecoin import pumpportal_monitor as _ppm_entry
                 _ppm_price = _ppm_entry.monitor.get_prices().get(signal.token_address, 0)
@@ -475,28 +477,28 @@ class Portfolio:
         log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s",
                  pos.id, pos.chain, pos.token_symbol, pos.entry_price, pos.dex_id)
 
-        # ── Live position (parallel, independent — social_alert+pump only) ──
+        # ── Live position (parallel, independent — pumpfun_stream + telegram_pump) ──
         _is_live_signal = (
             LIVE_TRADING
-            and signal.signal_type == "social_alert"
-            and "pump" in getattr(signal, "dex_id", "").lower()
+            and _token_cohort in ("pumpfun_stream", "telegram_pump")
         )
         if not _is_live_signal and LIVE_TRADING:
             _why = []
-            if signal.signal_type != "social_alert":
-                _why.append(f"type={signal.signal_type}")
-            if "pump" not in getattr(signal, "dex_id", "").lower():
-                _why.append(f"dex={getattr(signal, 'dex_id', 'n/a')}")
+            if not _token_cohort:
+                _why.append(f"type={signal.signal_type} no_cohort")
+            elif _token_cohort not in ("pumpfun_stream", "telegram_pump"):
+                _why.append(f"cohort={_token_cohort}")
             if _why:
                 log.info("LIVE GATE BLOCKED %s — paper only: %s", signal.token_symbol, ", ".join(_why))
         if _is_live_signal:
-            # ── Type-2 cohort auto-gate ──────────────────────────────────────
-            # After 50 live social_alert trades: if net PnL < 0, close live gate.
-            _cohort = self.live_cohort_stats().get("social_alert", {})
-            if _cohort.get("trade_count", 0) >= 50 and _cohort.get("net_pnl_usd", 0.0) < 0:
+            # ── Cohort auto-gate ─────────────────────────────────────────────
+            # After 50 live trades for this cohort: if net PnL < 0, close gate.
+            _cohort_key  = _token_cohort or signal.signal_type
+            _cohort_data = self.live_cohort_stats().get(_cohort_key, {})
+            if _cohort_data.get("trade_count", 0) >= 50 and _cohort_data.get("net_pnl_usd", 0.0) < 0:
                 log.warning(
-                    "TYPE-2 LIVE GATE CLOSED — %d trades net=$%.2f — paper only",
-                    _cohort["trade_count"], _cohort["net_pnl_usd"],
+                    "COHORT LIVE GATE CLOSED [%s] — %d trades net=$%.2f — paper only",
+                    _cohort_key, _cohort_data["trade_count"], _cohort_data["net_pnl_usd"],
                 )
                 _is_live_signal = False
         if _is_live_signal:
@@ -569,6 +571,78 @@ class Portfolio:
         except Exception:
             pass
         return stats
+
+    def screening_confirmation_rate(
+        self,
+        hours: float = 24.0,
+        signal_type: str = "social_alert",
+    ) -> dict:
+        """
+        Report the fraction of type-1/type-2 signals that turn into open positions.
+
+        Reads the live journal (confirmed trades) and compares against the
+        signal candidates log (every signal that was screened).  Returns a dict:
+
+          {
+            "window_hours":   24.0,
+            "signal_type":    "social_alert",
+            "screened":       N,   # signals that passed screening
+            "confirmed":      M,   # live positions opened (from journal)
+            "rate_pct":       R,   # M / N * 100
+            "target_per_day": T,   # extrapolated confirms/day
+          }
+
+        A rate of 0% means nothing is reaching the executor.
+        A typical healthy rate is 5-20% (most signals blocked by gates).
+        """
+        import csv as _csv
+        from datetime import datetime as _dt, timezone as _tz
+
+        cutoff = time.time() - hours * 3600
+
+        # Count screened candidates from signal_candidates.csv
+        screened = 0
+        try:
+            from memecoin.config import CANDIDATES_FILE
+            with open(CANDIDATES_FILE) as f:
+                for row in _csv.DictReader(f):
+                    ts_str = row.get("timestamp", "") or row.get("signal_time", "")
+                    try:
+                        ts = _dt.fromisoformat(ts_str).timestamp()
+                    except Exception:
+                        continue
+                    if ts >= cutoff and row.get("signal_type", "") == signal_type:
+                        screened += 1
+        except FileNotFoundError:
+            pass
+
+        # Count confirmed live positions from live_journal.csv
+        confirmed = 0
+        try:
+            with open(LIVE_JOURNAL_FILE) as f:
+                for row in _csv.DictReader(f):
+                    ts_str = row.get("entry_time", "")
+                    try:
+                        ts = _dt.fromisoformat(ts_str).timestamp()
+                    except Exception:
+                        continue
+                    if ts >= cutoff and row.get("signal_type", "") == signal_type:
+                        confirmed += 1
+        except FileNotFoundError:
+            pass
+
+        rate_pct     = (confirmed / screened * 100) if screened > 0 else 0.0
+        day_scale    = 24.0 / hours if hours > 0 else 1.0
+        target_per_day = round(confirmed * day_scale, 1)
+
+        return {
+            "window_hours":   hours,
+            "signal_type":    signal_type,
+            "screened":       screened,
+            "confirmed":      confirmed,
+            "rate_pct":       round(rate_pct, 1),
+            "target_per_day": target_per_day,
+        }
 
     def _count_open_live(self) -> int:
         """Count active live positions. Excludes sell_pending (stuck retries)."""
@@ -664,7 +738,17 @@ class Portfolio:
                         break
                     time.sleep(0.1)
 
+                try:
+                    from memecoin.health_monitor import bump_preflight_attempt as _bpa
+                    _bpa()
+                except Exception:
+                    pass
                 if _pp_price == 0:
+                    try:
+                        from memecoin.health_monitor import bump_preflight_no_price as _bpnp
+                        _bpnp()
+                    except Exception:
+                        pass
                     log.warning(
                         "LIVE PREFLIGHT NO PRICE %s — PP returned no price in 2s, "
                         "blocking trade (fail-closed)",
@@ -739,13 +823,24 @@ class Portfolio:
             if _pf_blocked:
                 return
 
-            # ── Creator fail-closed gate (type-2 / telegram social_alert) ─────
-            # Type-1 (pumpportal_screen) carry creator from ScreeningState.
-            # Type-2 (social_alert from Telegram) must have a resolved creator
-            # before we spend SOL — ensures dev_dump detection is wired from
-            # the first tick rather than catching up via a background fetch.
+            # ── Creator fail-closed gate (type-2 / telegram_pump cohort) ──────
+            # Type-1 (pumpfun_stream) carry creator from ScreeningState.
+            # Type-2 (telegram_pump) must have a resolved creator before we
+            # spend SOL — ensures dev_dump detection is wired from the first
+            # tick rather than catching up via a background fetch.
             _sig_creator = getattr(signal, "creator_wallet", "")
-            if signal.signal_type == "social_alert" and not _sig_creator:
+            _live_cohort = getattr(signal, "token_cohort", "")
+            try:
+                from memecoin.health_monitor import bump_creator_attempt as _bca
+                _bca()
+            except Exception:
+                pass
+            if _live_cohort == "telegram_pump" and not _sig_creator:
+                try:
+                    from memecoin.health_monitor import bump_creator_fail as _bcf
+                    _bcf()
+                except Exception:
+                    pass
                 log.warning(
                     "LIVE GATE BLOCKED %s — creator unresolved (fail-closed, type-2)",
                     live_pos.token_symbol,
@@ -847,15 +942,18 @@ class Portfolio:
                 live_pos.entry_price   = fill_price
                 live_pos.current_price = fill_price
                 live_pos.peak_price    = fill_price
-                live_pos.notes = f"live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}"
+                _dry_tag = "DRY_RUN|" if result.get("dry_run") else ""
+                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}"
                 # ── Paper twin: mirror live fill price for honest P&L comparison ──
                 # Rebase paper entry to actual fill so paper and live stops
                 # trigger at the same token price regardless of price source.
                 paper_pos.entry_price   = fill_price
                 paper_pos.current_price = fill_price
                 paper_pos.peak_price    = fill_price
-                log.info("LIVE BUY confirmed %s  tx=%s  fill=%.10f",
-                         live_pos.token_symbol, result.get("tx_sig","")[:16], result.get("fill_price",0))
+                _dry_pfx = "DRY_RUN " if result.get("dry_run") else ""
+                log.warning("%sLIVE BUY confirmed %s  tx=%s  fill=%.10f",
+                            _dry_pfx, live_pos.token_symbol,
+                            result.get("tx_sig","")[:16], result.get("fill_price",0))
 
                 # ── Entry latency / slippage instrumentation (Step 2) ──────────
                 # dex_price   = DexScreener at screening time (stale — indexer lag)

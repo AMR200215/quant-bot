@@ -85,6 +85,18 @@ except ImportError:
     _BACKEND = "pumpportal"
 EXECUTOR_BACKEND = _BACKEND
 
+try:
+    from memecoin.config import LIVE_DRY_RUN as _LIVE_DRY_RUN
+except ImportError:
+    _LIVE_DRY_RUN = False
+LIVE_DRY_RUN = _LIVE_DRY_RUN
+
+# Pre-buy reserve constants (lamports).
+# Trade lamports + all three reserves must fit within the wallet's free balance.
+_RENT_RESERVE      = 2_039_280   # token-account rent exemption
+_FEE_RESERVE       = 100_000    # tx priority-fee budget
+_PRESIGNED_RESERVE = 50_000     # headroom for presigned emergency exit
+
 
 # ---------------------------------------------------------------------------
 # Lazy imports
@@ -370,6 +382,44 @@ class MemeExecutor:
             sol_amount = size_usd / sol_price          # SOL to spend (float)
             lamports   = int(sol_amount * 10 ** SOL_DECIMALS)
 
+            # ── Pre-buy free-SOL check ─────────────────────────────────────────
+            # Block if wallet doesn't have enough free SOL for trade + reserves.
+            # Alert at < 0.06 SOL free regardless of trade (low-balance warning).
+            _free_sol_lam = _sol_balance(wallet)
+            _required_lam = lamports + _RENT_RESERVE + _FEE_RESERVE + _PRESIGNED_RESERVE
+            if _free_sol_lam < _required_lam:
+                _free_sol_val    = _free_sol_lam / 1e9
+                _required_sol    = _required_lam / 1e9
+                log.warning(
+                    "BUY blocked — insufficient_free_sol  free=%.6f SOL  "
+                    "needed=%.6f SOL  token=%s",
+                    _free_sol_val, _required_sol, token_address[:8],
+                )
+                try:
+                    from app.alerts import _send as _alert_send
+                    _alert_send(
+                        f"⚠️ LOW SOL BALANCE — {_free_sol_val:.4f} SOL free, "
+                        f"need {_required_sol:.4f} SOL for {token_address[:8]}. "
+                        f"Refill wallet."
+                    )
+                except Exception:
+                    pass
+                return {
+                    "success":      False,
+                    "reason":       "insufficient_free_sol",
+                    "free_sol":     round(_free_sol_val, 6),
+                    "needed_sol":   round(_required_sol, 6),
+                }
+            elif _free_sol_lam < 60_000_000:   # < 0.06 SOL — alert even if trade fits
+                try:
+                    from app.alerts import _send as _alert_send
+                    _alert_send(
+                        f"⚠️ LOW SOL WARNING — wallet only {_free_sol_lam/1e9:.4f} SOL free. "
+                        f"Consider topping up."
+                    )
+                except Exception:
+                    pass
+
             # ── Pre-flight slippage check (Jupiter quote) ─────────────────────
             # Even on the PumpPortal path we take a Jupiter quote as a clean
             # price baseline to guard against extreme signal staleness.
@@ -399,6 +449,30 @@ class MemeExecutor:
                         "slippage_pct":        round(slippage * 100, 1),
                         "jupiter_quote_price": jupiter_quote_price,
                     }
+
+            # ── Shadow-live / dry-run mode ────────────────────────────────────
+            # LIVE_DRY_RUN = True → full live path traversal (pre-flight + quote)
+            # but tx is NOT sent.  Returns synthetic fill at Jupiter quote price.
+            # Every gate decision was already logged above with real values.
+            if LIVE_DRY_RUN:
+                _dry_fill = jupiter_quote_price if jupiter_quote_price > 0 else (signal_price or 0)
+                log.warning(
+                    "DRY_RUN BUY (not sent) — token=%s  size=$%.2f  "
+                    "jup_quote=$%.10f  backend=%s",
+                    token_address[:8], size_usd, jupiter_quote_price, EXECUTOR_BACKEND,
+                )
+                return {
+                    "success":             True,
+                    "fill_price":          _dry_fill,
+                    "tx_sig":              f"DRY_RUN_{int(time.time())}",
+                    "dry_run":             True,
+                    "jupiter_quote_price": jupiter_quote_price,
+                    "timing": {
+                        "t_quote":   round(_t_quoted    - _t0, 3),
+                        "t_submit":  0,
+                        "t_confirm": 0,
+                    },
+                }
 
             # ── Snapshot balance before swap ──────────────────────────────────
             bal_before = _token_balance(wallet, token_address)
@@ -524,6 +598,21 @@ class MemeExecutor:
             keypair = _get_keypair()
             wallet  = str(keypair.pubkey())
 
+            # ── Shadow-live / dry-run mode ────────────────────────────────────
+            if LIVE_DRY_RUN:
+                log.warning(
+                    "DRY_RUN SELL (not sent) — token=%s  entry_price=$%.10f",
+                    token_address[:8], entry_price,
+                )
+                return {
+                    "success":     True,
+                    "fill_price":  entry_price,
+                    "tx_sig":      f"DRY_RUN_{int(time.time())}",
+                    "dry_run":     True,
+                    "all_sigs":    [],
+                    "ladder_step": 0,
+                }
+
             balance = _token_balance(wallet, token_address)
             if balance == 0:
                 log.warning("SELL skipped — zero balance  token=%s", token_address[:8])
@@ -632,3 +721,55 @@ class MemeExecutor:
         except Exception as e:
             log.error("SELL failed  token=%s  err=%s", token_address[:8], e)
             return {"success": False, "error": str(e)}
+
+
+def test_jupiter_dry_run(token_address: str, size_usd: float = 1.0) -> dict:
+    """
+    Item 6: Verify the Jupiter fallback executor end-to-end in dry-run.
+
+    Gets a Jupiter quote for token_address, builds the swap transaction,
+    and returns the result WITHOUT sending anything.  Confirms that:
+      - Jupiter quote API is reachable
+      - Jito tip accounts list is accessible (jitoTipLamports = JITO_TIP_LAMPORTS)
+      - Swap tx builds without error
+
+    Returns:
+      {"success": True,  "quote_price": float, "jito_tip_lamports": int, "tx_size_bytes": int}
+      {"success": False, "reason": str, "error": str}
+
+    Usage:
+        from memecoin.executor import test_jupiter_dry_run
+        print(test_jupiter_dry_run("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 1.0))
+    """
+    try:
+        sol_price  = _sol_price_usd()
+        sol_amount = size_usd / sol_price
+        lamports   = int(sol_amount * 1e9)
+
+        quote = _jup_get_quote(SOL_MINT, token_address, lamports)
+        token_decimals = int(quote.get("outputDecimals") or 6)
+        tokens_out     = int(quote["outAmount"]) / (10 ** token_decimals)
+        quote_price    = size_usd / tokens_out if tokens_out > 0 else 0
+
+        # Try building the swap tx (requires a wallet pubkey — use a dummy if no key)
+        wallet_pubkey = ""
+        try:
+            keypair, _, _ = _load_solders()
+            kp = _get_keypair()
+            wallet_pubkey = str(kp.pubkey())
+        except Exception:
+            wallet_pubkey = "11111111111111111111111111111111"   # system program (dummy)
+
+        tx_bytes = _jup_build_swap_tx(quote, wallet_pubkey)
+
+        return {
+            "success":            True,
+            "quote_price":        quote_price,
+            "tokens_out":         tokens_out,
+            "jito_tip_lamports":  JITO_TIP_LAMPORTS,
+            "jito_accounts":      len(_JITO_TIP_ACCOUNTS),
+            "tx_size_bytes":      len(tx_bytes),
+            "backend":            EXECUTOR_BACKEND,
+        }
+    except Exception as e:
+        return {"success": False, "reason": "jupiter_dry_run_failed", "error": str(e)}
