@@ -521,12 +521,28 @@ class Portfolio:
                     "CIRCUIT BREAKER: daily live PnL=$%.2f — skipping live trade for %s",
                     daily_loss, signal.token_symbol,
                 )
+                try:
+                    from memecoin.gate_logger import log_gate_block as _lgb
+                    _lgb("breaker", signal.chain, signal.token_address,
+                         signal.token_symbol, pp_price=0.0,
+                         signal_price=signal.price_usd or 0,
+                         size_usd=get_signal_settings(signal.signal_type).get("live_trade_size_usd", pos.size_usd))
+                except Exception:
+                    pass
             # ── Circuit breaker 2: max concurrent live positions ─────────────
             elif self._count_open_live() >= 2:
                 log.warning(
                     "CIRCUIT BREAKER: %d live positions already open — skipping %s",
                     self._count_open_live(), signal.token_symbol,
                 )
+                try:
+                    from memecoin.gate_logger import log_gate_block as _lgb
+                    _lgb("breaker", signal.chain, signal.token_address,
+                         signal.token_symbol, pp_price=0.0,
+                         signal_price=signal.price_usd or 0,
+                         size_usd=get_signal_settings(signal.signal_type).get("live_trade_size_usd", pos.size_usd))
+                except Exception:
+                    pass
             else:
                 self._open_live_position(signal, pos)
 
@@ -676,6 +692,14 @@ class Portfolio:
                         )
                     except Exception:
                         pass
+                    try:
+                        from memecoin.gate_logger import log_gate_block as _lgb
+                        _lgb("preflight_no_price", live_pos.chain, live_pos.token_address,
+                             live_pos.token_symbol, pp_price=0.0,
+                             signal_price=_sig_price or 0,
+                             size_usd=_live_size)
+                    except Exception:
+                        pass
                     _pf_blocked = True
 
                 elif _sig_price and _pp_price > _sig_price * 1.15:
@@ -692,6 +716,14 @@ class Portfolio:
                             f"PP ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
                             f"${_sig_price:.8f}. No SOL spent."
                         )
+                    except Exception:
+                        pass
+                    try:
+                        from memecoin.gate_logger import log_gate_block as _lgb
+                        _lgb("preflight_price", live_pos.chain, live_pos.token_address,
+                             live_pos.token_symbol, pp_price=_pp_price,
+                             signal_price=_sig_price or 0,
+                             size_usd=_live_size)
                     except Exception:
                         pass
                     _pf_blocked = True
@@ -723,6 +755,14 @@ class Portfolio:
                         f"🚫 CREATOR GATE {live_pos.token_symbol} — "
                         f"creator unresolved after 3s. Trade blocked."
                     )
+                except Exception:
+                    pass
+                try:
+                    from memecoin.gate_logger import log_gate_block as _lgb
+                    _lgb("creator", live_pos.chain, live_pos.token_address,
+                         live_pos.token_symbol, pp_price=_pp_price,
+                         signal_price=_sig_price or 0,
+                         size_usd=_live_size)
                 except Exception:
                     pass
                 return

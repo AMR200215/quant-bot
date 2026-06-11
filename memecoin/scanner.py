@@ -726,7 +726,19 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     import time as _time
     _t0 = _time.time()
 
-    # Task 2: start creator fetch immediately, in parallel with screening.
+    # ── Subscribe-on-signal (preflight_no_price reduction) ──────────────────
+    # Fire PP subscribeTokenTrade immediately — before screen_token() runs.
+    # Screening takes ~1-2s, so by the time preflight polls get_prices() there
+    # should already be 1-2s of live ticks cached.  Dramatically cuts the rate
+    # of preflight_no_price blocks (target: <3% of live-eligible signals).
+    # The slot is evicted on rejection; kept alive on pass.
+    if chain == "solana":
+        try:
+            _pp_monitor.subscribe_screening(address)
+        except Exception as _sub_err:
+            log.debug("Early PP subscribe failed %s: %s", address[:8], _sub_err)
+
+    # Start creator fetch immediately, in parallel with screening.
     # The screen typically takes 1-2s, so the fetch (0.3-1s) is usually done by then.
     # For the DexScreener success path: fail-closed if creator not resolved.
     # For the no_dex_data path: update screening state when fetch completes.
@@ -782,6 +794,12 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             raise _NoDexData(address)
         if any(r in reason for r in ("rugcheck_fail", "honeypot", "rug_detector")):
             log.info("TG REJECT %s — rug/safety: %s", address[:8], reason)
+            # Free the screening slot — rug tokens are never traded
+            if chain == "solana":
+                try:
+                    _pp_monitor.evict_screening({address})
+                except Exception:
+                    pass
             return
 
         # Social alert entry filters (data-derived from v5+v6, 192 trades)
@@ -790,17 +808,26 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         vh1  = screen.get("volume_h1") or 0
         pc5m = screen.get("price_change_5m") or 0
 
+        def _reject_filter(msg: str) -> None:
+            log.info("TG REJECT %s — %s", address[:8], msg)
+            # Free the screening slot — filter-rejected tokens won't trade
+            if chain == "solana":
+                try:
+                    _pp_monitor.evict_screening({address})
+                except Exception:
+                    pass
+
         if bs < MIN_BUY_SELL_RATIO_SOCIAL:
-            log.info("TG REJECT %s — bs=%.2f < %.2f (buy pressure too low)", address[:8], bs, MIN_BUY_SELL_RATIO_SOCIAL)
+            _reject_filter(f"bs={bs:.2f} < {MIN_BUY_SELL_RATIO_SOCIAL:.2f} (buy pressure too low)")
             return
         if not (MIN_VOL_5M_SOCIAL <= v5m < MAX_VOL_5M_SOCIAL):
-            log.info("TG REJECT %s — vol_5m=%.0f not in $%d-$%d", address[:8], v5m, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL)
+            _reject_filter(f"vol_5m={v5m:.0f} not in ${MIN_VOL_5M_SOCIAL}-${MAX_VOL_5M_SOCIAL}")
             return
         if vh1 >= MAX_VOL_H1_SOCIAL:
-            log.info("TG REJECT %s — vol_h1=%.0f >= $%d (already pumped)", address[:8], vh1, MAX_VOL_H1_SOCIAL)
+            _reject_filter(f"vol_h1={vh1:.0f} >= ${MAX_VOL_H1_SOCIAL} (already pumped)")
             return
         if 0 < pc5m >= MAX_PRICE_CHANGE_5M_SOCIAL:
-            log.info("TG REJECT %s — pc5m=%.0f >= %d%% (blow-off top)", address[:8], pc5m, MAX_PRICE_CHANGE_5M_SOCIAL)
+            _reject_filter(f"pc5m={pc5m:.0f} >= {MAX_PRICE_CHANGE_5M_SOCIAL}% (blow-off top)")
             return
 
         screen["passed"] = True
@@ -841,13 +868,17 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
 # Near-miss outcome poller thread
 # ---------------------------------------------------------------------------
 
+_GATE_REPORT_INTERVAL = 7 * 24 * 3600   # weekly
+_gate_report_last_ts: float = 0.0
+
+
 def _near_miss_poller_thread():
     """
     Check near-miss tokens (5m=15-19%) at 1h and 6h post-rejection.
-    Runs every 15 minutes. Fetches current DexScreener price at each interval
-    and records the % change from rejection price → determines if we missed
-    a profitable trade or if the filter was correct.
+    Also runs gate-block follow-up polls and emits the weekly gate report.
+    Runs every 15 minutes.
     """
+    global _gate_report_last_ts
     log.info("Near-miss poller started")
     while True:
         try:
@@ -879,6 +910,28 @@ def _near_miss_poller_thread():
                 time.sleep(0.3)  # be polite to DexScreener
         except Exception as e:
             log.debug("Near-miss poller error: %s", e)
+
+        # ── Gate-block T+1h follow-up polls ──────────────────────────────
+        try:
+            from memecoin.gate_logger import run_followup_polls as _gfp
+            _gfp()
+        except Exception as _ge:
+            log.debug("Gate followup poll error: %s", _ge)
+
+        # ── Weekly gate counterfactual report ─────────────────────────────
+        if time.time() - _gate_report_last_ts >= _GATE_REPORT_INTERVAL:
+            try:
+                from memecoin.gate_logger import generate_gate_report as _ggr
+                report = _ggr(days=7)
+                log.info("WEEKLY GATE REPORT\n%s", report)
+                try:
+                    from app.alerts import _send
+                    _send(f"📊 Weekly gate report:\n{report}")
+                except Exception:
+                    pass
+                _gate_report_last_ts = time.time()
+            except Exception as _rpe:
+                log.debug("Gate report error: %s", _rpe)
 
         time.sleep(900)  # run every 15 min
 
