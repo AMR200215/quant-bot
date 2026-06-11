@@ -68,10 +68,22 @@ JOURNAL_FIELDS = [
     "notes",
     # session tag — blank = legacy (pre-2026-05-05), otherwise "v2_YYYY-MM-DD"
     "config_tag",
+    # accounting v2 fields (added 2026-06-11)
+    "tp_levels_hit",         # comma-joined list of TP keys hit before close, e.g. "tp_100,tp_300"
+    "realized_partial_usd",  # USD locked in from partial TP sells (before final close)
+    "remaining_fraction",    # fraction of original position closed at exit_price
+    "accounting_epoch",      # which accounting logic produced this row
 ]
 
 # Stamp applied to every trade written from this session onward
 CONFIG_TAG = "v7_entry_filters_2026-06-06"
+
+# Accounting epoch — bump when position accounting logic changes so we can
+# split reports cleanly.  Past rows are backfilled by tools/v7_journal_corrected.py.
+# e1_baseline             : pre-2026-06-11 01:20 UTC (no PP exits, simple pnl)
+# e2_pp_exits             : commit 81de8da — PP real-time exits wired to paper
+# e3_pp_entries_anchored_stops: commit 9a2a332 — signal-anchored stops + this accounting fix
+ACCOUNTING_EPOCH = "e3_pp_entries_anchored_stops"
 
 
 @dataclass
@@ -106,6 +118,7 @@ class Position:
     # partial TP tracking
     tp_levels_hit: list = field(default_factory=list)
     remaining_fraction: float = 1.0  # 1.0 = full position still open
+    realized_pnl_usd: float = 0.0   # locked-in USD from partial TP sells
     notes: str = ""
     sell_attempts: int = 0    # retry counter — if > MAX_SELL_RETRIES give up
     # --- model training features (captured at entry) ---
@@ -150,7 +163,9 @@ class Position:
 
     @property
     def pnl_usd(self) -> float:
-        return self.pnl_pct * self.size_usd
+        # realized_pnl_usd: locked-in profit from partial TP sells
+        # remaining portion: pnl_pct on whatever fraction is still open/being closed
+        return self.realized_pnl_usd + self.pnl_pct * self.size_usd * self.remaining_fraction
 
 
 # ---------------------------------------------------------------------------
@@ -197,65 +212,76 @@ def _ensure_journal_header():
     log.info("Journal header migrated (%d rows preserved)", len(rows))
 
 
+def _build_journal_row(pos: Position) -> dict:
+    """Build the canonical journal dict for a closed position."""
+    return {
+        "id": pos.id,
+        "signal_id": pos.signal_id,
+        "chain": pos.chain,
+        "token_address": pos.token_address,
+        "token_symbol": pos.token_symbol,
+        "signal_type": pos.signal_type,
+        "strength": pos.strength,
+        "signal_price": pos.signal_price,
+        "signal_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.signal_time)) if pos.signal_time else "",
+        "entry_price": pos.entry_price,
+        "entry_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
+        "size_usd": pos.size_usd,
+        "exit_price": pos.exit_price,
+        "exit_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.exit_time)) if pos.exit_time else "",
+        "exit_reason": pos.exit_reason,
+        "pnl_usd": round(pos.pnl_usd, 4),
+        "pnl_pct": round(pos.pnl_pct * 100, 2),
+        "peak_price": pos.peak_price,
+        "whale_count": pos.whale_count,
+        "whale_tiers": ",".join(str(t) for t in pos.whale_tiers),
+        "safety_score": pos.safety_score,
+        "momentum_score": pos.momentum_score,
+        "composite_score": pos.composite_score,
+        "price_change_5m": pos.price_change_5m,
+        "price_change_1h": pos.price_change_1h,
+        "price_change_6h": pos.price_change_6h,
+        "buys_5m": pos.buys_5m,
+        "sells_5m": pos.sells_5m,
+        "buys_h1": pos.buys_h1,
+        "sells_h1": pos.sells_h1,
+        "buy_sell_ratio_5m": pos.buy_sell_ratio_5m,
+        "buy_sell_ratio_h1": pos.buy_sell_ratio_h1,
+        "volume_5m": pos.volume_5m,
+        "volume_h1": pos.volume_h1,
+        "volume_h6": pos.volume_h6,
+        "liquidity_usd": pos.liquidity_usd,
+        "mcap_usd": pos.mcap_usd,
+        "fdv": pos.fdv,
+        "age_minutes": round(pos.age_minutes, 1),
+        "dex_id": pos.dex_id,
+        "dexscreener_url": pos.dexscreener_url,
+        "has_twitter": pos.has_twitter,
+        "has_telegram": pos.has_telegram,
+        "has_website": pos.has_website,
+        "rugcheck_score": pos.rugcheck_score,
+        "buy_tax": pos.buy_tax,
+        "sell_tax": pos.sell_tax,
+        "notes": pos.notes,
+        "config_tag": CONFIG_TAG,
+        # accounting v2
+        "tp_levels_hit": ",".join(pos.tp_levels_hit),
+        "realized_partial_usd": round(pos.realized_pnl_usd, 4),
+        "remaining_fraction": round(pos.remaining_fraction, 4),
+        "accounting_epoch": ACCOUNTING_EPOCH,
+    }
+
+
 def _append_journal(pos: Position):
     JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
     _ensure_journal_header()
+    row = _build_journal_row(pos)
     write_header = not JOURNAL_FILE.exists() or JOURNAL_FILE.stat().st_size == 0
     with open(JOURNAL_FILE, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
         if write_header:
             writer.writeheader()
-        writer.writerow({
-            "id": pos.id,
-            "signal_id": pos.signal_id,
-            "chain": pos.chain,
-            "token_address": pos.token_address,
-            "token_symbol": pos.token_symbol,
-            "signal_type": pos.signal_type,
-            "strength": pos.strength,
-            "signal_price": pos.signal_price,
-            "signal_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.signal_time)) if pos.signal_time else "",
-            "entry_price": pos.entry_price,
-            "entry_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
-            "size_usd": pos.size_usd,
-            "exit_price": pos.exit_price,
-            "exit_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.exit_time)) if pos.exit_time else "",
-            "exit_reason": pos.exit_reason,
-            "pnl_usd": round(pos.pnl_usd, 4),
-            "pnl_pct": round(pos.pnl_pct * 100, 2),
-            "peak_price": pos.peak_price,
-            "whale_count": pos.whale_count,
-            "whale_tiers": ",".join(str(t) for t in pos.whale_tiers),
-            "safety_score": pos.safety_score,
-            "momentum_score": pos.momentum_score,
-            "composite_score": pos.composite_score,
-            "price_change_5m": pos.price_change_5m,
-            "price_change_1h": pos.price_change_1h,
-            "price_change_6h": pos.price_change_6h,
-            "buys_5m": pos.buys_5m,
-            "sells_5m": pos.sells_5m,
-            "buys_h1": pos.buys_h1,
-            "sells_h1": pos.sells_h1,
-            "buy_sell_ratio_5m": pos.buy_sell_ratio_5m,
-            "buy_sell_ratio_h1": pos.buy_sell_ratio_h1,
-            "volume_5m": pos.volume_5m,
-            "volume_h1": pos.volume_h1,
-            "volume_h6": pos.volume_h6,
-            "liquidity_usd": pos.liquidity_usd,
-            "mcap_usd": pos.mcap_usd,
-            "fdv": pos.fdv,
-            "age_minutes": round(pos.age_minutes, 1),
-            "dex_id": pos.dex_id,
-            "dexscreener_url": pos.dexscreener_url,
-            "has_twitter": pos.has_twitter,
-            "has_telegram": pos.has_telegram,
-            "has_website": pos.has_website,
-            "rugcheck_score": pos.rugcheck_score,
-            "buy_tax": pos.buy_tax,
-            "sell_tax": pos.sell_tax,
-            "notes": pos.notes,
-            "config_tag": CONFIG_TAG,
-        })
+        writer.writerow(row)
 
     # If this was a live trade, also write to the live journal
     if pos.notes and "live|tx:" in pos.notes:
@@ -264,57 +290,7 @@ def _append_journal(pos: Position):
             writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
             if write_header:
                 writer.writeheader()
-            writer.writerow({
-                "id": pos.id,
-                "signal_id": pos.signal_id,
-                "chain": pos.chain,
-                "token_address": pos.token_address,
-                "token_symbol": pos.token_symbol,
-                "signal_type": pos.signal_type,
-                "strength": pos.strength,
-                "signal_price": pos.signal_price,
-                "signal_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.signal_time)) if pos.signal_time else "",
-                "entry_price": pos.entry_price,
-                "entry_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.entry_time)),
-                "size_usd": pos.size_usd,
-                "exit_price": pos.exit_price,
-                "exit_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.exit_time)) if pos.exit_time else "",
-                "exit_reason": pos.exit_reason,
-                "pnl_usd": round(pos.pnl_usd, 4),
-                "pnl_pct": round(pos.pnl_pct * 100, 2),
-                "peak_price": pos.peak_price,
-                "whale_count": pos.whale_count,
-                "whale_tiers": ",".join(str(t) for t in pos.whale_tiers),
-                "safety_score": pos.safety_score,
-                "momentum_score": pos.momentum_score,
-                "composite_score": pos.composite_score,
-                "price_change_5m": pos.price_change_5m,
-                "price_change_1h": pos.price_change_1h,
-                "price_change_6h": pos.price_change_6h,
-                "buys_5m": pos.buys_5m,
-                "sells_5m": pos.sells_5m,
-                "buys_h1": pos.buys_h1,
-                "sells_h1": pos.sells_h1,
-                "buy_sell_ratio_5m": pos.buy_sell_ratio_5m,
-                "buy_sell_ratio_h1": pos.buy_sell_ratio_h1,
-                "volume_5m": pos.volume_5m,
-                "volume_h1": pos.volume_h1,
-                "volume_h6": pos.volume_h6,
-                "liquidity_usd": pos.liquidity_usd,
-                "mcap_usd": pos.mcap_usd,
-                "fdv": pos.fdv,
-                "age_minutes": round(pos.age_minutes, 1),
-                "dex_id": pos.dex_id,
-                "dexscreener_url": pos.dexscreener_url,
-                "has_twitter": pos.has_twitter,
-                "has_telegram": pos.has_telegram,
-                "has_website": pos.has_website,
-                "rugcheck_score": pos.rugcheck_score,
-                "buy_tax": pos.buy_tax,
-                "sell_tax": pos.sell_tax,
-                "notes": pos.notes,
-                "config_tag": CONFIG_TAG,
-            })
+            writer.writerow(row)
 
 
 # ---------------------------------------------------------------------------
@@ -1320,10 +1296,12 @@ class Portfolio:
                         sell_frac = tp_fraction * pos.remaining_fraction
                         pos.remaining_fraction -= sell_frac
                         partial_usd = sell_frac * pos.size_usd
+                        # Lock in the profit on the sold fraction at this exact TP level
+                        pos.realized_pnl_usd += sell_frac * pos.size_usd * tp_pct
                         log.info(
-                            "TP hit %s  %s +%.0f%%  sold %.0f%% ($%.2f)",
+                            "TP hit %s  %s +%.0f%%  sold %.0f%% ($%.2f)  realized=$%.2f",
                             pos.id, pos.token_symbol, gain * 100,
-                            tp_fraction * 100, partial_usd,
+                            tp_fraction * 100, partial_usd, pos.realized_pnl_usd,
                         )
                         try:
                             alerts.alert_tp_hit(pos, tp_pct, partial_usd)

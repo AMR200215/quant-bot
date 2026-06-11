@@ -1262,6 +1262,13 @@ def start(daemon: bool = True):
         t = threading.Thread(target=target, kwargs=kwargs, daemon=daemon)
         t.start()
 
+    # Daily wallet vs journal reconciliation (SOL balance delta vs live PnL delta)
+    try:
+        from memecoin.reconcile import start_background as _start_reconcile
+        _start_reconcile()
+    except Exception as _rec_err:
+        log.warning("Could not start wallet reconcile thread: %s", _rec_err)
+
     # Telegram monitor — start if credentials are configured
     tg_api_id   = os.getenv("TELEGRAM_API_ID")
     tg_api_hash = os.getenv("TELEGRAM_API_HASH")
