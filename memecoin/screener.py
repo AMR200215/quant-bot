@@ -19,11 +19,24 @@ from memecoin.rug_detector import run_rug_checks, RugReport
 log = logging.getLogger(__name__)
 
 
-def screen_token(chain: str, token_address: str) -> dict:
+def screen_token(
+    chain: str,
+    token_address: str,
+    *,
+    pair: Optional[dict] = None,
+    safety: Optional[dict] = None,
+) -> dict:
     """
     Run full safety screening on a token.
     Returns a rich dict capturing everything from DexScreener + safety APIs
     that will later feed the model.
+
+    pair:   pre-fetched DexScreener pair dict (from parallel prefetch).
+            When provided the internal dex_get_token() call is skipped.
+            Pass None to fetch internally (default / fallback behavior).
+    safety: pre-fetched rugcheck/honeypot dict.
+            When provided the internal rugcheck_sol()/honeypot_bsc() call is skipped.
+            Pass None to fetch internally (default / fallback behavior).
     """
     result = {
         # meta
@@ -75,7 +88,9 @@ def screen_token(chain: str, token_address: str) -> dict:
     }
 
     # ---- DexScreener pair data ----
-    pair = dex_get_token(chain, token_address)
+    # Use prefetched result when available; fall back to synchronous fetch.
+    if pair is None:
+        pair = dex_get_token(chain, token_address)
     if not pair:
         result["reason"] = "no_dex_data"
         return result
@@ -152,8 +167,10 @@ def screen_token(chain: str, token_address: str) -> dict:
         return result
 
     # ---- Chain-specific safety ----
+    # Use prefetched result when available; fall back to synchronous fetch.
     if chain == "solana":
-        safety = rugcheck_sol(token_address)
+        if safety is None:
+            safety = rugcheck_sol(token_address)
         result["safety"] = safety
         if safety is not None:
             result["rugcheck_score"]  = safety.get("score")
@@ -165,7 +182,8 @@ def screen_token(chain: str, token_address: str) -> dict:
                 return result
 
     elif chain == "bsc":
-        safety = honeypot_bsc(token_address)
+        if safety is None:
+            safety = honeypot_bsc(token_address)
         result["safety"] = safety
         if safety is not None:
             result["is_honeypot"] = safety.get("is_honeypot")

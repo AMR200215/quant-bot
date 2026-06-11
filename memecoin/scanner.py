@@ -9,6 +9,7 @@ All discovered signals are stored in a shared signal queue and written
 to data/memecoin_signals.json so the web UI can read them.
 """
 
+import concurrent.futures
 import csv
 import json
 import logging
@@ -30,7 +31,7 @@ from memecoin.config import (
 )
 from memecoin.data_client import (
     dex_get_new_pairs, dex_get_boosted, gmgn_new_sol, gmgn_trending_sol,
-    dex_get_token,
+    dex_get_token, rugcheck_sol, honeypot_bsc,
 )
 from memecoin.screener import screen_token
 from memecoin.wallet_tracker import (
@@ -78,6 +79,103 @@ _seen: dict[str, float] = {}   # f"{chain}:{address}:{type}" → timestamp
 # per-token-per-day blacklist: once a position is opened on a token today, block all
 # re-entries for the rest of the day — prevents re-entering dying tokens after close
 _traded_today: dict[str, str] = {}   # f"{chain}:{address}" → ISO date string
+
+
+# ---------------------------------------------------------------------------
+# Parallel-prefetch pool (screening only)
+# ---------------------------------------------------------------------------
+# Single shared executor — caps raw thread count during TG posting bursts.
+# Saturation guard: semaphore tracks in-flight jobs.  If all 8 slots are busy
+# when a new signal arrives, prefetch is skipped and screening falls back to
+# synchronous behavior (degraded latency, never unbounded threads).
+_PREFETCH_MAX_INFLIGHT = 8
+_prefetch_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_PREFETCH_MAX_INFLIGHT,
+    thread_name_prefix="prefetch",
+)
+_prefetch_sem = threading.Semaphore(_PREFETCH_MAX_INFLIGHT)
+
+# Prefetch telemetry — accumulated per day, emitted as one daily summary log line
+_prefetch_stats_lock = threading.Lock()
+_prefetch_stats: dict = {
+    "day": "",          # ISO date of current window
+    "n": 0,             # signals processed
+    "dex_hits": 0,      # holder filled within 0.8s
+    "safety_hits": 0,   # safety holder filled (non-blocking check)
+    "screen_ms": [],    # list[float] — screen_token() duration
+    "decision_ms": [],  # list[float] — total T=0 → decision
+}
+
+
+def _submit_prefetch(fn, *args):
+    """
+    Submit fn(*args) to the bounded prefetch pool.
+    Returns a Future, or None if all slots are saturated.
+    The semaphore is released inside the wrapper when the job finishes.
+    """
+    if not _prefetch_sem.acquire(blocking=False):
+        return None   # saturated — caller falls back to synchronous
+
+    def _wrapped():
+        try:
+            return fn(*args)
+        finally:
+            _prefetch_sem.release()
+
+    try:
+        return _prefetch_pool.submit(_wrapped)
+    except RuntimeError:
+        # Pool shut down (shouldn't happen in normal operation)
+        _prefetch_sem.release()
+        return None
+
+
+def _record_prefetch_stats(dex_hit: bool, safety_hit: bool,
+                            screen_ms: float, decision_ms: float) -> None:
+    """Accumulate per-signal telemetry; emit daily summary when the date rolls over."""
+    global _prefetch_stats
+    today = date.today().isoformat()
+    with _prefetch_stats_lock:
+        if _prefetch_stats["day"] != today:
+            # Emit summary for the completed day before resetting
+            _emit_prefetch_daily_summary(_prefetch_stats)
+            _prefetch_stats = {
+                "day": today, "n": 0,
+                "dex_hits": 0, "safety_hits": 0,
+                "screen_ms": [], "decision_ms": [],
+            }
+        _prefetch_stats["n"] += 1
+        if dex_hit:
+            _prefetch_stats["dex_hits"] += 1
+        if safety_hit:
+            _prefetch_stats["safety_hits"] += 1
+        _prefetch_stats["screen_ms"].append(screen_ms)
+        _prefetch_stats["decision_ms"].append(decision_ms)
+
+
+def _emit_prefetch_daily_summary(stats: dict) -> None:
+    """Log one-line daily summary. Called when day rolls over."""
+    n = stats.get("n", 0)
+    if n == 0:
+        return
+    dex_pct = stats["dex_hits"] / n * 100
+    saf_pct = stats["safety_hits"] / n * 100
+
+    def _pct(lst, p):
+        s = sorted(lst)
+        return s[int(len(s) * p / 100)] if s else 0
+
+    sc_med = _pct(stats["screen_ms"], 50)
+    sc_p75 = _pct(stats["screen_ms"], 75)
+    dc_med = _pct(stats["decision_ms"], 50)
+    dc_p75 = _pct(stats["decision_ms"], 75)
+    log.info(
+        "PREFETCH DAILY SUMMARY  date=%s  signals=%d  "
+        "dex_hit=%.0f%%  safety_hit=%.0f%%  "
+        "screen_ms=med%.0f/p75%.0f  decision_ms=med%.0f/p75%.0f",
+        stats.get("day", "?"), n, dex_pct, saf_pct,
+        sc_med, sc_p75, dc_med, dc_p75,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -746,8 +844,67 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     if chain == "solana":
         _creator_event, _creator_holder = _start_creator_fetch(address)
 
+    # ── Parallel prefetch: DexScreener + safety API ─────────────────────────
+    # Fire both workers immediately (alongside PP subscribe + creator fetch).
+    # The DexScreener call is the critical path — we wait up to 0.8s for it.
+    # The safety call is best-effort — we grab its result non-blocking after
+    # the DexScreener wait and pass whatever is ready into screen_token().
+    # If the pool is saturated, both futures are None and screen_token() falls
+    # back to its own synchronous fetches — degraded latency, no behavior change.
+    _pair_holder   = [None]
+    _safety_holder = [None]
+
+    _dex_future    = _submit_prefetch(dex_get_token, chain, address)
+    _safety_future = None
+    if _dex_future is not None:
+        if chain == "solana":
+            _safety_future = _submit_prefetch(rugcheck_sol, address)
+        elif chain == "bsc":
+            _safety_future = _submit_prefetch(honeypot_bsc, address)
+
+    if _dex_future is None:
+        log.debug("Prefetch pool saturated for %s — sync fallback", address[:8])
+
+    # Wait up to 0.8s for DexScreener (critical path)
+    if _dex_future is not None:
+        try:
+            _pair_holder[0] = _dex_future.result(timeout=0.8)
+        except concurrent.futures.TimeoutError:
+            pass  # slow — screen_token will do its own fetch
+        except Exception as _pfe:
+            log.debug("Prefetch dex error %s: %s", address[:8], _pfe)
+
+    # Non-blocking grab of safety result (may or may not be done yet)
+    if _safety_future is not None:
+        try:
+            _safety_holder[0] = _safety_future.result(timeout=0.0)
+        except concurrent.futures.TimeoutError:
+            pass  # not ready — screen_token fetches its own
+        except Exception:
+            pass
+
+    # Decision point: capture what we have.  Any future that finishes after
+    # this point completes silently — no callbacks registered, result never read.
+    _prefetch_dex_hit    = _pair_holder[0] is not None
+    _prefetch_safety_hit = _safety_holder[0] is not None
+
     try:
-        screen = screen_token(chain, address)
+        _t_screen_start = _time.time()
+        screen = screen_token(chain, address,
+                              pair=_pair_holder[0], safety=_safety_holder[0])
+        _t_screener_done = _time.time()
+        _screen_ms   = (_t_screener_done - _t_screen_start) * 1000
+        _decision_ms = (_t_screener_done - _t0) * 1000   # filter checks add <1ms
+
+        log.debug(
+            "PREFETCH %s  dex_hit=%s  safety_hit=%s  "
+            "screen_ms=%.0f  decision_ms=%.0f",
+            address[:8], _prefetch_dex_hit, _prefetch_safety_hit,
+            _screen_ms, _decision_ms,
+        )
+        _record_prefetch_stats(_prefetch_dex_hit, _prefetch_safety_hit,
+                                _screen_ms, _decision_ms)
+
         reason = screen.get("reason", "")
 
         # Hard reject: no DexScreener data yet.
@@ -917,6 +1074,16 @@ def _near_miss_poller_thread():
             _gfp()
         except Exception as _ge:
             log.debug("Gate followup poll error: %s", _ge)
+
+        # ── Prefetch daily summary (emit if day rolled over since last signal) ──
+        try:
+            _today = date.today().isoformat()
+            with _prefetch_stats_lock:
+                _ps = _prefetch_stats
+            if _ps.get("day") and _ps["day"] != _today and _ps.get("n", 0) > 0:
+                _emit_prefetch_daily_summary(_ps)
+        except Exception as _pse:
+            log.debug("Prefetch daily summary error: %s", _pse)
 
         # ── Weekly gate counterfactual report ─────────────────────────────
         if time.time() - _gate_report_last_ts >= _GATE_REPORT_INTERVAL:
