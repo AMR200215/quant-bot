@@ -896,7 +896,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         _screen_ms   = (_t_screener_done - _t_screen_start) * 1000
         _decision_ms = (_t_screener_done - _t0) * 1000   # filter checks add <1ms
 
-        log.debug(
+        log.info(
             "PREFETCH %s  dex_hit=%s  safety_hit=%s  "
             "screen_ms=%.0f  decision_ms=%.0f",
             address[:8], _prefetch_dex_hit, _prefetch_safety_hit,

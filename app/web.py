@@ -31,6 +31,16 @@ def _strftime(ts, fmt="%H:%M:%S"):
         return "—"
 
 # ---------------------------------------------------------------------------
+# Logging — set memecoin module to INFO so screening decisions are visible
+# ---------------------------------------------------------------------------
+import logging as _logging
+_logging.basicConfig(
+    level=_logging.WARNING,   # root stays at WARNING (gunicorn noise suppressed)
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+_logging.getLogger("memecoin").setLevel(_logging.INFO)
+
+# ---------------------------------------------------------------------------
 # Memecoin scanner — start background threads on first import
 # ---------------------------------------------------------------------------
 try:
