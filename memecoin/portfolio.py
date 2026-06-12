@@ -316,6 +316,9 @@ class Portfolio:
         self._presigned_exits: dict = {}   # mint → bytes
         self._presigned_ts:    dict = {}   # mint → last-sign time (float)
         self._presigned_lock        = threading.Lock()
+        # sell_stuck throttle: pos_id → earliest time to retry sell
+        # In-memory only — resets on restart (which itself gives a fresh attempt).
+        self._sell_stuck_until: dict[str, float] = {}
         threading.Thread(
             target=self._presigned_refresh_loop,
             daemon=True,
@@ -713,105 +716,123 @@ class Portfolio:
         )
 
         try:
-            # ── PumpPortal pre-flight (fail-closed) ──────────────────────────────
-            # Require a live PP price before spending any SOL.
-            # No cached price → subscribe + poll up to 2s.
-            # Still no price → fail-closed (trade blocked, no SOL spent).
-            # Price present → check 30% drift gate.
+            # ── PumpPortal pre-flight ─────────────────────────────────────────────
+            # Behaviour differs by signal price source:
+            #
+            # source == "pp"  (type-1, pumpfun_stream — seconds-old token):
+            #   Poll PP 2s for a live price. Silence = dead token → fail-closed.
+            #   Price present → PP-to-PP drift gate (SLIPPAGE_GATE_RT_PCT, 20%).
+            #
+            # source == "dex" (type-2, telegram_pump — hours-old token):
+            #   PP won't accumulate ticks in 2s for an established token.
+            #   Skip the poll and the no-price block entirely. PP subscription
+            #   is still set so monitoring ticks begin arriving after fill.
+            #   Drift enforcement is deferred to the Jupiter quote in executor:
+            #   quote > signal_price × (1 + SLIPPAGE_GATE_DEX_PCT) → blocked_quote_drift.
+            _price_source = getattr(signal, "_price_source", "dex")
             _pf_blocked = False
+            _pp_price   = 0.0
             try:
                 from memecoin import pumpportal_monitor as _pp_monitor
-                _pp      = _pp_monitor.monitor
-                _mint    = signal.token_address
+                _pp        = _pp_monitor.monitor
+                _mint      = signal.token_address
                 _sig_price = paper_pos.signal_price
 
-                # Ensure subscribed so ticks start arriving immediately
+                # Always subscribe so monitoring ticks start arriving immediately
                 _pp.subscribe({_mint})
 
-                # Poll up to 2s for a fresh price (100ms intervals)
-                _pp_price = 0.0
-                _pf_deadline = time.time() + 2.0
-                while time.time() < _pf_deadline:
-                    _p = _pp.get_prices().get(_mint, 0)
-                    if _p > 0:
-                        _pp_price = _p
-                        break
-                    time.sleep(0.1)
+                if _price_source == "pp":
+                    # ── Type-1 path: poll for live PP price, fail-closed if silent ──
+                    _pp_price = 0.0
+                    _pf_deadline = time.time() + 2.0
+                    while time.time() < _pf_deadline:
+                        _p = _pp.get_prices().get(_mint, 0)
+                        if _p > 0:
+                            _pp_price = _p
+                            break
+                        time.sleep(0.1)
 
-                try:
-                    from memecoin.health_monitor import bump_preflight_attempt as _bpa
-                    _bpa()
-                except Exception:
-                    pass
-                if _pp_price == 0:
                     try:
-                        from memecoin.health_monitor import bump_preflight_no_price as _bpnp
-                        _bpnp()
+                        from memecoin.health_monitor import bump_preflight_attempt as _bpa
+                        _bpa()
                     except Exception:
                         pass
-                    log.warning(
-                        "LIVE PREFLIGHT NO PRICE %s — PP returned no price in 2s, "
-                        "blocking trade (fail-closed)",
-                        live_pos.token_symbol,
-                    )
-                    try:
-                        from app.alerts import _send
-                        _send(
-                            f"🚫 PREFLIGHT NO PRICE {live_pos.token_symbol} — "
-                            f"PP silent 2s. Trade blocked, no SOL spent."
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        from memecoin.gate_logger import log_gate_block as _lgb
-                        _lgb("preflight_no_price", live_pos.chain, live_pos.token_address,
-                             live_pos.token_symbol, pp_price=0.0,
-                             signal_price=_sig_price or 0,
-                             size_usd=_live_size)
-                    except Exception:
-                        pass
-                    _pf_blocked = True
 
-                else:
-                    # Drift gate: how much has price moved since signal?
-                    # When REALTIME_PRICE_FEED is True and signal_price is a PP
-                    # price, we compare PP-to-PP (real movement only — no indexer
-                    # lag artifact).  Gate is tighter (20%) because we're measuring
-                    # genuine movement, not the DexScreener delay.
-                    # When signal_price is a DexScreener price (fallback), use the
-                    # legacy 15% gate which must accommodate the indexer lag.
-                    _price_source = getattr(signal, "_price_source", "dex")
-                    _gate = (SLIPPAGE_GATE_RT_PCT
-                             if REALTIME_PRICE_FEED and _price_source == "pp"
-                             else SLIPPAGE_GATE_DEX_PCT)
-
-                    if _sig_price and _pp_price > _sig_price * (1 + _gate):
-                        _pf_slip = (_pp_price / _sig_price - 1) * 100
+                    if _pp_price == 0:
+                        try:
+                            from memecoin.health_monitor import bump_preflight_no_price as _bpnp
+                            _bpnp()
+                        except Exception:
+                            pass
                         log.warning(
-                            "LIVE PREFLIGHT BLOCKED %s — PP %.10f is %.1f%% above signal "
-                            "%.10f (>%.0f%% %s gate)",
-                            live_pos.token_symbol, _pp_price, _pf_slip, _sig_price,
-                            _gate * 100, _price_source,
+                            "LIVE PREFLIGHT NO PRICE %s — PP returned no price in 2s, "
+                            "blocking trade (fail-closed, type-1)",
+                            live_pos.token_symbol,
                         )
                         try:
                             from app.alerts import _send
                             _send(
-                                f"🚫 PREFLIGHT BLOCKED {live_pos.token_symbol} — "
-                                f"PP ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
-                                f"${_sig_price:.8f} (>{_gate*100:.0f}% {_price_source} gate). "
-                                f"No SOL spent."
+                                f"🚫 PREFLIGHT NO PRICE {live_pos.token_symbol} — "
+                                f"PP silent 2s. Trade blocked, no SOL spent."
                             )
                         except Exception:
                             pass
                         try:
                             from memecoin.gate_logger import log_gate_block as _lgb
-                            _lgb("preflight_price", live_pos.chain, live_pos.token_address,
-                                 live_pos.token_symbol, pp_price=_pp_price,
+                            _lgb("preflight_no_price", live_pos.chain, live_pos.token_address,
+                                 live_pos.token_symbol, pp_price=0.0,
                                  signal_price=_sig_price or 0,
                                  size_usd=_live_size)
                         except Exception:
                             pass
                         _pf_blocked = True
+
+                    else:
+                        # PP-to-PP drift gate (20% — measures genuine movement only)
+                        _gate = SLIPPAGE_GATE_RT_PCT
+                        if _sig_price and _pp_price > _sig_price * (1 + _gate):
+                            _pf_slip = (_pp_price / _sig_price - 1) * 100
+                            log.warning(
+                                "LIVE PREFLIGHT BLOCKED %s — PP %.10f is %.1f%% above signal "
+                                "%.10f (>%.0f%% pp gate)",
+                                live_pos.token_symbol, _pp_price, _pf_slip, _sig_price,
+                                _gate * 100,
+                            )
+                            try:
+                                from app.alerts import _send
+                                _send(
+                                    f"🚫 PREFLIGHT BLOCKED {live_pos.token_symbol} — "
+                                    f"PP ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
+                                    f"${_sig_price:.8f} (>{_gate*100:.0f}% pp gate). "
+                                    f"No SOL spent."
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                from memecoin.gate_logger import log_gate_block as _lgb
+                                _lgb("preflight_price", live_pos.chain, live_pos.token_address,
+                                     live_pos.token_symbol, pp_price=_pp_price,
+                                     signal_price=_sig_price or 0,
+                                     size_usd=_live_size)
+                            except Exception:
+                                pass
+                            _pf_blocked = True
+
+                else:
+                    # ── Type-2 path (dex source): defer drift check to Jupiter quote ──
+                    # PP subscription set above; no price available at this stage.
+                    # Executor will enforce SLIPPAGE_GATE_DEX_PCT (15%) against the
+                    # real Jupiter quote before any SOL is spent.
+                    try:
+                        from memecoin.health_monitor import bump_preflight_attempt as _bpa
+                        _bpa()
+                    except Exception:
+                        pass
+                    log.info(
+                        "LIVE PREFLIGHT DEFERRED %s — source=dex, "
+                        "drift gate moved to Jupiter quote (%.0f%% max)",
+                        live_pos.token_symbol, SLIPPAGE_GATE_DEX_PCT * 100,
+                    )
 
             except Exception as _pf_err:
                 log.warning(
@@ -1053,6 +1074,39 @@ class Portfolio:
                 _save_positions(self._positions)
                 log.error("LIVE BUY UNCONFIRMED %s — check on-chain: %s",
                           live_pos.token_symbol, result.get("tx_sig", ""))
+            elif result.get("reason") in ("blocked_quote_drift", "no_quote"):
+                _reason = result.get("reason")
+                _qprice = result.get("jupiter_quote_price", 0)
+                _drift  = result.get("slippage_pct", 0)
+                log.warning(
+                    "LIVE BUY BLOCKED (executor: %s) %s — "
+                    "quote=$%.10f signal=$%.10f drift=%.1f%%",
+                    _reason, live_pos.token_symbol,
+                    _qprice, paper_pos.signal_price or 0, _drift,
+                )
+                try:
+                    from app.alerts import _send
+                    if _reason == "no_quote":
+                        _send(
+                            f"🚫 NO QUOTE {live_pos.token_symbol} — "
+                            f"Jupiter returned no executable quote. Trade blocked."
+                        )
+                    else:
+                        _send(
+                            f"🚫 QUOTE DRIFT {live_pos.token_symbol} — "
+                            f"quote ${_qprice:.8f} is {_drift:.1f}% above signal. "
+                            f"No SOL spent."
+                        )
+                except Exception:
+                    pass
+                try:
+                    from memecoin.gate_logger import log_gate_block as _lgb
+                    _lgb(_reason, live_pos.chain, live_pos.token_address,
+                         live_pos.token_symbol, pp_price=_qprice,
+                         signal_price=paper_pos.signal_price or 0,
+                         size_usd=_live_size)
+                except Exception:
+                    pass
             else:
                 log.error("LIVE BUY failed for %s: %s — paper trade continues independently",
                           live_pos.token_symbol, result.get("error"))
@@ -1067,6 +1121,20 @@ class Portfolio:
         pos = self._positions.get(pos_id)
         if not pos or pos.status == "closed":
             return None
+
+        # sell_stuck throttle: position is stuck waiting for a sell to confirm.
+        # The monitor will re-trigger close_position every cycle — rate-limit retries
+        # to 60s so we don't hammer the RPC with back-to-back submissions.
+        if pos.status == "sell_stuck":
+            _retry_at = self._sell_stuck_until.get(pos_id, 0)
+            if time.time() < _retry_at:
+                return pos   # too soon — skip this cycle
+            # Reset for the next ladder attempt
+            pos.status = "open"
+            pos.sell_attempts = 0
+            self._sell_stuck_until.pop(pos_id, None)
+            log.info("SELL STUCK retry window open for %s", pos.token_symbol)
+
         pos.exit_price = price or pos.current_price
         pos.exit_time  = time.time()
         pos.exit_reason = reason
@@ -1165,13 +1233,44 @@ class Portfolio:
                                       result.get("error") or result.get("tx_sig",""))
                             return pos
                         else:
-                            log.error("Live sell GAVE UP after %d attempts for %s — TOKENS MAY REMAIN IN WALLET",
-                                      MAX_SELL_RETRIES, pos.token_symbol)
+                            # Ladder exhausted — do NOT phantom-close.
+                            # Position stays open as sell_stuck; monitoring continues.
+                            # Retry ladder every 60s with fresh blockhash.
+                            # Journal write only happens on confirmed sell or reconciler verdict.
+                            pos.status = "sell_stuck"
+                            pos.exit_price  = 0.0
+                            pos.exit_time   = 0.0
+                            pos.exit_reason = ""
+                            pos.sell_attempts = 0   # reset counter for next 60s window
+                            if "|sell_stuck" not in (pos.notes or ""):
+                                pos.notes = (pos.notes or "") + "|sell_stuck"
+                            self._positions[pos_id] = pos
+                            self._sell_stuck_until[pos_id] = time.time() + 60
+                            _save_positions(self._positions)
+                            log.error(
+                                "SELL STUCK %s — ladder exhausted, position stays open, "
+                                "retry in 60s.  mint=%s",
+                                pos.token_symbol, pos.token_address,
+                            )
                             try:
                                 from app.alerts import _send
-                                _send(f"ALERT: sell gave up after {MAX_SELL_RETRIES} retries for {pos.token_symbol} — check wallet manually")
+                                _current_bal = ""
+                                try:
+                                    from memecoin.executor import _token_balance, _get_keypair
+                                    _kp   = _get_keypair()
+                                    _bal  = _token_balance(str(_kp.pubkey()), pos.token_address)
+                                    _current_bal = f"  on-chain_balance={_bal}"
+                                except Exception:
+                                    pass
+                                _sigs = pos.notes or ""
+                                _send(
+                                    f"🚨 SELL STUCK {pos.token_symbol} — "
+                                    f"{MAX_SELL_RETRIES} retries failed, retrying every 60s. "
+                                    f"mint={pos.token_address}{_current_bal} | sigs={_sigs[-80:]}"
+                                )
                             except Exception:
                                 pass
+                            return pos
             except Exception as e:
                 pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
                 pos.notes = (pos.notes or "") + f"|sell_error(attempt {pos.sell_attempts})"
@@ -1187,8 +1286,28 @@ class Portfolio:
                     log.error("Executor error during sell for %s (attempt %d/%d): %s — retrying",
                               pos.token_symbol, pos.sell_attempts, MAX_SELL_RETRIES, e)
                     return pos
-                log.error("Live sell GAVE UP after %d attempts for %s: %s",
-                          MAX_SELL_RETRIES, pos.token_symbol, e)
+                # Ladder exhausted via exception — same sell_stuck endgame
+                pos.status = "sell_stuck"
+                pos.exit_price  = 0.0
+                pos.exit_time   = 0.0
+                pos.exit_reason = ""
+                pos.sell_attempts = 0
+                if "|sell_stuck" not in (pos.notes or ""):
+                    pos.notes = (pos.notes or "") + f"|sell_stuck|err:{e}"
+                self._positions[pos_id] = pos
+                self._sell_stuck_until[pos_id] = time.time() + 60
+                _save_positions(self._positions)
+                log.error("SELL STUCK %s (exception path) — stays open, retry in 60s: %s",
+                          pos.token_symbol, e)
+                try:
+                    from app.alerts import _send
+                    _send(
+                        f"🚨 SELL STUCK {pos.token_symbol} — exception after "
+                        f"{MAX_SELL_RETRIES} retries: {e}  mint={pos.token_address}"
+                    )
+                except Exception:
+                    pass
+                return pos
 
         _append_journal(pos)
         promote_to_winners(pos)
@@ -1350,6 +1469,19 @@ class Portfolio:
                         setattr(pos, set_flag, True)
                         log.debug("%s trajectory %s  gain_from_signal=%.1f%%",
                                   pos.token_symbol, label, gain_from_signal * 100)
+
+            # Guard: if all feeds failed current_price stays at last known value
+            # (never set to 0 in the price-update block above). If it were 0,
+            # the hard_stop check (price <= stop_level) would fire on a phantom
+            # value — skip all stop checks and let the blind-exit timer (scanner)
+            # handle the truly-dead-feed case after 20s of silence.
+            if pos.current_price <= 0:
+                log.debug(
+                    "update_prices: skipping stop checks for %s — current_price=0 "
+                    "(all feeds silent, blind-exit timer will handle)",
+                    pos.token_symbol,
+                )
+                continue
 
             gain = pos.pnl_pct
             reason = None

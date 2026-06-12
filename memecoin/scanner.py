@@ -1040,6 +1040,10 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                 log.warning("TG creator UNRESOLVED %s after %.1fs — live entry will be blocked",
                             address[:8], _time.time() - _t0)
         _health.bump_live_eligible()
+        try:
+            log_signal_candidate(sig)
+        except Exception as _lsc_err:
+            log.debug("log_signal_candidate failed: %s", _lsc_err)
         _add_signal(sig)
     except _NoDexData:
         raise  # propagate to TelegramMonitor for 45s retry

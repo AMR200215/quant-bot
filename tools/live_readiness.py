@@ -237,14 +237,21 @@ def check_live_trading_flag() -> tuple[str, str]:
 
 
 def check_epoch_tag() -> tuple[str, str]:
-    """10. Epoch tag — ACCOUNTING_EPOCH should be set."""
+    """10. Epoch tag — ACCOUNTING_EPOCH should be set (lives in portfolio.py)."""
     try:
-        from memecoin.config import ACCOUNTING_EPOCH
+        from memecoin.portfolio import ACCOUNTING_EPOCH
         if ACCOUNTING_EPOCH:
             return _pass(f"ACCOUNTING_EPOCH={ACCOUNTING_EPOCH!r}")
         return _warn("ACCOUNTING_EPOCH is empty — journal rows won't have epoch tag")
     except (ImportError, AttributeError):
-        return _warn("ACCOUNTING_EPOCH not defined in config.py")
+        # Fallback: try config.py for older layouts
+        try:
+            from memecoin.config import ACCOUNTING_EPOCH  # type: ignore
+            if ACCOUNTING_EPOCH:
+                return _pass(f"ACCOUNTING_EPOCH={ACCOUNTING_EPOCH!r} (from config)")
+        except (ImportError, AttributeError):
+            pass
+        return _warn("ACCOUNTING_EPOCH not found in portfolio.py or config.py")
     except Exception as e:
         return _warn(f"Epoch tag check failed: {e}")
 

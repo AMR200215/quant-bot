@@ -91,6 +91,12 @@ except ImportError:
     _LIVE_DRY_RUN = False
 LIVE_DRY_RUN = _LIVE_DRY_RUN
 
+try:
+    from memecoin.config import SLIPPAGE_GATE_DEX_PCT as _SLIPPAGE_GATE_DEX_PCT
+except ImportError:
+    _SLIPPAGE_GATE_DEX_PCT = 0.15
+SLIPPAGE_GATE_DEX_PCT = _SLIPPAGE_GATE_DEX_PCT
+
 # Pre-buy reserve constants (lamports).
 # Trade lamports + all three reserves must fit within the wallet's free balance.
 _RENT_RESERVE      = 2_039_280   # token-account rent exemption
@@ -421,9 +427,21 @@ class MemeExecutor:
                     pass
 
             # ── Pre-flight slippage check (Jupiter quote) ─────────────────────
-            # Even on the PumpPortal path we take a Jupiter quote as a clean
-            # price baseline to guard against extreme signal staleness.
+            # The quote is the only honest pre-spend price for dex-source (TG pump)
+            # signals — it reflects what you'd actually pay, not a feed that may
+            # lag 15-30s.  Two gates:
+            #
+            #   1. no_quote   — Jupiter returned nothing → token is unquotable /
+            #                   already dead.  Fail-closed before spending any SOL.
+            #   2. blocked_quote_drift — quote > signal_price × (1+SLIPPAGE_GATE_DEX_PCT)
+            #                   → price already ran past the acceptable entry band.
+            #                   Logged to gate_blocks by the caller (portfolio).
+            #
+            # For pp-source signals: same quote is still fetched and the gate still
+            # applies — it's the final on-chain check before submission.
+            _quote_gate = SLIPPAGE_GATE_DEX_PCT   # 15%
             jupiter_quote_price = 0.0
+            _quote_fetch_err = None
             try:
                 quote = _jup_get_quote(SOL_MINT, token_address, lamports)
                 _t_quoted = time.time()
@@ -432,20 +450,35 @@ class MemeExecutor:
                 jupiter_quote_price = size_usd / tokens_out_q if tokens_out_q > 0 else 0
             except Exception as e:
                 _t_quoted = time.time()
-                log.debug("Jupiter pre-flight quote failed: %s — skipping slippage gate", e)
+                _quote_fetch_err = e
+                log.warning("Jupiter pre-flight quote failed: %s", e)
 
+            # Gate 1: no quote → unquotable token, block before spending
+            if signal_price > 0 and jupiter_quote_price == 0:
+                log.warning(
+                    "BUY blocked — no_quote  token=%s  err=%s",
+                    token_address[:8], _quote_fetch_err,
+                )
+                return {
+                    "success":             False,
+                    "reason":              "no_quote",
+                    "jupiter_quote_price": 0,
+                    "error":               str(_quote_fetch_err),
+                }
+
+            # Gate 2: drift gate — quote already ran past the entry band
             if signal_price > 0 and jupiter_quote_price > 0:
                 slippage = (jupiter_quote_price / signal_price - 1)
-                if slippage > max_slippage_pct:
+                if slippage > _quote_gate:
                     log.warning(
-                        "BUY skipped — pre-flight slippage %.1f%% > max %.0f%%  "
+                        "BUY blocked — quote drift %.1f%% > %.0f%%  "
                         "token=%s  signal=$%.10f  quote=$%.10f",
-                        slippage * 100, max_slippage_pct * 100,
+                        slippage * 100, _quote_gate * 100,
                         token_address[:8], signal_price, jupiter_quote_price,
                     )
                     return {
                         "success":             False,
-                        "reason":              "slippage",
+                        "reason":              "blocked_quote_drift",
                         "slippage_pct":        round(slippage * 100, 1),
                         "jupiter_quote_price": jupiter_quote_price,
                     }
