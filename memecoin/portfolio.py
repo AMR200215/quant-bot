@@ -50,7 +50,7 @@ JOURNAL_FIELDS = [
     "signal_price", "signal_time",   # price/time when signal fired (before any execution)
     "entry_price", "entry_time", "size_usd",
     "exit_price", "exit_time", "exit_reason",
-    "pnl_usd", "pnl_pct", "peak_price",
+    "pnl_usd", "pnl_pct", "peak_price", "hard_stop_pct",
     # whale info
     "whale_count", "whale_tiers",
     # scores
@@ -86,7 +86,7 @@ CONFIG_TAG = "v7_entry_filters_2026-06-06"
 # e1_baseline             : pre-2026-06-11 01:20 UTC (no PP exits, simple pnl)
 # e2_pp_exits             : commit 81de8da — PP real-time exits wired to paper
 # e3_pp_entries_anchored_stops: commit 9a2a332 — signal-anchored stops + this accounting fix
-ACCOUNTING_EPOCH = "e3_pp_entries_anchored_stops"
+ACCOUNTING_EPOCH = "e4_rt_feed_quote_gate"
 
 
 @dataclass
@@ -196,19 +196,20 @@ def _save_positions(positions: dict[str, Position]):
     POSITIONS_FILE.write_text(json.dumps(data, indent=2))
 
 
-def _ensure_journal_header():
+def _ensure_journal_header(path=None):
     """Rewrite the journal header if it is stale (schema changed since file was created)."""
-    if not JOURNAL_FILE.exists() or JOURNAL_FILE.stat().st_size == 0:
+    target = path or JOURNAL_FILE
+    if not target.exists() or target.stat().st_size == 0:
         return
-    with open(JOURNAL_FILE, newline="") as f:
+    with open(target, newline="") as f:
         current_header = next(csv.reader(f), [])
     if current_header == JOURNAL_FIELDS:
         return
     # Header is stale — read all rows, rewrite with correct header
-    log.warning("Journal header mismatch — migrating %s", JOURNAL_FILE)
-    with open(JOURNAL_FILE, newline="") as f:
+    log.warning("Journal header mismatch — migrating %s", target)
+    with open(target, newline="") as f:
         rows = list(csv.DictReader(f))
-    with open(JOURNAL_FILE, "w", newline="") as f:
+    with open(target, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
@@ -265,6 +266,7 @@ def _build_journal_row(pos: Position) -> dict:
         "rugcheck_score": pos.rugcheck_score,
         "buy_tax": pos.buy_tax,
         "sell_tax": pos.sell_tax,
+        "hard_stop_pct": pos.hard_stop_pct,
         "notes": pos.notes,
         "config_tag": CONFIG_TAG,
         # accounting v2
@@ -288,6 +290,7 @@ def _append_journal(pos: Position):
 
     # If this was a live trade, also write to the live journal
     if pos.notes and "live|tx:" in pos.notes:
+        _ensure_journal_header(LIVE_JOURNAL_FILE)
         write_header = not LIVE_JOURNAL_FILE.exists() or LIVE_JOURNAL_FILE.stat().st_size == 0
         with open(LIVE_JOURNAL_FILE, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
@@ -1506,7 +1509,13 @@ class Portfolio:
                     (time.time() - stall["stall_since"]) >= _pl_sec):
                 reason = "profit_lock"
 
-            # 1. Hard stop — signal-anchored when fill > signal price
+            from memecoin.config import get_signal_settings as _gss_exit
+            _exit_cfg   = _gss_exit(pos.signal_type)
+            _trail_tiers = _exit_cfg.get("trail_tiers", None)
+            _peak_gain   = ((pos.peak_price / pos.entry_price) - 1) if pos.entry_price > 0 else 0
+
+            # 1. Hard stop — signal-anchored when fill > signal price.
+            #    Only governs the sub-+30% region (before any trail tier activates).
             if not reason:
                 _stop_lvl = pos.entry_price * (1 + pos.hard_stop_pct)
                 if pos.signal_price > 0 and pos.entry_price > pos.signal_price:
@@ -1514,28 +1523,50 @@ class Portfolio:
                 if pos.current_price <= _stop_lvl:
                     reason = "hard_stop"
 
-            # 2. Trailing stop
-            elif not reason and pos.peak_price > 0 and gain >= pos.trail_activates_pct:
-                drawdown_from_peak = (pos.current_price - pos.peak_price) / pos.peak_price
-                if drawdown_from_peak <= pos.trailing_stop_pct:
-                    reason = "trailing_stop"
+            # 2. Trailing stop (ATH-anchored tier system or legacy single-tier)
+            if not reason and pos.peak_price > 0 and pos.entry_price > 0:
+                if _trail_tiers:
+                    # Find active tier: highest activates_at ≤ peak_gain
+                    _active_tier = None
+                    for _tier in sorted(_trail_tiers,
+                                        key=lambda t: t["activates_at"], reverse=True):
+                        if _peak_gain >= _tier["activates_at"]:
+                            _active_tier = _tier
+                            break
+
+                    if _active_tier:
+                        _trail_pct   = -abs(_active_tier["trail_pct"])
+                        _trail_stop  = pos.peak_price * (1 + _trail_pct)
+                        # Breakeven floor: peak ≥ +40% → trail_stop ≥ entry * 1.02.
+                        # A trade that has shown +40% can never close as a loser.
+                        if _peak_gain >= 0.40:
+                            _floor = pos.entry_price * 1.02
+                            if _trail_stop < _floor:
+                                _trail_stop = _floor
+                        if pos.current_price <= _trail_stop:
+                            reason = "trailing_stop"
+                else:
+                    # Legacy single-tier (non-social_alert signal types)
+                    if gain >= pos.trail_activates_pct:
+                        drawdown_from_peak = (pos.current_price - pos.peak_price) / pos.peak_price
+                        if drawdown_from_peak <= pos.trailing_stop_pct:
+                            reason = "trailing_stop"
 
             # 3. Whale exit (primary exit signal)
-            elif pos.token_address in whale_sells:
+            if not reason and pos.token_address in whale_sells:
                 sellers = whale_sells[pos.token_address]
                 involved = [w for w in sellers if w in pos.whales_involved]
                 if involved:
                     n_whales = pos.whale_count or 1
-                    # single whale entry → exit immediately when they sell
                     if n_whales == 1:
                         reason = f"whale_exit:{involved[0][:8]}"
-                    # multi-whale: exit when majority sell
                     elif len(involved) >= max(1, n_whales // 2):
                         reason = f"whale_exit:{len(involved)}_of_{n_whales}"
 
-            # 4. Time stop
-            elif (time.time() - pos.entry_time) / 60 > pos.time_stop_minutes:
-                if gain < TIME_STOP_MIN_GAIN:
+            # 4. Time stop — only fires while peak_gain < 30%.
+            #    Never interrupt a runner mid-leg.
+            if not reason and (time.time() - pos.entry_time) / 60 > pos.time_stop_minutes:
+                if _peak_gain < 0.30 and gain < TIME_STOP_MIN_GAIN:
                     reason = "time_stop"
 
             if reason:

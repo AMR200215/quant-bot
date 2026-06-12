@@ -216,14 +216,20 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "trade_size_usd":      3,       # $3/trade while validating fixes
         "live_trade_size_usd": 3,
         "hard_stop_pct":       -0.35,
-        "trailing_stop_pct":   -0.35,   # tighter trail once activated
-        "trail_activates_pct": 0.30,    # activate at +30% not +75%
         "time_stop_minutes":   90,
+        # ATH-anchored trail tiers (replaces single trailing_stop_pct / trail_activates_pct).
+        # Tier selected by peak_gain achieved so far; trail anchors to peak_price.
+        # Breakeven floor: peak_gain ≥ 40% → trail_stop ≥ entry * 1.02 (enforced in portfolio).
+        # Time stop: only fires while peak_gain < 30% (never interrupts a runner mid-leg).
+        "trail_tiers": [
+            {"activates_at": 0.30, "trail_pct": 0.35},  # early: wide, survives the EKG
+            {"activates_at": 1.00, "trail_pct": 0.25},  # +100%: tighten
+            {"activates_at": 3.00, "trail_pct": 0.15},  # +300%: protect the moonshot
+        ],
         # profit_lock: exit if gain in [40%, 100%] and peak stalled for N sec
-        # Below 40% these exits become losses in live trading after ~24% avg slippage
         "profit_lock_min_gain":   0.40,
         "profit_lock_max_gain":   1.00,
-        "profit_lock_stall_sec":  120,  # 2 minutes of no new peak
+        "profit_lock_stall_sec":  300,  # 120 → 300: 5-min stall is dead; 2-min is a pause
     },
     "manual": {
         "trade_size_usd":      _SIZES["manual"],
