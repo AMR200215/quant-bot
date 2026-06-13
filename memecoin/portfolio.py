@@ -506,16 +506,19 @@ class Portfolio:
         log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s",
                  pos.id, pos.chain, pos.token_symbol, pos.entry_price, pos.dex_id)
 
-        # ── Live position (parallel, independent — pumpfun_stream + telegram_pump) ──
+        # ── Live position (parallel, independent — social_alert only) ──
+        # Only social_alert (telegram_pump cohort) goes live.
+        # pumpportal_screen, copy_trade, vol_breakout, new_launch, dev_launch → paper only.
         _is_live_signal = (
             LIVE_TRADING
-            and _token_cohort in ("pumpfun_stream", "telegram_pump")
+            and signal.signal_type == "social_alert"
+            and _token_cohort == "telegram_pump"
         )
         if not _is_live_signal and LIVE_TRADING:
             _why = []
-            if not _token_cohort:
-                _why.append(f"type={signal.signal_type} no_cohort")
-            elif _token_cohort not in ("pumpfun_stream", "telegram_pump"):
+            if signal.signal_type != "social_alert":
+                _why.append(f"type={signal.signal_type}")
+            elif _token_cohort != "telegram_pump":
                 _why.append(f"cohort={_token_cohort}")
             if _why:
                 log.info("LIVE GATE BLOCKED %s — paper only: %s", signal.token_symbol, ", ".join(_why))
