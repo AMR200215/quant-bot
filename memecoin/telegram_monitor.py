@@ -43,8 +43,8 @@ _SEEN_COOLDOWN = 300  # 5 minutes
 
 # Retry queue: addresses that hit no_dex_data get retried after this delay.
 # DexScreener typically indexes pump.fun tokens within 30-90 seconds of launch.
-_NO_DEX_RETRY_DELAY = 45   # seconds before first retry
-_NO_DEX_MAX_RETRIES = 3    # give up after this many retries
+_NO_DEX_RETRY_DELAY = 45   # seconds between retries
+_NO_DEX_MAX_RETRIES = 8    # 8 × 45s = 360s window; covers DexScreener worst-case lag (~120s)
 
 
 def _is_fresh(address: str) -> bool:
