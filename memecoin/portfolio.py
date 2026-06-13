@@ -25,7 +25,7 @@ _T10_FIELDS = [
 ]
 
 from memecoin.config import (
-    POSITIONS_FILE, JOURNAL_FILE, LIVE_JOURNAL_FILE, TRAJECTORY_FILE,
+    POSITIONS_FILE, JOURNAL_FILE, SOCIAL_JOURNAL_FILE, LIVE_JOURNAL_FILE, TRAJECTORY_FILE,
     HARD_STOP_PCT, TRAILING_STOP_PCT, TRAIL_ACTIVATES_PCT,
     TIME_STOP_MINUTES, TIME_STOP_MIN_GAIN,
     TP_LEVELS, TRADE_SIZE_USD,
@@ -279,10 +279,15 @@ def _build_journal_row(pos: Position) -> dict:
 
 def _append_journal(pos: Position):
     JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _ensure_journal_header()
     row = _build_journal_row(pos)
-    write_header = not JOURNAL_FILE.exists() or JOURNAL_FILE.stat().st_size == 0
-    with open(JOURNAL_FILE, "a", newline="") as f:
+
+    # Route to split journals: social_alert → social journal, everything else → main journal
+    _is_social = pos.signal_type == "social_alert"
+    target = SOCIAL_JOURNAL_FILE if _is_social else JOURNAL_FILE
+
+    _ensure_journal_header(target)
+    write_header = not target.exists() or target.stat().st_size == 0
+    with open(target, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
         if write_header:
             writer.writeheader()
@@ -1608,8 +1613,26 @@ class Portfolio:
             "unrealised_pnl_usd": round(sum(p.pnl_usd for p in open_pos), 2),
         }
 
-    def load_journal(self) -> list[dict]:
-        if not JOURNAL_FILE.exists():
-            return []
-        with open(JOURNAL_FILE, newline="") as f:
-            return list(csv.DictReader(f))
+    def load_journal(self, signal_type: str = None) -> list[dict]:
+        """
+        Load closed trade records.
+        signal_type="social_alert" → social journal only.
+        signal_type=None → both journals merged, sorted by exit_time.
+        """
+        rows = []
+        targets = []
+        if signal_type == "social_alert":
+            targets = [SOCIAL_JOURNAL_FILE]
+        elif signal_type is not None:
+            targets = [JOURNAL_FILE]
+        else:
+            targets = [JOURNAL_FILE, SOCIAL_JOURNAL_FILE]
+
+        for path in targets:
+            if path.exists():
+                with open(path, newline="") as f:
+                    rows.extend(csv.DictReader(f))
+
+        # Sort merged result by exit_time ascending
+        rows.sort(key=lambda r: float(r.get("exit_time") or 0))
+        return rows
