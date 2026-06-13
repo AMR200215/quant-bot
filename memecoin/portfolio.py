@@ -1340,9 +1340,9 @@ class Portfolio:
                         pos.peak_price = max(pos.peak_price, price)
                 if (not pair or pos.current_price == 0) and pos.chain == "solana":
                     try:
-                        from memecoin.executor import _get_quote, _sol_price_usd, SOL_MINT, SOL_DECIMALS
+                        from memecoin.executor import _jup_get_quote, _sol_price_usd, SOL_MINT, SOL_DECIMALS
                         _sol = _sol_price_usd()
-                        _q   = _get_quote(SOL_MINT, pos.token_address, int(pos.size_usd / _sol * 10**SOL_DECIMALS))
+                        _q   = _jup_get_quote(SOL_MINT, pos.token_address, int(pos.size_usd / _sol * 10**SOL_DECIMALS))
                         _decimals = int(_q.get("outputDecimals") or 6)
                         _tokens   = int(_q["outAmount"]) / (10 ** _decimals)
                         _price    = pos.size_usd / _tokens if _tokens > 0 else 0
