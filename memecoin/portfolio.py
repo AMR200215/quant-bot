@@ -847,45 +847,9 @@ class Portfolio:
             if _pf_blocked:
                 return
 
-            # ── Creator fail-closed gate (type-2 / telegram_pump cohort) ──────
-            # Type-1 (pumpfun_stream) carry creator from ScreeningState.
-            # Type-2 (telegram_pump) must have a resolved creator before we
-            # spend SOL — ensures dev_dump detection is wired from the first
-            # tick rather than catching up via a background fetch.
+            # Creator is fetched in background (dev-dump detection wires when ready).
+            # No longer blocking entry — v4 live data showed gate added no value.
             _sig_creator = getattr(signal, "creator_wallet", "")
-            _live_cohort = getattr(signal, "token_cohort", "")
-            try:
-                from memecoin.health_monitor import bump_creator_attempt as _bca
-                _bca()
-            except Exception:
-                pass
-            if _live_cohort == "telegram_pump" and not _sig_creator:
-                try:
-                    from memecoin.health_monitor import bump_creator_fail as _bcf
-                    _bcf()
-                except Exception:
-                    pass
-                log.warning(
-                    "LIVE GATE BLOCKED %s — creator unresolved (fail-closed, type-2)",
-                    live_pos.token_symbol,
-                )
-                try:
-                    from app.alerts import _send
-                    _send(
-                        f"🚫 CREATOR GATE {live_pos.token_symbol} — "
-                        f"creator unresolved after 3s. Trade blocked."
-                    )
-                except Exception:
-                    pass
-                try:
-                    from memecoin.gate_logger import log_gate_block as _lgb
-                    _lgb("creator", live_pos.chain, live_pos.token_address,
-                         live_pos.token_symbol, pp_price=_pp_price,
-                         signal_price=_sig_price or 0,
-                         size_usd=_live_size)
-                except Exception:
-                    pass
-                return
 
             # ── Size normalisation: equalise $ at risk regardless of fill slip ──
             # stop_level is signal-anchored (same formula as the stop check above).
