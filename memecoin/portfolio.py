@@ -298,6 +298,24 @@ def _append_journal(pos: Position):
                 writer.writeheader()
             writer.writerow(row)
 
+        # DRY_RUN funnel counter — notify when threshold crossed
+        if "DRY_RUN" in (pos.notes or ""):
+            try:
+                count = 0
+                with open(LIVE_JOURNAL_FILE) as _f:
+                    for _r in csv.DictReader(_f):
+                        if "DRY_RUN" in (_r.get("notes") or ""):
+                            count += 1
+                if count >= 3:
+                    from app.alerts import _send
+                    _send(
+                        f"✅ DRY_RUN funnel: {count} signals through live path\n"
+                        f"Latest: {pos.token_symbol} ({pos.signal_type})\n"
+                        f"Ready for your go-live decision."
+                    )
+            except Exception:
+                pass
+
 
 # ---------------------------------------------------------------------------
 # Portfolio manager
