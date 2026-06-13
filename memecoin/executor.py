@@ -391,9 +391,10 @@ class MemeExecutor:
             # ── Pre-buy free-SOL check ─────────────────────────────────────────
             # Block if wallet doesn't have enough free SOL for trade + reserves.
             # Alert at < 0.06 SOL free regardless of trade (low-balance warning).
-            _free_sol_lam = _sol_balance(wallet)
+            # Skipped in LIVE_DRY_RUN — no SOL is spent, balance is irrelevant.
+            _free_sol_lam = 0 if LIVE_DRY_RUN else _sol_balance(wallet)
             _required_lam = lamports + _RENT_RESERVE + _FEE_RESERVE + _PRESIGNED_RESERVE
-            if _free_sol_lam < _required_lam:
+            if not LIVE_DRY_RUN and _free_sol_lam < _required_lam:
                 _free_sol_val    = _free_sol_lam / 1e9
                 _required_sol    = _required_lam / 1e9
                 log.warning(
@@ -416,7 +417,7 @@ class MemeExecutor:
                     "free_sol":     round(_free_sol_val, 6),
                     "needed_sol":   round(_required_sol, 6),
                 }
-            elif _free_sol_lam < 60_000_000:   # < 0.06 SOL — alert even if trade fits
+            elif not LIVE_DRY_RUN and _free_sol_lam < 60_000_000:   # < 0.06 SOL — alert even if trade fits
                 try:
                     from app.alerts import _send as _alert_send
                     _alert_send(
