@@ -75,7 +75,7 @@ JITO_TIP_LAMPORTS = 1_000_000   # 0.001 SOL (~$0.17) — only applied when Jito 
 JITO_RPC_URL      = "https://mainnet.block-engine.jito.wtf/api/v1/transactions"
 
 SOLANA_RPC          = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-SOLANA_RPC_FALLBACK = "https://api.mainnet-beta.solana.com"
+SOLANA_RPC_FALLBACK = "https://solana-rpc.publicnode.com"
 
 # Which execution backend to use.  "pumpportal" is the default; set to
 # "jupiter" to fall back to the old path (useful for A/B testing).
@@ -132,10 +132,14 @@ def _get_keypair():
 # Shared RPC helpers
 # ---------------------------------------------------------------------------
 def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
-    """POST to SOLANA_RPC; on 429 fall back to public mainnet automatically."""
+    """POST to SOLANA_RPC; on 429 or quota error fall back to publicnode."""
     resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
-    if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
-        log.warning("Primary RPC 429 — falling back to public mainnet")
+    _should_fallback = (
+        SOLANA_RPC != SOLANA_RPC_FALLBACK
+        and (resp.status_code == 429 or "result" not in resp.json())
+    )
+    if _should_fallback:
+        log.warning("Primary RPC unavailable (%s) — falling back to publicnode", resp.status_code)
         resp = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
     return resp
 
@@ -184,17 +188,16 @@ def _token_decimals_from_rpc(wallet_pubkey: str, token_mint: str) -> int:
 
 
 def _sol_balance(wallet_pubkey: str) -> int:
-    """Return wallet SOL balance in lamports."""
-    try:
-        resp = _rpc_post({
-            "jsonrpc": "2.0", "id": 1,
-            "method":  "getBalance",
-            "params":  [wallet_pubkey],
-        })
-        return int(resp.json().get("result", {}).get("value", 0))
-    except Exception as e:
-        log.warning("SOL balance fetch failed: %s", e)
-        return 0
+    """Return wallet SOL balance in lamports. Raises on RPC error."""
+    resp = _rpc_post({
+        "jsonrpc": "2.0", "id": 1,
+        "method":  "getBalance",
+        "params":  [wallet_pubkey],
+    })
+    data = resp.json()
+    if "result" not in data:
+        raise RuntimeError(f"SOL balance RPC error: {data.get('error', resp.status_code)}")
+    return int(data["result"]["value"])
 
 
 def _confirm_tx(sig: str, max_wait: int = 40) -> tuple[bool, object]:
