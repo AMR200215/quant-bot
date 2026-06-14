@@ -718,6 +718,15 @@ def _pumpfun_thread():
                 addr    = event.mint
                 creator = event.creator
 
+                # 0. Subscribe PP immediately at launch — before DexScreener wait.
+                # TG alerts fire 5-60s after launch; PP needs ~3s to warm up.
+                # By the time TG alert matches, PP already has a live price.
+                # This eliminates quote drift from stale DexScreener baseline.
+                try:
+                    _pp_monitor.subscribe_screening(addr, creator)
+                except Exception:
+                    pass
+
                 # 1. Dev wallet check — fire dev_launch immediately if known dev
                 from memecoin.dev_tracker import load_dev_wallets, dev_signal_strength
                 dev_wallets = load_dev_wallets()
