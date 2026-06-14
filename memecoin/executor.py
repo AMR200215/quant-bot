@@ -93,9 +93,12 @@ LIVE_DRY_RUN = _LIVE_DRY_RUN
 
 try:
     from memecoin.config import SLIPPAGE_GATE_DEX_PCT as _SLIPPAGE_GATE_DEX_PCT
+    from memecoin.config import SLIPPAGE_GATE_RT_PCT  as _SLIPPAGE_GATE_RT_PCT
 except ImportError:
-    _SLIPPAGE_GATE_DEX_PCT = 0.15
+    _SLIPPAGE_GATE_DEX_PCT = 0.50
+    _SLIPPAGE_GATE_RT_PCT  = 0.20
 SLIPPAGE_GATE_DEX_PCT = _SLIPPAGE_GATE_DEX_PCT
+SLIPPAGE_GATE_RT_PCT  = _SLIPPAGE_GATE_RT_PCT
 
 # Pre-buy reserve constants (lamports).
 # Trade lamports + all three reserves must fit within the wallet's free balance.
@@ -482,20 +485,40 @@ class MemeExecutor:
                 }
 
             # Gate 2: drift gate — quote already ran past the entry band
+            # Prefer PP live price as baseline (same-venue, no indexer lag).
+            # At this point PP has been subscribed for ~6s — first tick usually arrived.
+            # Falls back to signal_price (DexScreener or pp-at-preflight) if PP silent.
+            _gate_baseline = signal_price
             if signal_price > 0 and jupiter_quote_price > 0:
-                slippage = (jupiter_quote_price / signal_price - 1)
+                try:
+                    from memecoin.pumpportal_monitor import monitor as _pp_exec
+                    _pp_now = _pp_exec.get_prices().get(token_address, 0)
+                    if _pp_now > 0:
+                        _gate_baseline = _pp_now
+                        _quote_gate    = SLIPPAGE_GATE_RT_PCT   # tighter same-venue gate
+                        log.debug("Gate 2 baseline: PP live $%.10f (same-venue gate %.0f%%)",
+                                  _pp_now, _quote_gate * 100)
+                except Exception:
+                    pass
+
+            if signal_price > 0 and jupiter_quote_price > 0:
+                slippage = (jupiter_quote_price / _gate_baseline - 1)
                 if slippage > _quote_gate:
                     log.warning(
                         "BUY blocked — quote drift %.1f%% > %.0f%%  "
-                        "token=%s  signal=$%.10f  quote=$%.10f",
+                        "token=%s  baseline=$%.10f (pp=%s)  quote=$%.10f",
                         slippage * 100, _quote_gate * 100,
-                        token_address[:8], signal_price, jupiter_quote_price,
+                        token_address[:8], _gate_baseline,
+                        "yes" if _gate_baseline != signal_price else "no",
+                        jupiter_quote_price,
                     )
                     return {
                         "success":             False,
                         "reason":              "blocked_quote_drift",
                         "slippage_pct":        round(slippage * 100, 1),
                         "jupiter_quote_price": jupiter_quote_price,
+                        "gate_baseline":       _gate_baseline,
+                        "pp_used":             _gate_baseline != signal_price,
                     }
 
             # ── Shadow-live / dry-run mode ────────────────────────────────────
