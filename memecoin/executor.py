@@ -144,25 +144,39 @@ def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
     return resp
 
 
-def _token_balance(wallet_pubkey: str, token_mint: str) -> int:
-    """Return raw token balance (smallest unit) for a wallet."""
-    try:
-        resp = _rpc_post({
-            "jsonrpc": "2.0", "id": 1,
-            "method":  "getTokenAccountsByOwner",
-            "params":  [
-                wallet_pubkey,
-                {"mint": token_mint},
-                {"encoding": "jsonParsed"},
-            ],
-        })
-        accounts = resp.json().get("result", {}).get("value", [])
-        if not accounts:
-            return 0
-        return int(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"])
-    except Exception as e:
-        log.warning("Token balance fetch failed: %s", e)
-        return 0
+def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 3) -> int:
+    """Return raw token balance (smallest unit) for a wallet.
+    Retries on RPC error — critical when called post-confirmation to avoid
+    misreading a rate-limited response as zero tokens received.
+    Raises RuntimeError if all attempts fail so callers know it's an RPC issue.
+    """
+    last_err = None
+    for attempt in range(retries):
+        if attempt > 0:
+            time.sleep(2)
+        try:
+            resp = _rpc_post({
+                "jsonrpc": "2.0", "id": 1,
+                "method":  "getTokenAccountsByOwner",
+                "params":  [
+                    wallet_pubkey,
+                    {"mint": token_mint},
+                    {"encoding": "jsonParsed"},
+                ],
+            })
+            data = resp.json()
+            if "result" not in data:
+                last_err = data.get("error", resp.status_code)
+                log.warning("Token balance RPC error (attempt %d/%d): %s", attempt + 1, retries, last_err)
+                continue
+            accounts = data["result"].get("value", [])
+            if not accounts:
+                return 0
+            return int(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"])
+        except Exception as e:
+            last_err = e
+            log.warning("Token balance fetch failed (attempt %d/%d): %s", attempt + 1, retries, e)
+    raise RuntimeError(f"Token balance unavailable after {retries} attempts: {last_err}")
 
 
 def _token_decimals_from_rpc(wallet_pubkey: str, token_mint: str) -> int:
