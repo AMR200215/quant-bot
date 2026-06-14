@@ -254,6 +254,72 @@ def _confirm_tx(sig: str, max_wait: int = 40) -> tuple[bool, object]:
     return False, None   # timeout
 
 
+def _fill_from_transaction(sig: str, wallet: str, token_address: str,
+                           size_usd: float, retries: int = 3) -> tuple[float | None, bool]:
+    """
+    Fetch a confirmed tx and compute fill price from on-chain token balance deltas.
+
+    Returns (fill_price, entry_estimated):
+      fill_price      — real fill derived from postTokenBalances; None if unavailable
+      entry_estimated — True if fill_price is None (caller should use Jupiter quote fallback
+                        and tag the position entry_estimated=True)
+
+    Uses one getTransaction call instead of getTokenAccounts + getTokenDecimals.
+    Replaces three separate RPC calls and eliminates the stale-Jupiter-quote entry bug.
+    """
+    for attempt in range(retries):
+        try:
+            resp = _rpc_post({
+                "jsonrpc": "2.0", "id": 1,
+                "method":  "getTransaction",
+                "params":  [sig, {
+                    "encoding":                       "jsonParsed",
+                    "commitment":                     "confirmed",
+                    "maxSupportedTransactionVersion": 0,
+                }],
+            }, timeout=10)
+            data = resp.json().get("result")
+            if data is None:
+                # Not indexed yet — retry
+                time.sleep(2)
+                continue
+
+            meta = data.get("meta") or {}
+
+            # Find the wallet's token balance delta for this mint
+            pre_by_idx = {
+                b["accountIndex"]: int(b["uiTokenAmount"]["amount"])
+                for b in (meta.get("preTokenBalances") or [])
+                if b.get("mint") == token_address
+            }
+            for b in (meta.get("postTokenBalances") or []):
+                if b.get("mint") != token_address:
+                    continue
+                if b.get("owner") != wallet:
+                    continue
+                idx      = b["accountIndex"]
+                post_amt = int(b["uiTokenAmount"]["amount"])
+                decimals = int(b["uiTokenAmount"].get("decimals") or 6)
+                pre_amt  = pre_by_idx.get(idx, 0)
+                tokens_received = post_amt - pre_amt
+                if tokens_received > 0:
+                    fill_price = size_usd / (tokens_received / 10 ** decimals)
+                    log.info("fill_from_tx  sig=%s  tokens=%d  decimals=%d  fill=$%.10f",
+                             sig[:16], tokens_received, decimals, fill_price)
+                    return fill_price, False
+
+            log.warning("fill_from_tx: no matching token delta for %s in tx %s",
+                        token_address[:8], sig[:16])
+            return None, True
+
+        except Exception as e:
+            log.debug("fill_from_tx attempt %d/%d failed: %s", attempt + 1, retries, e)
+            time.sleep(2)
+
+    log.warning("fill_from_tx: all %d attempts failed for sig=%s", retries, sig[:16])
+    return None, True
+
+
 def _sol_price_usd() -> float:
     """Fetch current SOL/USD price by quoting 1 SOL → USDC via Jupiter."""
     try:
@@ -611,35 +677,28 @@ class MemeExecutor:
                 return {"success": False, "reason": "unconfirmed", "tx_sig": sig,
                         "jupiter_quote_price": jupiter_quote_price}
 
-            # ── Fill from on-chain balance delta (not from quote) ─────────────
-            # If the tx confirmed with no on-chain error, tokens ARE in the wallet.
-            # Never abort the position due to an unreadable balance — fall back to
-            # Jupiter quote price so PumpPortal can take over monitoring immediately.
-            fill_price = jupiter_quote_price  # fallback if balance unreadable
-            try:
-                bal_after       = _token_balance(wallet, token_address, retries=1)
-                tokens_received = bal_after - bal_before
-                if tokens_received > 0:
-                    decimals   = _token_decimals_from_rpc(wallet, token_address)
-                    fill_price = size_usd / (tokens_received / 10 ** decimals)
-                    log.info("BUY confirmed  sig=%s  tokens=%d  fill=$%.10f",
-                             sig[:16], tokens_received, fill_price)
-                else:
-                    log.warning(
-                        "BUY confirmed but balance delta=0 (RPC lag?) — "
-                        "opening position at Jupiter quote $%.10f  sig=%s",
-                        fill_price, sig[:16],
-                    )
-            except RuntimeError as _bal_err:
+            # ── Fill from on-chain tx data (single getTransaction call) ──────
+            # Replaces _token_balance + _token_decimals (2 extra RPC calls).
+            # Returns the real fill from postTokenBalances — same token, same tx,
+            # correct venue (PumpPortal curve), correct time.
+            # Falls back to Jupiter quote only if getTransaction can't parse the
+            # delta, and tags those positions entry_estimated=True so they're
+            # excluded from live PnL comparisons.
+            fill_price, entry_estimated = _fill_from_transaction(
+                sig, wallet, token_address, size_usd
+            )
+            if fill_price is None:
+                fill_price = jupiter_quote_price
                 log.warning(
-                    "BUY confirmed but balance unreadable (%s) — "
-                    "opening position at Jupiter quote $%.10f  sig=%s",
-                    _bal_err, fill_price, sig[:16],
+                    "BUY confirmed but tx parse failed — "
+                    "opening at Jupiter quote $%.10f (entry_estimated)  sig=%s",
+                    fill_price, sig[:16],
                 )
 
             return {
                 "success":             True,
                 "fill_price":          fill_price,
+                "entry_estimated":     entry_estimated,
                 "tx_sig":              sig,
                 "jupiter_quote_price": jupiter_quote_price,
                 "timing": {
@@ -813,10 +872,60 @@ class MemeExecutor:
                                 step, _step_err)
                     continue
 
-            # All 3 steps reverted
+            # All 3 PumpPortal steps reverted — token may have graduated to Raydium.
+            # Graduated tokens (bonding curve complete, now on Raydium AMM) revert
+            # PumpPortal trade-local. Jupiter routes through Raydium directly.
+            # Only fires on the all-reverted path — cannot harm sells that work.
+            log.warning(
+                "SELL ladder EXHAUSTED — trying Jupiter fallback (graduated token?)  token=%s",
+                token_address[:8],
+            )
+            try:
+                if balance is not None and balance > 0:
+                    _jup_quote = _jup_get_quote(token_address, SOL_MINT, balance)
+                    _jup_tx    = _jup_build_swap_tx(
+                        _jup_quote, wallet,
+                        slippage_bps=5000,          # 50% — graduated token, take the exit
+                        priority_fee_lamports=int(0.001 * 1e9),
+                    )
+                    _, VersionedTransaction, _ = _load_solders()
+                    _jup_signed = VersionedTransaction(
+                        VersionedTransaction.from_bytes(_jup_tx).message, [keypair]
+                    )
+                    _jup_sig  = _send_transaction(bytes(_jup_signed))
+                    all_sigs.append(_jup_sig)
+                    log.warning("SELL Jupiter fallback sent  sig=%s  token=%s",
+                                _jup_sig[:16], token_address[:8])
+                    _jup_conf, _jup_err = _confirm_tx(_jup_sig)
+                    if _jup_conf:
+                        sol_bal_after = None
+                        try:
+                            sol_bal_after = _sol_balance(wallet)
+                        except RuntimeError:
+                            pass
+                        sol_received = max(0, sol_bal_after - sol_bal_before) / 1e9 if (sol_bal_after and sol_bal_before) else 0
+                        sol_price    = _sol_price_usd()
+                        decimals     = _token_decimals_from_rpc(wallet, token_address) if balance else 6
+                        tokens_sold  = balance / (10 ** decimals) if balance else 0
+                        fill_price   = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else entry_price
+                        log.info("SELL Jupiter fallback confirmed  sig=%s  fill=$%.10f",
+                                 _jup_sig[:16], fill_price)
+                        return {
+                            "success":       True,
+                            "fill_price":    fill_price,
+                            "tx_sig":        _jup_sig,
+                            "all_sigs":      all_sigs,
+                            "ladder_step":   len(SELL_LADDER) + 1,
+                            "jup_fallback":  True,
+                        }
+                    log.warning("SELL Jupiter fallback unconfirmed  sig=%s  err=%s",
+                                _jup_sig[:16], _jup_err)
+            except Exception as _jup_err:
+                log.warning("SELL Jupiter fallback error: %s", _jup_err)
+
             log.error(
-                "SELL ladder EXHAUSTED — all %d steps reverted  token=%s  sigs=%s",
-                len(SELL_LADDER), token_address[:8], all_sigs,
+                "SELL ladder EXHAUSTED (incl. Jupiter fallback)  token=%s  sigs=%s",
+                token_address[:8], all_sigs,
             )
             return {
                 "success":     False,

@@ -977,8 +977,9 @@ class Portfolio:
                 live_pos.entry_price   = fill_price
                 live_pos.current_price = fill_price
                 live_pos.peak_price    = fill_price
-                _dry_tag = "DRY_RUN|" if result.get("dry_run") else ""
-                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}"
+                _dry_tag  = "DRY_RUN|" if result.get("dry_run") else ""
+                _est_tag  = "|entry_estimated" if result.get("entry_estimated") else ""
+                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}"
                 # ── Paper twin: mirror live fill price for honest P&L comparison ──
                 # Rebase paper entry to actual fill so paper and live stops
                 # trigger at the same token price regardless of price source.
