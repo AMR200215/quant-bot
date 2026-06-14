@@ -120,19 +120,22 @@ class PumpListener:
 
     def _setup_urls(self):
         key = os.getenv("HELIUS_API_KEY", "")
-        # Always use public RPC for HTTP calls — reserves Helius quota for live trading
-        # (executor.py confirm_tx / token_balance).
-        self._rpc_url   = "https://api.mainnet-beta.solana.com"
+        self._rpc_url   = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
         self._helius_ws = f"wss://mainnet.helius-rpc.com/?api-key={key}" if key else ""
-        log.info("Pump.fun listener: RPC=public (Helius reserved for live trading)")
+        log.info("Pump.fun listener: RPC=%s  WS=%s",
+                 self._rpc_url[:40], self._helius_ws[:40] if self._helius_ws else "public")
 
     def _ws_endpoints(self) -> list[str]:
         """
         Return WS endpoints to try in order.
-        Helius free tier blocks websocket (plan limit). Public mainnet works
-        but rate-limits rapid reconnects — needs 60s+ between attempts.
+        Helius supports logsSubscribe on the free tier — use it as primary.
+        Public mainnet is heavily rate-limited from VPS IPs — fallback only.
         """
-        return ["wss://api.mainnet-beta.solana.com"]
+        endpoints = []
+        if self._helius_ws:
+            endpoints.append(self._helius_ws)
+        endpoints.append("wss://api.mainnet-beta.solana.com")
+        return endpoints
 
     # ------------------------------------------------------------------
     # Main loop with auto-reconnect + endpoint rotation
