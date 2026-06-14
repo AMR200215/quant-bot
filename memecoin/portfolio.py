@@ -758,9 +758,11 @@ class Portfolio:
             #   is still set so monitoring ticks begin arriving after fill.
             #   Drift enforcement is deferred to the Jupiter quote in executor:
             #   quote > signal_price × (1 + SLIPPAGE_GATE_DEX_PCT) → blocked_quote_drift.
-            _price_source = getattr(signal, "_price_source", "dex")
-            _pf_blocked = False
-            _pp_price   = 0.0
+            _price_source      = getattr(signal, "_price_source", "dex")
+            _pf_blocked        = False
+            _pp_price          = 0.0
+            _pp_at_gate        = 0.0   # PP price captured at gate time (dex-source path)
+            _exec_signal_price = paper_pos.signal_price  # baseline passed to executor
             try:
                 from memecoin import pumpportal_monitor as _pp_monitor
                 _pp        = _pp_monitor.monitor
@@ -848,20 +850,39 @@ class Portfolio:
                             _pf_blocked = True
 
                 else:
-                    # ── Type-2 path (dex source): defer drift check to Jupiter quote ──
-                    # PP subscription set above; no price available at this stage.
-                    # Executor will enforce SLIPPAGE_GATE_DEX_PCT (15%) against the
-                    # real Jupiter quote before any SOL is spent.
+                    # ── Type-2 path (dex source): wait up to 2s for PP tick ──────
+                    # PP was subscribed above. For a fresh pump.fun token the first
+                    # trade event often arrives within 1-2s of subscribe. If we get
+                    # one, upgrade to same-venue comparison (PP_at_gate ÷ Jupiter)
+                    # which measures only real movement, not DexScreener indexer lag.
+                    # If PP stays silent, fall back to cross-venue dex baseline.
                     try:
                         from memecoin.health_monitor import bump_preflight_attempt as _bpa
                         _bpa()
                     except Exception:
                         pass
-                    log.info(
-                        "LIVE PREFLIGHT DEFERRED %s — source=dex, "
-                        "drift gate moved to Jupiter quote (%.0f%% max)",
-                        live_pos.token_symbol, SLIPPAGE_GATE_DEX_PCT * 100,
-                    )
+                    _pp_at_gate    = 0.0
+                    _pf_deadline2  = time.time() + 2.0
+                    while time.time() < _pf_deadline2:
+                        _p2 = _pp.get_prices().get(_mint, 0)
+                        if _p2 > 0:
+                            _pp_at_gate = _p2
+                            break
+                        time.sleep(0.1)
+                    if _pp_at_gate > 0:
+                        _exec_signal_price = _pp_at_gate
+                        log.info(
+                            "LIVE PREFLIGHT UPGRADED %s — PP ticked at gate: $%.10f "
+                            "(dex was $%.10f) — using same-venue baseline",
+                            live_pos.token_symbol, _pp_at_gate, _sig_price or 0,
+                        )
+                    else:
+                        _exec_signal_price = paper_pos.signal_price
+                        log.info(
+                            "LIVE PREFLIGHT DEFERRED %s — PP silent after 2s, "
+                            "using dex baseline $%.10f (%.0f%% cross-venue gate)",
+                            live_pos.token_symbol, _sig_price or 0, SLIPPAGE_GATE_DEX_PCT * 100,
+                        )
 
             except Exception as _pf_err:
                 log.warning(
@@ -903,7 +924,7 @@ class Portfolio:
 
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
-                            signal_price=paper_pos.signal_price,
+                            signal_price=_exec_signal_price,
                             max_slippage_pct=0.30)
             if result.get("success"):
                 fill_price = result.get("fill_price") or live_pos.entry_price
@@ -969,38 +990,42 @@ class Portfolio:
                             _dry_pfx, live_pos.token_symbol,
                             result.get("tx_sig","")[:16], result.get("fill_price",0))
 
-                # ── Entry latency / slippage instrumentation (Step 2) ──────────
+                # ── Entry latency / slippage instrumentation ─────────────────
                 # dex_price   = DexScreener at screening time (stale — indexer lag)
                 # pp_sig      = PumpPortal at decision time (live — no lag)
+                # pp_gate     = PumpPortal at gate time (2s after subscribe, dex-source only)
                 # jup_price   = Jupiter quote at execution time
                 # fill_price  = actual on-chain fill
                 # artifact    = (pp_sig/dex - 1) — DexScreener indexer lag %
                 # screen_slip = (jup/pp_sig - 1) — movement during screen window
                 # real_slip   = (fill/jup - 1)   — movement during execution window
-                _t_now      = time.time()
-                _dex_price  = getattr(signal, "_price_dex", 0) or 0
-                _pp_sig     = getattr(signal, "_price_pp", 0) or 0
-                _price_src  = getattr(signal, "_price_source", "dex")
-                _jup_price  = result.get("jupiter_quote_price") or 0
-                _timing     = result.get("timing") or {}
-                _t_receive  = getattr(signal, "_t_tg_receive", 0) or 0
-                _t_screen   = getattr(signal, "_t_screen_end", 0) or 0
-                _artifact   = (_pp_sig / _dex_price - 1) * 100 if _dex_price and _pp_sig else None
+                # total_slip  = (fill/exec_signal - 1) — true cost vs gate baseline
+                _t_now       = time.time()
+                _dex_price   = getattr(signal, "_price_dex", 0) or 0
+                _pp_sig      = getattr(signal, "_price_pp", 0) or 0
+                _price_src   = getattr(signal, "_price_source", "dex")
+                _jup_price   = result.get("jupiter_quote_price") or 0
+                _timing      = result.get("timing") or {}
+                _t_receive   = getattr(signal, "_t_tg_receive", 0) or 0
+                _t_screen    = getattr(signal, "_t_screen_end", 0) or 0
+                _artifact    = (_pp_sig / _dex_price - 1) * 100 if _dex_price and _pp_sig else None
                 _screen_slip = (_jup_price / _pp_sig - 1) * 100 if _pp_sig and _jup_price else None
-                _real_slip  = (fill_price / _jup_price - 1) * 100 if _jup_price and fill_price else None
-                _total      = (_t_now - _t_receive) if _t_receive else None
-                _leg_screen = (_t_screen - _t_receive) if _t_receive and _t_screen else None
-                _leg_exec   = _timing.get("t_confirm")
+                _real_slip   = (fill_price / _jup_price - 1) * 100 if _jup_price and fill_price else None
+                _total_slip  = (fill_price / _exec_signal_price - 1) * 100 if _exec_signal_price and fill_price else None
+                _total       = (_t_now - _t_receive) if _t_receive else None
+                _leg_screen  = (_t_screen - _t_receive) if _t_receive and _t_screen else None
+                _leg_exec    = _timing.get("t_confirm")
                 log.warning(
                     "ENTRY TIMING %s | src=%s | "
-                    "dex=$%.8f  pp_sig=$%.8f  jup=$%.8f  fill=$%.8f | "
-                    "artifact=%s%%  screen_slip=%s%%  real_slip=%s%% | "
+                    "dex=$%.8f  pp_sig=$%.8f  pp_gate=$%.8f  jup=$%.8f  fill=$%.8f | "
+                    "artifact=%s%%  screen_slip=%s%%  real_slip=%s%%  total_slip=%s%% | "
                     "screen=%.1fs  quote=%.2fs  submit=%.2fs  confirm=%.2fs  total=%.1fs",
                     live_pos.token_symbol, _price_src,
-                    _dex_price, _pp_sig or 0, _jup_price or 0, fill_price,
+                    _dex_price, _pp_sig or 0, _pp_at_gate or 0, _jup_price or 0, fill_price,
                     f"{_artifact:.1f}" if _artifact is not None else "?",
                     f"{_screen_slip:.1f}" if _screen_slip is not None else "?",
                     f"{_real_slip:.1f}" if _real_slip is not None else "?",
+                    f"{_total_slip:.1f}" if _total_slip is not None else "?",
                     _leg_screen or 0,
                     _timing.get("t_quote", 0),
                     _timing.get("t_submit", 0),
