@@ -144,11 +144,10 @@ def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
     return resp
 
 
-def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 3) -> int:
+def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 1) -> int:
     """Return raw token balance (smallest unit) for a wallet.
-    Retries on RPC error — critical when called post-confirmation to avoid
-    misreading a rate-limited response as zero tokens received.
-    Raises RuntimeError if all attempts fail so callers know it's an RPC issue.
+    Raises RuntimeError on RPC error so callers can decide how to handle it
+    (e.g. fall back to quote price) rather than silently returning 0.
     """
     last_err = None
     for attempt in range(retries):
@@ -167,7 +166,6 @@ def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 3) -> int
             data = resp.json()
             if "result" not in data:
                 last_err = data.get("error", resp.status_code)
-                log.warning("Token balance RPC error (attempt %d/%d): %s", attempt + 1, retries, last_err)
                 continue
             accounts = data["result"].get("value", [])
             if not accounts:
@@ -175,8 +173,7 @@ def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 3) -> int
             return int(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"])
         except Exception as e:
             last_err = e
-            log.warning("Token balance fetch failed (attempt %d/%d): %s", attempt + 1, retries, e)
-    raise RuntimeError(f"Token balance unavailable after {retries} attempts: {last_err}")
+    raise RuntimeError(f"Token balance unavailable: {last_err}")
 
 
 def _token_decimals_from_rpc(wallet_pubkey: str, token_mint: str) -> int:
@@ -592,21 +589,30 @@ class MemeExecutor:
                         "jupiter_quote_price": jupiter_quote_price}
 
             # ── Fill from on-chain balance delta (not from quote) ─────────────
-            bal_after       = _token_balance(wallet, token_address)
-            tokens_received = bal_after - bal_before
-            if tokens_received <= 0:
-                # Confirmed but zero delta — treat as failure (shouldn't happen often)
-                log.error(
-                    "BUY confirmed but zero token delta  sig=%s  before=%d  after=%d",
-                    sig[:16], bal_before, bal_after,
+            # If the tx confirmed with no on-chain error, tokens ARE in the wallet.
+            # Never abort the position due to an unreadable balance — fall back to
+            # Jupiter quote price so PumpPortal can take over monitoring immediately.
+            fill_price = jupiter_quote_price  # fallback if balance unreadable
+            try:
+                bal_after       = _token_balance(wallet, token_address, retries=1)
+                tokens_received = bal_after - bal_before
+                if tokens_received > 0:
+                    decimals   = _token_decimals_from_rpc(wallet, token_address)
+                    fill_price = size_usd / (tokens_received / 10 ** decimals)
+                    log.info("BUY confirmed  sig=%s  tokens=%d  fill=$%.10f",
+                             sig[:16], tokens_received, fill_price)
+                else:
+                    log.warning(
+                        "BUY confirmed but balance delta=0 (RPC lag?) — "
+                        "opening position at Jupiter quote $%.10f  sig=%s",
+                        fill_price, sig[:16],
+                    )
+            except RuntimeError as _bal_err:
+                log.warning(
+                    "BUY confirmed but balance unreadable (%s) — "
+                    "opening position at Jupiter quote $%.10f  sig=%s",
+                    _bal_err, fill_price, sig[:16],
                 )
-                return {"success": False, "reason": "zero_token_delta",
-                        "tx_sig": sig, "jupiter_quote_price": jupiter_quote_price}
-
-            decimals   = _token_decimals_from_rpc(wallet, token_address)
-            fill_price = size_usd / (tokens_received / 10 ** decimals)
-            log.info("BUY confirmed  sig=%s  tokens=%d  fill=$%.10f",
-                     sig[:16], tokens_received, fill_price)
 
             return {
                 "success":             True,
