@@ -232,6 +232,16 @@ class PumpPortalMonitor:
         self._daily_blind_exits: int = 0
         self._telem_lock             = threading.Lock()
 
+        # ── Connection rotation ───────────────────────────────────────────
+        # At age 55s, attempt overlap rotation to prevent server-initiated drop at ~73s.
+        # _planned_close: recv loop returns normally (not raises) → fail_count stays 0.
+        # _prewarm_ws: pre-opened replacement WS; _connect() uses it on next call.
+        self._planned_close: bool        = False
+        self._prewarm_ws                 = None
+        self._prewarm_lock               = threading.Lock()
+        self._overlap_refused_count: int = 0   # fallback-to-sequential count
+        self._rotation_success_count: int = 0  # successful overlap count
+
     # ------------------------------------------------------------------
     # Public API — lifecycle
     # ------------------------------------------------------------------
@@ -253,7 +263,12 @@ class PumpPortalMonitor:
         )
         hb_t.start()
 
-        log.info("PumpPortal monitor started (monitor + sol-price + heartbeat threads)")
+        rot_t = threading.Thread(
+            target=self._rotation_thread_fn, daemon=daemon, name="pp-rotation"
+        )
+        rot_t.start()
+
+        log.info("PumpPortal monitor started (monitor + sol-price + heartbeat + rotation threads)")
 
     # ------------------------------------------------------------------
     # Public API — position monitoring
@@ -297,6 +312,19 @@ class PumpPortalMonitor:
         with self._cache_lock:
             return {
                 mint: price
+                for mint, (price, ts) in self._price_cache.items()
+                if now - ts <= max_age
+            }
+
+    def get_prices_with_ts(self, max_age: float = PRICE_STALE_SEC) -> dict[str, tuple[float, float]]:
+        """
+        Return fresh prices with timestamps as {mint: (price_usd, ts)}.
+        Used by scanner for freshest-of(PP, Helius) merge.
+        """
+        now = time.time()
+        with self._cache_lock:
+            return {
+                mint: (price, ts)
                 for mint, (price, ts) in self._price_cache.items()
                 if now - ts <= max_age
             }
@@ -477,6 +505,132 @@ class PumpPortalMonitor:
                     except Exception:
                         pass
 
+    def _rotation_thread_fn(self):
+        """
+        Wakes every 5s. At connection age 55s, triggers overlap rotation to
+        prevent the server-initiated drop that occurs at ~73s median lifetime.
+        Goal: gap < 100ms via overlap; < 500ms via sequential fallback.
+        """
+        while True:
+            time.sleep(5)
+            if self._conn_start_ts <= 0 or self._planned_close:
+                continue
+            age = time.time() - self._conn_start_ts
+            if age >= 55:
+                self._attempt_rotation()
+
+    def _attempt_rotation(self):
+        """
+        Overlap rotation: open a new WS connection, subscribe all mints, wait for
+        a first tick (proves it's alive), then seamlessly swap. If the server
+        refuses a concurrent connection (no tick in 5s), fall back to fast sequential
+        reconnect by closing the old WS cleanly via _planned_close.
+        """
+        try:
+            import websocket as _ws_mod
+            new_ws = _ws_mod.create_connection(WS_URL, timeout=10)
+        except Exception as e:
+            log.debug("PP rotation: failed to open new WS: %s", e)
+            with self._telem_lock:
+                self._overlap_refused_count += 1
+            # Sequential fallback: close old → reconnect
+            self._planned_close = True
+            with self._ws_lock:
+                old_ws = self._ws
+            if old_ws is not None:
+                try:
+                    old_ws.close()
+                except Exception:
+                    pass
+            return
+
+        # Subscribe all current mints on the new connection
+        with self._sub_lock:
+            current_mints = set(self._subscribed)
+        with self._screening_lock:
+            current_mints |= set(self._screening.keys())
+        if current_mints:
+            sub_msg = json.dumps({"method": "subscribeTokenTrade", "keys": list(current_mints)})
+            try:
+                new_ws.send(sub_msg)
+            except Exception as e:
+                log.debug("PP rotation: subscribe send failed on new WS: %s", e)
+                try:
+                    new_ws.close()
+                except Exception:
+                    pass
+                with self._telem_lock:
+                    self._overlap_refused_count += 1
+                self._planned_close = True
+                with self._ws_lock:
+                    old_ws = self._ws
+                if old_ws is not None:
+                    try:
+                        old_ws.close()
+                    except Exception:
+                        pass
+                return
+
+        # Wait for first tick on new WS — proves the connection is alive and subscribed
+        tick_event = threading.Event()
+
+        def _read_first_tick():
+            try:
+                new_ws.settimeout(5.5)
+                raw = new_ws.recv()
+                if raw:
+                    tick_event.set()
+            except Exception:
+                pass
+
+        tick_thread = threading.Thread(target=_read_first_tick, daemon=True,
+                                       name="pp-rot-tick-wait")
+        tick_thread.start()
+        got_tick = tick_event.wait(timeout=6.0)
+        tick_thread.join(timeout=0.1)
+
+        if got_tick:
+            # Seamless handover: install prewarm, mark old as planned close
+            with self._prewarm_lock:
+                self._prewarm_ws = new_ws
+            self._planned_close = True
+            with self._ws_lock:
+                old_ws = self._ws
+            if old_ws is not None:
+                try:
+                    old_ws.close()
+                except Exception:
+                    pass
+            with self._telem_lock:
+                self._rotation_success_count += 1
+            log.info(
+                "PP rotation SUCCESS (overlap) — age=%.0fs  total_rotations=%d",
+                time.time() - self._conn_start_ts,
+                self._rotation_success_count,
+            )
+        else:
+            # No tick in 5s — server refused concurrent connection or no active tokens
+            try:
+                new_ws.close()
+            except Exception:
+                pass
+            with self._telem_lock:
+                self._overlap_refused_count += 1
+            # Sequential fallback: close old WS → _run immediately calls _connect()
+            self._planned_close = True
+            with self._ws_lock:
+                old_ws = self._ws
+            if old_ws is not None:
+                try:
+                    old_ws.close()
+                except Exception:
+                    pass
+            log.info(
+                "PP rotation SEQUENTIAL fallback (no tick in 5s) — age=%.0fs  refused=%d",
+                time.time() - self._conn_start_ts,
+                self._overlap_refused_count,
+            )
+
     # ------------------------------------------------------------------
     # WebSocket reconnect loop
     # ------------------------------------------------------------------
@@ -509,7 +663,19 @@ class PumpPortalMonitor:
             time.sleep(3600)
             return
 
-        ws = _ws_mod.create_connection(WS_URL, timeout=30)
+        # Check if rotation pre-warmed a replacement connection
+        with self._prewarm_lock:
+            prewarm = self._prewarm_ws
+            self._prewarm_ws = None
+
+        # Clear planned_close flag before entering recv loop
+        self._planned_close = False
+
+        if prewarm is not None:
+            ws = prewarm
+            log.info("PumpPortal using pre-warmed rotation WS (gap <100ms)")
+        else:
+            ws = _ws_mod.create_connection(WS_URL, timeout=30)
 
         conn_start = time.time()
         self._conn_start_ts = conn_start
@@ -523,16 +689,18 @@ class PumpPortalMonitor:
                 gap = conn_start - self._drop_start_ts
                 self._daily_gap_sec += gap
                 self._drop_start_ts  = 0.0
-        log.info("PumpPortal WebSocket connected (conn_start=%s)",
-                 time.strftime("%H:%M:%S", time.gmtime(conn_start)))
+        log.info("PumpPortal WebSocket connected (conn_start=%s prewarm=%s)",
+                 time.strftime("%H:%M:%S", time.gmtime(conn_start)),
+                 prewarm is not None)
 
-        # Re-subscribe to all mints on reconnect
-        with self._sub_lock:
-            current = set(self._subscribed)
-        with self._screening_lock:
-            current |= set(self._screening.keys())
-        if current:
-            self._send_subscribe(current)
+        # Re-subscribe to all mints on fresh connect (prewarm already subscribed)
+        if prewarm is None:
+            with self._sub_lock:
+                current = set(self._subscribed)
+            with self._screening_lock:
+                current |= set(self._screening.keys())
+            if current:
+                self._send_subscribe(current)
 
         # ── Pure recv loop — NO HTTP, NO sleeps, NO RPC ──────────────────
         try:
@@ -540,13 +708,17 @@ class PumpPortalMonitor:
                 try:
                     raw = ws.recv()
                 except Exception:
-                    raise   # triggers reconnect via _run
+                    if self._planned_close:
+                        return   # planned rotation — exit cleanly, _run resets fail_count
+                    raise   # unplanned drop — triggers reconnect via _run
 
                 # Track liveness for heartbeat and blind-exit
                 with self._frame_lock:
                     self._last_frame_ts = time.time()
 
                 if not raw:
+                    if self._planned_close:
+                        return
                     raise ConnectionError("empty recv — PumpPortal closed connection")
 
                 try:
@@ -556,8 +728,9 @@ class PumpPortalMonitor:
 
                 self._handle_message(msg)
         finally:
-            # Record drop telemetry before cleanup
-            self._record_drop(conn_start)
+            # Only record as an unplanned drop if not a rotation
+            if not self._planned_close:
+                self._record_drop(conn_start)
             with self._ws_lock:
                 self._ws = None
 
