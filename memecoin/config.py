@@ -73,7 +73,7 @@ LIVE_DRY_RUN = False
 # ---------------------------------------------------------------------------
 REALTIME_PRICE_FEED   = True
 SLIPPAGE_GATE_RT_PCT  = 0.20   # 20% gate vs PP signal price (real movement only)
-SLIPPAGE_GATE_DEX_PCT = 0.15   # 15% gate vs DexScreener baseline (legacy / fallback)
+SLIPPAGE_GATE_DEX_PCT = 0.50   # 50% gate vs DexScreener baseline — pump.fun tokens move fast
 
 # ---------------------------------------------------------------------------
 # Executor backend

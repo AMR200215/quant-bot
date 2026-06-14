@@ -45,7 +45,9 @@ def _send(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def alert_position_open(sig, pos) -> bool:
-    """Fired when a new paper position is opened."""
+    """Fired when a new paper position is opened. Only notifies for social_alert."""
+    if sig.signal_type != "social_alert":
+        return False
     chain_short = "SOL" if sig.chain == "solana" else "BSC"
     lines = [
         f"[PAPER OPEN] {sig.token_symbol or sig.token_address[:8]} ({chain_short})",
@@ -96,7 +98,9 @@ def alert_live_sell(pos, sol_received: float, tx_sig: str) -> bool:
 
 
 def alert_position_close(pos) -> bool:
-    """Fired when a paper position is closed."""
+    """Fired when a paper position is closed. Only notifies for social_alert."""
+    if pos.signal_type != "social_alert":
+        return False
     # Skip paper close alert if this was a live position — alert_live_sell handles it
     if pos.notes and "live|tx:" in pos.notes:
         return False
@@ -115,7 +119,9 @@ def alert_position_close(pos) -> bool:
 
 
 def alert_tp_hit(pos, tp_pct: float, locked_usd: float) -> bool:
-    """Fired when a take-profit level is hit."""
+    """Fired when a take-profit level is hit. Only notifies for social_alert."""
+    if pos.signal_type != "social_alert":
+        return False
     pnl_now = pos.pnl_pct * 100
     chain_short = "SOL" if pos.chain == "solana" else "BSC"
     lines = [
