@@ -693,13 +693,28 @@ class MemeExecutor:
                     "ladder_step": 0,
                 }
 
-            balance = _token_balance(wallet, token_address)
-            if balance == 0:
+            # _token_balance / _sol_balance can raise RuntimeError on RPC rate-limit.
+            # For PumpPortal sells we use amount="100%" so balance is only needed for
+            # fill price calculation — not for the tx itself.  Never block a sell on RPC.
+            balance = None
+            try:
+                balance = _token_balance(wallet, token_address)
+            except RuntimeError as _rpc_err:
+                if EXECUTOR_BACKEND == "pumpportal":
+                    log.warning("SELL _token_balance RPC error — proceeding with 100%% sell: %s", _rpc_err)
+                else:
+                    raise   # Jupiter path needs exact balance for quote lamports
+
+            if balance is not None and balance == 0:
                 log.warning("SELL skipped — zero balance  token=%s", token_address[:8])
                 return {"success": False, "reason": "zero_balance"}
 
-            # Snapshot SOL balance before first attempt
-            sol_bal_before = _sol_balance(wallet)
+            # Snapshot SOL balance before first attempt (for fill price only — not blocking)
+            sol_bal_before = None
+            try:
+                sol_bal_before = _sol_balance(wallet)
+            except RuntimeError as _rpc_err:
+                log.warning("SELL _sol_balance RPC error — fill price will use entry_price fallback: %s", _rpc_err)
 
             all_sigs: list[str] = []
 
@@ -739,13 +754,25 @@ class MemeExecutor:
 
                     if confirmed:
                         # Success — compute fill from SOL balance delta
-                        sol_bal_after    = _sol_balance(wallet)
-                        sol_recv_lam     = max(0, sol_bal_after - sol_bal_before)
-                        sol_price        = _sol_price_usd()
-                        decimals         = _token_decimals_from_rpc(wallet, token_address)
-                        tokens_sold      = balance / (10 ** decimals)
-                        sol_received     = sol_recv_lam / 1e9
-                        fill_price       = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
+                        fill_price   = None
+                        sol_received = 0.0
+                        try:
+                            sol_bal_after = _sol_balance(wallet)
+                            if sol_bal_before is not None:
+                                sol_recv_lam  = max(0, sol_bal_after - sol_bal_before)
+                                sol_received  = sol_recv_lam / 1e9
+                                sol_price     = _sol_price_usd()
+                                if balance is not None:
+                                    decimals      = _token_decimals_from_rpc(wallet, token_address)
+                                    tokens_sold   = balance / (10 ** decimals)
+                                    fill_price    = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
+                        except RuntimeError as _rpc_err:
+                            log.warning("SELL fill price RPC error — using entry_price fallback: %s", _rpc_err)
+
+                        if fill_price is None:
+                            fill_price = entry_price   # fallback: at least journal closes correctly
+                            log.warning("SELL fill_price unavailable — journaling at entry_price $%.10f", fill_price)
+
                         log.info(
                             "SELL confirmed step %d  sig=%s  sol_recv=%.6f  fill=$%.10f",
                             step, sig[:16], sol_received, fill_price or 0,
