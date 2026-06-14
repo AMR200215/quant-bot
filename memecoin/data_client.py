@@ -4,6 +4,7 @@ Solana RPC, and BscScan.  All functions return plain dicts / None on failure.
 """
 
 import logging
+import os
 import time
 from typing import Optional
 
@@ -122,7 +123,8 @@ def gmgn_wallet_stats_sol(wallet: str) -> Optional[dict]:
 # Solana RPC — wallet transaction polling
 # ---------------------------------------------------------------------------
 
-SOL_RPC = CHAINS["solana"]["rpc"]
+# Use Helius key if available — avoids public endpoint rate limits from wallet polling
+SOL_RPC = os.getenv("SOLANA_RPC_URL", CHAINS["solana"]["rpc"])
 
 
 def sol_get_recent_signatures(wallet: str, limit: int = 15,
