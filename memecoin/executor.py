@@ -25,6 +25,7 @@ import base64
 import concurrent.futures
 import logging
 import os
+import threading
 import time
 
 import requests
@@ -111,6 +112,48 @@ SLIPPAGE_GATE_RT_PCT  = _SLIPPAGE_GATE_RT_PCT
 _RENT_RESERVE      = 2_039_280   # token-account rent exemption
 _FEE_RESERVE       = 100_000    # tx priority-fee budget
 _PRESIGNED_RESERVE = 50_000     # headroom for presigned emergency exit
+
+
+# ---------------------------------------------------------------------------
+# Blockhash cache — refreshed every 2s by background thread.
+# Eliminates one getLatestBlockhash RPC call from the local-build path.
+# PumpPortal path fetches its own blockhash server-side; cache used by
+# Jupiter fallback and future local build.
+# ---------------------------------------------------------------------------
+_blockhash_cache: dict = {"blockhash": None, "ts": 0.0}
+_blockhash_lock  = threading.Lock()
+
+
+def _blockhash_refresher():
+    while True:
+        try:
+            resp = requests.post(
+                SOLANA_RPC,
+                json={"jsonrpc": "2.0", "id": 1,
+                      "method": "getLatestBlockhash",
+                      "params": [{"commitment": "confirmed"}]},
+                timeout=5,
+            )
+            bh = resp.json().get("result", {}).get("value", {}).get("blockhash")
+            if bh:
+                with _blockhash_lock:
+                    _blockhash_cache["blockhash"] = bh
+                    _blockhash_cache["ts"]        = time.time()
+        except Exception:
+            pass
+        time.sleep(2)
+
+
+threading.Thread(target=_blockhash_refresher, daemon=True,
+                 name="blockhash-cache").start()
+
+
+def _get_cached_blockhash() -> str | None:
+    """Return cached blockhash if < 5s old, else None."""
+    with _blockhash_lock:
+        if time.time() - _blockhash_cache["ts"] < 5.0:
+            return _blockhash_cache["blockhash"]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +437,7 @@ def _send_transaction(signed_bytes: bytes) -> str:
         "method":  "sendTransaction",
         "params":  [
             base64.b64encode(signed_bytes).decode(),
-            {"encoding": "base64", "skipPreflight": True, "maxRetries": 2},
+            {"encoding": "base64", "skipPreflight": True, "maxRetries": 0},
         ],
     }
     resp = _rpc_post(payload, timeout=20)
@@ -518,15 +561,44 @@ class MemeExecutor:
             sol_amount = size_usd / sol_price          # SOL to spend (float)
             lamports   = int(sol_amount * 10 ** SOL_DECIMALS)
 
-            # ── Pre-buy free-SOL check ─────────────────────────────────────────
-            # Block if wallet doesn't have enough free SOL for trade + reserves.
-            # Alert at < 0.06 SOL free regardless of trade (low-balance warning).
-            # Skipped in LIVE_DRY_RUN — no SOL is spent, balance is irrelevant.
-            _free_sol_lam = 0 if LIVE_DRY_RUN else _sol_balance(wallet)
+            # ── Parallel pre-flight: SOL balance + Jupiter quote + priority fee ──
+            # Three independent network calls fired simultaneously.
+            # Critical path = max(~150ms, ~350ms, ~150ms) ≈ 350ms
+            # vs old sequential order (~150ms + ~350ms = ~500ms).
+            # SOL balance is collected first since RuntimeError there is fatal for buy.
+            _quote_gate         = SLIPPAGE_GATE_DEX_PCT
+            jupiter_quote_price = 0.0
+            _quote_fetch_err    = None
+            _buy_fee            = PRIORITY_FEE_SOL
+            _free_sol_lam       = 0
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _pool:
+                _sol_fut   = None if LIVE_DRY_RUN else _pool.submit(_sol_balance, wallet)
+                _quote_fut = _pool.submit(_jup_get_quote, SOL_MINT, token_address, lamports)
+                _fee_fut   = _pool.submit(_helius_priority_fee, token_address, "High")
+
+                if _sol_fut is not None:
+                    _free_sol_lam = _sol_fut.result(timeout=5)   # RuntimeError propagates → buy blocked
+                try:
+                    quote            = _quote_fut.result(timeout=10)
+                    token_decimals_q = int(quote.get("outputDecimals") or 6)
+                    tokens_out_q     = int(quote["outAmount"]) / (10 ** token_decimals_q)
+                    jupiter_quote_price = size_usd / tokens_out_q if tokens_out_q > 0 else 0
+                except Exception as e:
+                    _quote_fetch_err = e
+                    log.warning("Jupiter pre-flight quote failed: %s", e)
+                try:
+                    _buy_fee = _fee_fut.result(timeout=3)
+                except Exception:
+                    pass
+
+            _t_quoted = time.time()
+
+            # ── Pre-buy free-SOL check (balance now from parallel fetch) ──────────
             _required_lam = lamports + _RENT_RESERVE + _FEE_RESERVE + _PRESIGNED_RESERVE
             if not LIVE_DRY_RUN and _free_sol_lam < _required_lam:
-                _free_sol_val    = _free_sol_lam / 1e9
-                _required_sol    = _required_lam / 1e9
+                _free_sol_val = _free_sol_lam / 1e9
+                _required_sol = _required_lam / 1e9
                 log.warning(
                     "BUY blocked — insufficient_free_sol  free=%.6f SOL  "
                     "needed=%.6f SOL  token=%s",
@@ -542,12 +614,12 @@ class MemeExecutor:
                 except Exception:
                     pass
                 return {
-                    "success":      False,
-                    "reason":       "insufficient_free_sol",
-                    "free_sol":     round(_free_sol_val, 6),
-                    "needed_sol":   round(_required_sol, 6),
+                    "success":    False,
+                    "reason":     "insufficient_free_sol",
+                    "free_sol":   round(_free_sol_val, 6),
+                    "needed_sol": round(_required_sol, 6),
                 }
-            elif not LIVE_DRY_RUN and _free_sol_lam < 60_000_000:   # < 0.06 SOL — alert even if trade fits
+            elif not LIVE_DRY_RUN and _free_sol_lam < 60_000_000:
                 try:
                     from app.alerts import _send as _alert_send
                     _alert_send(
@@ -556,37 +628,6 @@ class MemeExecutor:
                     )
                 except Exception:
                     pass
-
-            # ── Pre-flight: Jupiter quote + Helius priority fee in parallel ──────
-            # Both are independent HTTP calls — fire them concurrently to save
-            # 100-200ms vs sequential.  Quote is needed for the drift gate;
-            # priority fee is needed for the tx build.
-            #
-            # Two quote gates:
-            #   1. no_quote   — Jupiter returned nothing → unquotable / dead token.
-            #   2. blocked_quote_drift — quote > signal_price × (1+gate) → already ran.
-            _quote_gate = SLIPPAGE_GATE_DEX_PCT
-            jupiter_quote_price = 0.0
-            _quote_fetch_err = None
-            _buy_fee = PRIORITY_FEE_SOL   # default; overwritten by parallel fetch
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
-                _quote_fut = _pool.submit(_jup_get_quote, SOL_MINT, token_address, lamports)
-                _fee_fut   = _pool.submit(_helius_priority_fee, token_address, "High")
-                try:
-                    quote = _quote_fut.result(timeout=10)
-                    token_decimals_q    = int(quote.get("outputDecimals") or 6)
-                    tokens_out_q        = int(quote["outAmount"]) / (10 ** token_decimals_q)
-                    jupiter_quote_price = size_usd / tokens_out_q if tokens_out_q > 0 else 0
-                except Exception as e:
-                    _quote_fetch_err = e
-                    log.warning("Jupiter pre-flight quote failed: %s", e)
-                try:
-                    _buy_fee = _fee_fut.result(timeout=3)
-                except Exception:
-                    pass   # falls back to PRIORITY_FEE_SOL default above
-
-            _t_quoted = time.time()
 
             # Gate 1: no quote → unquotable token, block before spending
             if signal_price > 0 and jupiter_quote_price == 0:
@@ -747,10 +788,22 @@ class MemeExecutor:
                     fill_price, sig[:16],
                 )
 
+            # ── Entry slippage: fill vs signal_price (Step 0 measurement) ────────
+            # Pins which row of the PnL-vs-slippage grid we're on.
+            # entry_estimated positions have unreliable fill_price — excluded.
+            entry_slippage_pct = None
+            if signal_price > 0 and fill_price and not entry_estimated:
+                entry_slippage_pct = round((fill_price / signal_price - 1) * 100, 1)
+                log.info(
+                    "ENTRY SLIPPAGE  sig=$%.10f  fill=$%.10f  slip=%+.1f%%  token=%s",
+                    signal_price, fill_price, entry_slippage_pct, token_address[:8],
+                )
+
             return {
                 "success":             True,
                 "fill_price":          fill_price,
                 "entry_estimated":     entry_estimated,
+                "entry_slippage_pct":  entry_slippage_pct,
                 "tx_sig":              sig,
                 "jupiter_quote_price": jupiter_quote_price,
                 "timing": {
