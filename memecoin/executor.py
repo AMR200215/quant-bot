@@ -674,6 +674,7 @@ class MemeExecutor:
                 pass
 
             if _pp_active and signal_price > 0 and jupiter_quote_price > 0:
+                # Same-venue gate: PP live vs Jupiter quote (measures real movement only)
                 slippage = (jupiter_quote_price / _gate_baseline - 1)
                 if slippage > _quote_gate:
                     log.warning(
@@ -690,12 +691,36 @@ class MemeExecutor:
                         "gate_baseline":       _gate_baseline,
                         "pp_used":             True,
                     }
-            elif not _pp_active:
-                log.info(
-                    "Gate 2 SKIPPED — PP silent, no same-venue baseline  token=%s  "
-                    "jup=$%.10f  dex_signal=$%.10f",
-                    token_address[:8], jupiter_quote_price, signal_price,
-                )
+            elif not _pp_active and signal_price > 0 and jupiter_quote_price > 0:
+                # Cross-venue fallback gate: DexScreener signal vs Jupiter quote.
+                # Measures how far the token has moved since the DexScreener snapshot.
+                # UK case: 273% above signal → blocked (bought near blown-off top).
+                # Graduated tokens with stale DexScreener: also blocked (correct —
+                #   PumpPortal can't buy graduated tokens anyway).
+                # Tokens within 50%: allowed through (normal indexer lag / small move).
+                _xv_slippage = (jupiter_quote_price / signal_price - 1)
+                if _xv_slippage > SLIPPAGE_GATE_DEX_PCT:
+                    log.warning(
+                        "BUY blocked — cross-venue drift %.1f%% > %.0f%% (PP silent, DEX fallback gate)  "
+                        "token=%s  dex_signal=$%.10f  jup=$%.10f",
+                        _xv_slippage * 100, SLIPPAGE_GATE_DEX_PCT * 100,
+                        token_address[:8], signal_price, jupiter_quote_price,
+                    )
+                    return {
+                        "success":             False,
+                        "reason":              "blocked_quote_drift",
+                        "slippage_pct":        round(_xv_slippage * 100, 1),
+                        "jupiter_quote_price": jupiter_quote_price,
+                        "gate_baseline":       signal_price,
+                        "pp_used":             False,
+                    }
+                else:
+                    log.info(
+                        "Gate 2 DEX fallback OK — %.1f%% < %.0f%% (PP silent)  token=%s  "
+                        "dex_signal=$%.10f  jup=$%.10f",
+                        _xv_slippage * 100, SLIPPAGE_GATE_DEX_PCT * 100,
+                        token_address[:8], signal_price, jupiter_quote_price,
+                    )
 
             # ── Shadow-live / dry-run mode ────────────────────────────────────
             # LIVE_DRY_RUN = True → full live path traversal (pre-flight + quote)
@@ -922,8 +947,27 @@ class MemeExecutor:
                     raise   # Jupiter path needs exact balance for quote lamports
 
             if balance is not None and balance == 0:
-                log.warning("SELL skipped — zero balance  token=%s", token_address[:8])
-                return {"success": False, "reason": "zero_balance"}
+                # RPC nodes can lag 1-3s after a recent buy confirmation — retry before giving up.
+                # UK bug: abort_tripwire fired 1s after BUY confirmed; RPC returned stale 0.
+                for _bal_retry in range(3):
+                    time.sleep(1.0)
+                    try:
+                        balance = _token_balance(wallet, token_address)
+                    except RuntimeError:
+                        pass
+                    if balance and balance > 0:
+                        log.info("SELL balance retry %d — found %d tokens  token=%s",
+                                 _bal_retry + 1, balance, token_address[:8])
+                        break
+                if balance == 0:
+                    if EXECUTOR_BACKEND == "pumpportal":
+                        # PumpPortal amount="100%" doesn't need the balance number.
+                        # Proceed anyway — better to attempt a sell than leave tokens stuck.
+                        log.warning("SELL zero balance after retries — proceeding with 100%% PumpPortal sell  token=%s",
+                                    token_address[:8])
+                    else:
+                        log.warning("SELL skipped — zero balance  token=%s", token_address[:8])
+                        return {"success": False, "reason": "zero_balance"}
 
             # Snapshot SOL balance before first attempt (for fill price only — not blocking)
             sol_bal_before = None
