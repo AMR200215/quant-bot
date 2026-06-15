@@ -44,10 +44,12 @@ JUPITER_SWAP_URL  = "https://lite-api.jup.ag/swap/v1/swap"
 
 PUMPPORTAL_TRADE_URL = "https://pumpportal.fun/api/trade-local"
 
-# Buy: 25% — tokens move 20-50% between screen and confirm; 5% was constant revert source.
+# Buy: 50% — tokens move 20-50% between screen and confirm; 25% was causing 6063 reverts
+#             on tokens that moved 40-50% from DexScreener baseline to on-chain confirm.
 # Sell: 35% — stop-loss that fails to execute is the worst outcome in the system.
-SLIPPAGE_BUY_PCT  = 25
-SLIPPAGE_SELL_PCT = 35
+SLIPPAGE_BUY_PCT        = 50
+SLIPPAGE_BUY_PCT_RETRY  = 60   # one-time retry on tx_reverted with higher slippage
+SLIPPAGE_SELL_PCT       = 35
 
 PRIORITY_FEE_SOL  = 0.0005   # floor fallback (~$0.085 at $170 SOL)
 
@@ -753,9 +755,43 @@ class MemeExecutor:
 
             if not confirmed:
                 if err is not None:
-                    # Tx landed but reverted (slippage exceeded, etc.) — do NOT record a position.
-                    log.warning("BUY reverted on-chain  sig=%s  err=%s  token=%s",
-                                sig[:16], err, token_address[:8])
+                    # Tx landed but reverted (slippage exceeded, etc.)
+                    # Retry once with higher slippage before giving up.
+                    log.warning("BUY reverted on-chain  sig=%s  err=%s  token=%s — retrying with %d%% slippage",
+                                sig[:16], err, token_address[:8], SLIPPAGE_BUY_PCT_RETRY)
+                    try:
+                        tx_bytes_r = _pumpportal_build_tx(
+                            wallet_pubkey=wallet,
+                            action="buy",
+                            token_mint=token_address,
+                            amount=sol_amount,
+                            denominated_in_sol=True,
+                            slippage_pct=SLIPPAGE_BUY_PCT_RETRY,
+                            priority_fee_sol=_buy_fee,
+                        )
+                        tx_r        = VersionedTransaction.from_bytes(tx_bytes_r)
+                        signed_tx_r = VersionedTransaction(tx_r.message, [keypair])
+                        sig_r       = _send_transaction(bytes(signed_tx_r))
+                        log.info("BUY retry tx sent  sig=%s  token=%s  slippage=%d%%",
+                                 sig_r[:16], token_address[:8], SLIPPAGE_BUY_PCT_RETRY)
+                        confirmed_r, err_r = _confirm_tx(sig_r)
+                        if confirmed_r:
+                            sig = sig_r   # use retry sig for fill price lookup below
+                            err = None
+                            log.info("BUY retry confirmed  sig=%s  token=%s", sig_r[:16], token_address[:8])
+                        else:
+                            log.warning("BUY retry also failed  sig=%s  err=%s  token=%s",
+                                        sig_r[:16], err_r, token_address[:8])
+                            return {"success": False, "reason": "tx_reverted",
+                                    "tx_sig": sig_r, "on_chain_err": str(err_r),
+                                    "jupiter_quote_price": jupiter_quote_price}
+                    except Exception as _retry_err:
+                        log.warning("BUY retry exception  token=%s  err=%s", token_address[:8], _retry_err)
+                        return {"success": False, "reason": "tx_reverted",
+                                "tx_sig": sig, "on_chain_err": str(err),
+                                "jupiter_quote_price": jupiter_quote_price}
+
+                if err is not None:
                     return {"success": False, "reason": "tx_reverted",
                             "tx_sig": sig, "on_chain_err": str(err),
                             "jupiter_quote_price": jupiter_quote_price}
