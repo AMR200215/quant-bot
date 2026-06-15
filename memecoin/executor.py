@@ -47,18 +47,23 @@ PUMPPORTAL_TRADE_URL = "https://pumpportal.fun/api/trade-local"
 SLIPPAGE_BUY_PCT  = 25
 SLIPPAGE_SELL_PCT = 35
 
-PRIORITY_FEE_SOL  = 0.0005   # ~$0.085 at $170 SOL — enough for Helius landing
+PRIORITY_FEE_SOL  = 0.0005   # floor fallback (~$0.085 at $170 SOL)
 
 # Sell ladder: on revert, escalate slippage and fee immediately.
-# 3 attempts max; every sig is returned in all_sigs for journaling.
-#   Step 1: 35% / normal fee  — covers routine price movement
-#   Step 2: 60% / 3× fee     — covers fast dump during stop-loss window
-#   Step 3: 98% / max fee    — last resort; get out at any cost
+# fee_sol values are FLOOR minimums — dynamic Helius estimate is used when higher.
+#   Step 1: 35% / "High"       — covers routine price movement
+#   Step 2: 60% / "VeryHigh"   — covers fast dump during stop-loss window
+#   Step 3: 98% / "UnsafeMax"  — last resort; get out at any cost
 SELL_LADDER = [
-    (35,  0.0005),   # (slippage_pct, priority_fee_sol)
-    (60,  0.0015),
-    (98,  0.005),
+    (35,  0.0005, "High"),       # (slippage_pct, fee_floor_sol, helius_level)
+    (60,  0.0015, "VeryHigh"),
+    (98,  0.005,  "UnsafeMax"),
 ]
+
+# pump.fun program — used as anchor account for priority fee estimation
+_PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+# Estimated compute units per pump.fun buy/sell tx (used to convert microlamports/CU → SOL)
+_CU_BUDGET_EST   = 200_000
 
 # 8 Jito tip accounts (only used when EXECUTOR_BACKEND == "jupiter" + JITO_TIPS = True)
 _JITO_TIP_ACCOUNTS = [
@@ -339,6 +344,43 @@ def _sol_price_usd() -> float:
         return 170.0
 
 
+def _helius_priority_fee(token_mint: str, level: str = "High") -> float:
+    """
+    Query Helius getPriorityFeeEstimate for a pump.fun trade on token_mint.
+    Returns recommended priority fee in SOL.
+    Falls back to PRIORITY_FEE_SOL on any error or missing key.
+
+    level: "High" (buys + sell step 1) | "VeryHigh" (sell step 2) | "UnsafeMax" (sell step 3)
+    """
+    api_key = os.getenv("HELIUS_API_KEY", "")
+    if not api_key:
+        return PRIORITY_FEE_SOL
+    try:
+        resp = requests.post(
+            f"https://mainnet.helius-rpc.com/?api-key={api_key}",
+            json={
+                "jsonrpc": "2.0",
+                "id":      1,
+                "method":  "getPriorityFeeEstimate",
+                "params":  [{
+                    "accountKeys": [_PUMPFUN_PROGRAM, token_mint],
+                    "options":     {"priorityLevel": level},
+                }],
+            },
+            timeout=3,
+        )
+        micro_lamports = resp.json()["result"]["priorityFeeEstimate"]
+        fee_lamports   = (micro_lamports * _CU_BUDGET_EST) / 1_000_000
+        fee_sol        = fee_lamports / 1e9
+        # Floor at PRIORITY_FEE_SOL, cap at 0.01 SOL (~$1.70) to avoid runaway fees
+        fee_sol = max(PRIORITY_FEE_SOL, min(fee_sol, 0.01))
+        log.debug("Helius priority fee (%s): %.0f µlam/CU → %.6f SOL", level, micro_lamports, fee_sol)
+        return fee_sol
+    except Exception as e:
+        log.debug("getPriorityFeeEstimate failed (%s) — using floor %.4f SOL", e, PRIORITY_FEE_SOL)
+        return PRIORITY_FEE_SOL
+
+
 def _send_transaction(signed_bytes: bytes) -> str:
     """
     Send a signed tx via Helius RPC.
@@ -421,16 +463,20 @@ def _jup_get_quote(input_mint: str, output_mint: str, amount: int) -> dict:
     return resp.json()
 
 
-def _jup_build_swap_tx(quote: dict, wallet_pubkey: str) -> bytes:
+def _jup_build_swap_tx(quote: dict, wallet_pubkey: str,
+                       slippage_bps: int = SLIPPAGE_SELL_PCT * 100,
+                       priority_fee_lamports: int = None) -> bytes:
     """Build swap transaction via Jupiter swap API. Returns raw tx bytes."""
+    if priority_fee_lamports is None:
+        priority_fee_lamports = int(PRIORITY_FEE_SOL * 1e9)
     swap_resp = requests.post(
         JUPITER_SWAP_URL,
         json={
             "quoteResponse":             quote,
             "userPublicKey":             wallet_pubkey,
             "wrapAndUnwrapSol":          True,
-            "dynamicSlippage":           {"maxBps": SLIPPAGE_SELL_PCT * 100},
-            "prioritizationFeeLamports": int(PRIORITY_FEE_SOL * 1e9),
+            "dynamicSlippage":           {"maxBps": slippage_bps},
+            "prioritizationFeeLamports": priority_fee_lamports,
         },
         timeout=15,
     )
@@ -616,6 +662,7 @@ class MemeExecutor:
 
             # ── Build and sign transaction ────────────────────────────────────
             if EXECUTOR_BACKEND == "pumpportal":
+                _buy_fee = _helius_priority_fee(token_address, level="High")
                 tx_bytes = _pumpportal_build_tx(
                     wallet_pubkey=wallet,
                     action="buy",
@@ -623,6 +670,7 @@ class MemeExecutor:
                     amount=sol_amount,
                     denominated_in_sol=True,
                     slippage_pct=SLIPPAGE_BUY_PCT,
+                    priority_fee_sol=_buy_fee,
                 )
             else:
                 # Jupiter fallback
@@ -777,8 +825,10 @@ class MemeExecutor:
 
             all_sigs: list[str] = []
 
-            for step, (slip_pct, fee_sol) in enumerate(SELL_LADDER, 1):
+            for step, (slip_pct, fee_floor_sol, fee_level) in enumerate(SELL_LADDER, 1):
                 try:
+                    # Dynamic fee: Helius estimate at escalating levels; floor at ladder minimum
+                    fee_sol = max(_helius_priority_fee(token_address, level=fee_level), fee_floor_sol)
                     if EXECUTOR_BACKEND == "pumpportal":
                         tx_bytes = _pumpportal_build_tx(
                             wallet_pubkey=wallet,
@@ -883,10 +933,11 @@ class MemeExecutor:
             try:
                 if balance is not None and balance > 0:
                     _jup_quote = _jup_get_quote(token_address, SOL_MINT, balance)
+                    _jup_fee   = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
                     _jup_tx    = _jup_build_swap_tx(
                         _jup_quote, wallet,
                         slippage_bps=5000,          # 50% — graduated token, take the exit
-                        priority_fee_lamports=int(0.001 * 1e9),
+                        priority_fee_lamports=int(_jup_fee * 1e9),
                     )
                     _, VersionedTransaction, _ = _load_solders()
                     _jup_signed = VersionedTransaction(
