@@ -251,8 +251,8 @@ def get_signal_settings(signal_type: str) -> dict:
 # ---------------------------------------------------------------------------
 # Polling intervals
 # ---------------------------------------------------------------------------
-SOL_WALLET_POLL_SEC  = 30
-BNB_WALLET_POLL_SEC  = 60
+SOL_WALLET_POLL_SEC  = 86400   # halted — Helius quota; resume when upgraded
+BNB_WALLET_POLL_SEC  = 86400   # halted — same
 DEXSCREENER_POLL_SEC = 120   # scan for volume breakouts + new launches
 
 # ---------------------------------------------------------------------------
