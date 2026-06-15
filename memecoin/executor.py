@@ -642,33 +642,43 @@ class MemeExecutor:
                     "error":               str(_quote_fetch_err),
                 }
 
-            # Gate 2: drift gate — quote already ran past the entry band
-            # Prefer PP live price as baseline (same-venue, no indexer lag).
-            # At this point PP has been subscribed for ~6s — first tick usually arrived.
-            # Falls back to signal_price (DexScreener or pp-at-preflight) if PP silent.
+            # Gate 2: drift gate — only fires when PP live price is available.
+            #
+            # When PP has a price: same-venue comparison (PP vs Jupiter, both real-time).
+            # Blocks if Jupiter quote is >SLIPPAGE_GATE_RT_PCT above PP. Legitimate
+            # protection — catches tokens that spiked between PP tick and quote fetch.
+            #
+            # When PP is silent (pp=0): skip drift gate entirely.
+            # Comparing Jupiter (real-time) to signal_price (stale DexScreener, possibly
+            # 30s+ old) measures indexer lag, not real drift. The most common case is a
+            # token that graduated from the pump.fun bonding curve to Raydium before the
+            # alert fired — PP has no data, DexScreener has pre-graduation price, Jupiter
+            # routes through Raydium at post-graduation price. The "drift" is the bonding
+            # curve graduation jump, which is real price movement but not a reason to block.
+            # Signal filters (pc5m, vol_5m, bs) already validated this token; Gate 1
+            # (no_quote) ensures it's tradeable. That is sufficient.
             _gate_baseline = signal_price
-            if signal_price > 0 and jupiter_quote_price > 0:
-                try:
-                    from memecoin.pumpportal_monitor import monitor as _pp_exec
-                    _pp_now = _pp_exec.get_prices().get(token_address, 0)
-                    if _pp_now > 0:
-                        _gate_baseline = _pp_now
-                        _quote_gate    = SLIPPAGE_GATE_RT_PCT   # tighter same-venue gate
-                        log.debug("Gate 2 baseline: PP live $%.10f (same-venue gate %.0f%%)",
-                                  _pp_now, _quote_gate * 100)
-                except Exception:
-                    pass
+            _pp_active     = False
+            try:
+                from memecoin.pumpportal_monitor import monitor as _pp_exec
+                _pp_now = _pp_exec.get_prices().get(token_address, 0)
+                if _pp_now > 0:
+                    _gate_baseline = _pp_now
+                    _quote_gate    = SLIPPAGE_GATE_RT_PCT
+                    _pp_active     = True
+                    log.debug("Gate 2 baseline: PP live $%.10f (same-venue gate %.0f%%)",
+                              _pp_now, _quote_gate * 100)
+            except Exception:
+                pass
 
-            if signal_price > 0 and jupiter_quote_price > 0:
+            if _pp_active and signal_price > 0 and jupiter_quote_price > 0:
                 slippage = (jupiter_quote_price / _gate_baseline - 1)
                 if slippage > _quote_gate:
                     log.warning(
                         "BUY blocked — quote drift %.1f%% > %.0f%%  "
-                        "token=%s  baseline=$%.10f (pp=%s)  quote=$%.10f",
+                        "token=%s  pp=$%.10f  quote=$%.10f",
                         slippage * 100, _quote_gate * 100,
-                        token_address[:8], _gate_baseline,
-                        "yes" if _gate_baseline != signal_price else "no",
-                        jupiter_quote_price,
+                        token_address[:8], _gate_baseline, jupiter_quote_price,
                     )
                     return {
                         "success":             False,
@@ -676,8 +686,14 @@ class MemeExecutor:
                         "slippage_pct":        round(slippage * 100, 1),
                         "jupiter_quote_price": jupiter_quote_price,
                         "gate_baseline":       _gate_baseline,
-                        "pp_used":             _gate_baseline != signal_price,
+                        "pp_used":             True,
                     }
+            elif not _pp_active:
+                log.info(
+                    "Gate 2 SKIPPED — PP silent, no same-venue baseline  token=%s  "
+                    "jup=$%.10f  dex_signal=$%.10f",
+                    token_address[:8], jupiter_quote_price, signal_price,
+                )
 
             # ── Shadow-live / dry-run mode ────────────────────────────────────
             # LIVE_DRY_RUN = True → full live path traversal (pre-flight + quote)
