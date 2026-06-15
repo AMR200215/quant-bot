@@ -691,36 +691,16 @@ class MemeExecutor:
                         "gate_baseline":       _gate_baseline,
                         "pp_used":             True,
                     }
-            elif not _pp_active and signal_price > 0 and jupiter_quote_price > 0:
-                # Cross-venue fallback gate: DexScreener signal vs Jupiter quote.
-                # Measures how far the token has moved since the DexScreener snapshot.
-                # UK case: 273% above signal → blocked (bought near blown-off top).
-                # Graduated tokens with stale DexScreener: also blocked (correct —
-                #   PumpPortal can't buy graduated tokens anyway).
-                # Tokens within 50%: allowed through (normal indexer lag / small move).
-                _xv_slippage = (jupiter_quote_price / signal_price - 1)
-                if _xv_slippage > SLIPPAGE_GATE_DEX_PCT:
-                    log.warning(
-                        "BUY blocked — cross-venue drift %.1f%% > %.0f%% (PP silent, DEX fallback gate)  "
-                        "token=%s  dex_signal=$%.10f  jup=$%.10f",
-                        _xv_slippage * 100, SLIPPAGE_GATE_DEX_PCT * 100,
-                        token_address[:8], signal_price, jupiter_quote_price,
-                    )
-                    return {
-                        "success":             False,
-                        "reason":              "blocked_quote_drift",
-                        "slippage_pct":        round(_xv_slippage * 100, 1),
-                        "jupiter_quote_price": jupiter_quote_price,
-                        "gate_baseline":       signal_price,
-                        "pp_used":             False,
-                    }
-                else:
-                    log.info(
-                        "Gate 2 DEX fallback OK — %.1f%% < %.0f%% (PP silent)  token=%s  "
-                        "dex_signal=$%.10f  jup=$%.10f",
-                        _xv_slippage * 100, SLIPPAGE_GATE_DEX_PCT * 100,
-                        token_address[:8], signal_price, jupiter_quote_price,
-                    )
+            elif not _pp_active:
+                # PP silent: gate skipped — DexScreener signal_price is stale for
+                # graduated tokens so DEX vs Jupiter comparison measures indexer lag,
+                # not real movement. abort_tripwire in portfolio.py protects against
+                # bad fills using fill vs jupiter_quote_price (fresh baseline).
+                log.info(
+                    "Gate 2 SKIPPED — PP silent, no same-venue baseline  token=%s  "
+                    "jup=$%.10f  dex_signal=$%.10f",
+                    token_address[:8], jupiter_quote_price, signal_price,
+                )
 
             # ── Shadow-live / dry-run mode ────────────────────────────────────
             # LIVE_DRY_RUN = True → full live path traversal (pre-flight + quote)

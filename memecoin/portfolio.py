@@ -930,16 +930,23 @@ class Portfolio:
                 fill_price = result.get("fill_price") or live_pos.entry_price
                 signal_price = live_pos.entry_price
                 buy_tx_sig = result.get("tx_sig", "")
-                # Abort if fill slippage > 80% — anything below this is recoverable
-                # (40% fill needs only a 1.4x to break even; 80% needs 1.8x but hard stop
-                # at -35% from fill still gives a defined loss, not a guaranteed wipeout).
-                if signal_price > 0 and fill_price > signal_price * 1.80:
-                    _abort_slip = (fill_price / signal_price - 1) * 100
+                # Abort if fill is much worse than the Jupiter quote we used to size.
+                # Compare fill vs jupiter_quote_price (fresh at tx-build time), NOT vs
+                # signal_price (stale DexScreener snapshot — can be 200%+ below real for
+                # graduated tokens). UK bug: fill=$0.0000236 vs stale signal=$0.0000064
+                # triggered abort wrongly; fill vs Jupiter quote was actually -1.2% (fine).
+                # Threshold 30%: if fill is >30% above what Jupiter quoted, something
+                # went wrong (price spiked during the 5s confirmation window).
+                _jup_ref = result.get("jupiter_quote_price") or 0
+                _abort_ref = _jup_ref if _jup_ref > 0 else signal_price
+                _abort_label = "jup_quote" if _jup_ref > 0 else "signal"
+                if _abort_ref > 0 and fill_price > _abort_ref * 1.30:
+                    _abort_slip = (fill_price / _abort_ref - 1) * 100
                     log.warning(
-                        "LIVE BUY ABORTED %s — fill slippage %.1f%% > 80%% limit  "
-                        "fill=%.10f  signal=%.10f  buy_tx=%s",
-                        live_pos.token_symbol, _abort_slip,
-                        fill_price, signal_price, buy_tx_sig,
+                        "LIVE BUY ABORTED %s — fill %.1f%% above %s ($%.10f)  "
+                        "fill=%.10f  buy_tx=%s",
+                        live_pos.token_symbol, _abort_slip, _abort_label, _abort_ref,
+                        fill_price, buy_tx_sig,
                     )
                     sell_tx_sig = ""
                     try:
@@ -958,14 +965,14 @@ class Portfolio:
                     live_pos.status = "closed"
                     live_pos.notes = (
                         f"live|tx:{buy_tx_sig}|fill:{fill_price:.10f}"
-                        f"|abort_slip:{_abort_slip:.1f}%"
+                        f"|abort_slip:{_abort_slip:.1f}%vs{_abort_label}"
                         + (f"|sell_tx:{sell_tx_sig}" if sell_tx_sig else "")
                     )
                     _append_journal(live_pos)
                     try:
                         from app.alerts import _send
                         _send(
-                            f"⚠️ LIVE ABORT {live_pos.token_symbol} — fill slippage {_abort_slip:.1f}% > 80%% "
+                            f"⚠️ LIVE ABORT {live_pos.token_symbol} — fill {_abort_slip:.1f}% above {_abort_label} "
                             f"buy_tx={buy_tx_sig} sell_tx={sell_tx_sig or 'pending'}"
                         )
                     except Exception:
