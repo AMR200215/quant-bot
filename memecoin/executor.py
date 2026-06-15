@@ -22,6 +22,7 @@ Environment variables:
 """
 
 import base64
+import concurrent.futures
 import logging
 import os
 import time
@@ -556,32 +557,36 @@ class MemeExecutor:
                 except Exception:
                     pass
 
-            # ── Pre-flight slippage check (Jupiter quote) ─────────────────────
-            # The quote is the only honest pre-spend price for dex-source (TG pump)
-            # signals — it reflects what you'd actually pay, not a feed that may
-            # lag 15-30s.  Two gates:
+            # ── Pre-flight: Jupiter quote + Helius priority fee in parallel ──────
+            # Both are independent HTTP calls — fire them concurrently to save
+            # 100-200ms vs sequential.  Quote is needed for the drift gate;
+            # priority fee is needed for the tx build.
             #
-            #   1. no_quote   — Jupiter returned nothing → token is unquotable /
-            #                   already dead.  Fail-closed before spending any SOL.
-            #   2. blocked_quote_drift — quote > signal_price × (1+SLIPPAGE_GATE_DEX_PCT)
-            #                   → price already ran past the acceptable entry band.
-            #                   Logged to gate_blocks by the caller (portfolio).
-            #
-            # For pp-source signals: same quote is still fetched and the gate still
-            # applies — it's the final on-chain check before submission.
-            _quote_gate = SLIPPAGE_GATE_DEX_PCT   # 15%
+            # Two quote gates:
+            #   1. no_quote   — Jupiter returned nothing → unquotable / dead token.
+            #   2. blocked_quote_drift — quote > signal_price × (1+gate) → already ran.
+            _quote_gate = SLIPPAGE_GATE_DEX_PCT
             jupiter_quote_price = 0.0
             _quote_fetch_err = None
-            try:
-                quote = _jup_get_quote(SOL_MINT, token_address, lamports)
-                _t_quoted = time.time()
-                token_decimals_q  = int(quote.get("outputDecimals") or 6)
-                tokens_out_q      = int(quote["outAmount"]) / (10 ** token_decimals_q)
-                jupiter_quote_price = size_usd / tokens_out_q if tokens_out_q > 0 else 0
-            except Exception as e:
-                _t_quoted = time.time()
-                _quote_fetch_err = e
-                log.warning("Jupiter pre-flight quote failed: %s", e)
+            _buy_fee = PRIORITY_FEE_SOL   # default; overwritten by parallel fetch
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
+                _quote_fut = _pool.submit(_jup_get_quote, SOL_MINT, token_address, lamports)
+                _fee_fut   = _pool.submit(_helius_priority_fee, token_address, "High")
+                try:
+                    quote = _quote_fut.result(timeout=10)
+                    token_decimals_q    = int(quote.get("outputDecimals") or 6)
+                    tokens_out_q        = int(quote["outAmount"]) / (10 ** token_decimals_q)
+                    jupiter_quote_price = size_usd / tokens_out_q if tokens_out_q > 0 else 0
+                except Exception as e:
+                    _quote_fetch_err = e
+                    log.warning("Jupiter pre-flight quote failed: %s", e)
+                try:
+                    _buy_fee = _fee_fut.result(timeout=3)
+                except Exception:
+                    pass   # falls back to PRIORITY_FEE_SOL default above
+
+            _t_quoted = time.time()
 
             # Gate 1: no quote → unquotable token, block before spending
             if signal_price > 0 and jupiter_quote_price == 0:
@@ -662,7 +667,6 @@ class MemeExecutor:
 
             # ── Build and sign transaction ────────────────────────────────────
             if EXECUTOR_BACKEND == "pumpportal":
-                _buy_fee = _helius_priority_fee(token_address, level="High")
                 tx_bytes = _pumpportal_build_tx(
                     wallet_pubkey=wallet,
                     action="buy",

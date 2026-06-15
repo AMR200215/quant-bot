@@ -1014,12 +1014,14 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         sig._price_dex     = screen.get("price_usd") or 0  # stale DexScreener baseline
 
         # Realtime price baseline: PP has been accumulating since T=0 subscribe.
-        # Wait up to 4s for first PP tick — pump.fun tokens are extremely active
-        # and PP usually delivers within 1-2s of subscription.
-        # Without this wait, PP is always 0 and we fall back to stale DexScreener.
+        # Wait up to 2s for first PP tick.
+        # pumpfun_listener pre-subscribes at token creation, so Scenario A (common):
+        # token already warm → exits on first 0.2s poll.
+        # Scenario B (cold subscribe at alert time): active tokens deliver in <1s.
+        # 2s is sufficient insurance; Gate 2 in executor uses PP live price anyway.
         _price_pp = 0.0
         if REALTIME_PRICE_FEED and chain == "solana":
-            _pp_deadline = _time.time() + 4.0
+            _pp_deadline = _time.time() + 2.0
             while _time.time() < _pp_deadline:
                 try:
                     _price_pp = _pp_monitor.get_prices().get(address, 0.0)
@@ -1029,7 +1031,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                     break
                 _time.sleep(0.2)
             if _price_pp == 0:
-                log.debug("PP price still 0 after 4s wait for %s — using dex baseline", address[:8])
+                log.debug("PP price still 0 after 2s wait for %s — using dex baseline", address[:8])
         sig._price_pp      = _price_pp
         sig._price_source  = "pp" if _price_pp > 0 else "dex"
         sig.token_cohort   = "telegram_pump"   # type-2 cohort for live gate (Item 1)
