@@ -1717,7 +1717,6 @@ class Portfolio:
         The price-monitor loop is never blocked — the trailing stop can fire
         during the ~10s tx confirmation window.
         """
-        import alerts as _alerts_mod  # noqa: avoid circular at module level
         try:
             from memecoin.executor import MemeExecutor as _MEx
         except Exception as _e:

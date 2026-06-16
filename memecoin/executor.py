@@ -734,7 +734,15 @@ class MemeExecutor:
                     },
                 }
 
-            # ── Snapshot balance before swap ──────────────────────────────────
+            # ── Snapshot SOL + token balance before swap ──────────────────────
+            # sol_bal_before_lam: used post-confirm to compute exact SOL spent
+            # (includes priority fee + PumpPortal 0.5% + swap fee — all in one delta).
+            sol_bal_before_lam = None
+            if not LIVE_DRY_RUN:
+                try:
+                    sol_bal_before_lam = _sol_balance(wallet)
+                except RuntimeError as _e:
+                    log.debug("BUY pre-swap SOL balance failed (non-blocking): %s", _e)
             bal_before = _token_balance(wallet, token_address)
 
             # ── Build and sign transaction ────────────────────────────────────
@@ -836,15 +844,45 @@ class MemeExecutor:
                         "jupiter_quote_price": jupiter_quote_price}
 
             # ── Fill from on-chain tx data (single getTransaction call) ──────
-            # Replaces _token_balance + _token_decimals (2 extra RPC calls).
             # Returns the real fill from postTokenBalances — same token, same tx,
             # correct venue (PumpPortal curve), correct time.
-            # Falls back to Jupiter quote only if getTransaction can't parse the
-            # delta, and tags those positions entry_estimated=True so they're
-            # excluded from live PnL comparisons.
+            # Falls back to Jupiter quote only if getTransaction can't parse the delta.
             fill_price, entry_estimated = _fill_from_transaction(
                 sig, wallet, token_address, size_usd
             )
+
+            # ── Sol spent (buy-side fee gap) ──────────────────────────────────
+            # Compute exact SOL deducted from wallet: includes priority fee +
+            # PumpPortal's 0.5% platform fee + any swap fee.
+            # fill_price is then (sol_spent * sol_price) / tokens_received,
+            # not the intended size_usd — so it's the real cost-basis per token.
+            sol_spent_usd = None
+            if sol_bal_before_lam is not None and not entry_estimated:
+                try:
+                    _sol_bal_after_lam = _sol_balance(wallet)
+                    # Retry up to 3s so confirmed commitment has time to settle
+                    for _ in range(3):
+                        if _sol_bal_after_lam != sol_bal_before_lam:
+                            break
+                        time.sleep(1)
+                        _sol_bal_after_lam = _sol_balance(wallet)
+                    _sol_spent_lam = max(0, sol_bal_before_lam - _sol_bal_after_lam)
+                    if _sol_spent_lam > 0:
+                        sol_spent_usd = round(_sol_spent_lam / 1e9 * sol_price, 4)
+                        # Recompute fill_price using actual SOL cost (includes all fees)
+                        # Use tokens_received from _fill_from_transaction via fill_price
+                        # inversion: tokens = size_usd / fill_price, then scale.
+                        if fill_price and fill_price > 0:
+                            tokens_received = size_usd / fill_price
+                            if tokens_received > 0:
+                                fill_price = sol_spent_usd / tokens_received
+                        log.info(
+                            "BUY sol_spent=%.6f SOL ($%.4f)  fill_adj=$%.10f  token=%s",
+                            _sol_spent_lam / 1e9, sol_spent_usd, fill_price, token_address[:8],
+                        )
+                except Exception as _sfee_e:
+                    log.debug("BUY sol_spent calc failed (non-blocking): %s", _sfee_e)
+
             if fill_price is None:
                 fill_price = jupiter_quote_price
                 log.warning(
@@ -853,9 +891,7 @@ class MemeExecutor:
                     fill_price, sig[:16],
                 )
 
-            # ── Entry slippage: fill vs signal_price (Step 0 measurement) ────────
-            # Pins which row of the PnL-vs-slippage grid we're on.
-            # entry_estimated positions have unreliable fill_price — excluded.
+            # ── Entry slippage: fill vs signal_price ─────────────────────────
             entry_slippage_pct = None
             if signal_price > 0 and fill_price and not entry_estimated:
                 entry_slippage_pct = round((fill_price / signal_price - 1) * 100, 1)
@@ -869,9 +905,10 @@ class MemeExecutor:
                 "fill_price":          fill_price,
                 "entry_estimated":     entry_estimated,
                 "entry_slippage_pct":  entry_slippage_pct,
+                "sol_spent_usd":       sol_spent_usd,
                 "tx_sig":              sig,
                 "jupiter_quote_price": jupiter_quote_price,
-                "pp_silent":           not _pp_active,   # True = graduated token, Gate 2 was skipped
+                "pp_silent":           not _pp_active,
                 "timing": {
                     "t_quote":   round(_t_quoted    - _t0, 3),
                     "t_submit":  round(_t_submitted - _t0, 3),
@@ -962,6 +999,8 @@ class MemeExecutor:
 
             # Determine sell amount: "100%" for full exits, token count for partial TP sells.
             # fraction < 1.0 = TP partial sell — must pass exact token count to PumpPortal.
+            # _jup_sell_tokens: used by Jupiter fallback so it also sells the correct fraction
+            # (not always 100% of balance). Full exits use full balance; partial use the slice.
             if fraction < 1.0:
                 if balance is None or balance == 0:
                     log.warning(
@@ -976,13 +1015,15 @@ class MemeExecutor:
                         balance, fraction, token_address[:8],
                     )
                     return {"success": False, "reason": "zero_tokens_partial"}
-                _sell_amount = str(tokens_to_sell)
+                _sell_amount      = str(tokens_to_sell)
+                _jup_sell_tokens  = tokens_to_sell  # Jupiter fallback respects the fraction
                 log.info(
                     "SELL partial %.0f%%  tokens=%d/%d  token=%s",
                     fraction * 100, tokens_to_sell, balance, token_address[:8],
                 )
             else:
-                _sell_amount = "100%"
+                _sell_amount     = "100%"
+                _jup_sell_tokens = balance  # may be None — Jupiter fallback checks before use
 
             # Snapshot SOL balance before first attempt (for fill price only — not blocking)
             sol_bal_before = None
@@ -1149,8 +1190,8 @@ class MemeExecutor:
                 token_address[:8],
             )
             try:
-                if balance is not None and balance > 0:
-                    _jup_quote = _jup_get_quote(token_address, SOL_MINT, balance)
+                if _jup_sell_tokens is not None and _jup_sell_tokens > 0:
+                    _jup_quote = _jup_get_quote(token_address, SOL_MINT, _jup_sell_tokens)
                     _jup_fee   = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
                     _jup_tx    = _jup_build_swap_tx(
                         _jup_quote, wallet,
@@ -1183,8 +1224,8 @@ class MemeExecutor:
                             pass
                         sol_received = max(0, sol_bal_after - sol_bal_before) / 1e9 if (sol_bal_after and sol_bal_before) else 0
                         sol_price    = _sol_price_usd()
-                        decimals     = _token_decimals_from_rpc(wallet, token_address) if balance else 6
-                        tokens_sold  = balance / (10 ** decimals) if balance else 0
+                        decimals     = _token_decimals_from_rpc(wallet, token_address) if _jup_sell_tokens else 6
+                        tokens_sold  = _jup_sell_tokens / (10 ** decimals) if _jup_sell_tokens else 0
                         fill_price   = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else entry_price
                         log.info("SELL Jupiter fallback confirmed  sig=%s  fill=$%.10f",
                                  _jup_sig[:16], fill_price)
