@@ -342,6 +342,7 @@ class Portfolio:
         self._presigned_exits: dict = {}   # mint → bytes
         self._presigned_ts:    dict = {}   # mint → last-sign time (float)
         self._presigned_lock        = threading.Lock()
+        self._graduated_mints: set  = set()  # mints that traded on Raydium (not bonding curve)
         # sell_stuck throttle: pos_id → earliest time to retry sell
         # In-memory only — resets on restart (which itself gives a fresh attempt).
         self._sell_stuck_until: dict[str, float] = {}
@@ -353,20 +354,24 @@ class Portfolio:
 
     # ---- pre-signed emergency exit management ----
 
-    def _build_presigned_exit(self, mint: str) -> None:
+    def _build_presigned_exit(self, mint: str, is_graduated: bool = False) -> None:
         """
-        Build and sign the step-3 sell tx (98% slippage, 0.005 SOL fee) for
-        a held mint and store it in _presigned_exits.  Called immediately after
-        a live buy confirms and then every 45s by _presigned_refresh_loop.
+        Build and sign the emergency sell tx for a held mint and store it.
 
-        PumpPortal re-fetches the latest blockhash server-side on each call, so
-        the tx stays valid.  The refresh ensures we never hold a stale tx longer
-        than ~90s (Solana blockhash TTL).
+        Bonding-curve tokens (is_graduated=False):
+          PumpPortal 98% slippage, 0.005 SOL fee.  PumpPortal re-fetches the
+          latest blockhash server-side so the tx stays valid through 45s refresh.
+
+        Graduated tokens (is_graduated=True):
+          PumpPortal rejects these with Custom:6005.  Build Jupiter 99% slippage
+          tx instead.  Jupiter embeds a blockhash that expires in ~60s, so these
+          are refreshed every 30s (vs 45s for PumpPortal).
         """
         try:
             from memecoin.executor import (
                 _get_keypair, _load_solders, _pumpportal_build_tx,
-                EXECUTOR_BACKEND,
+                _jup_get_quote, _jup_build_swap_tx, _helius_priority_fee,
+                _token_balance, SOL_MINT, EXECUTOR_BACKEND,
             )
             if EXECUTOR_BACKEND != "pumpportal":
                 return
@@ -374,15 +379,38 @@ class Portfolio:
             _, VersionedTransaction, _ = _load_solders()
             keypair = _get_keypair()
             wallet  = str(keypair.pubkey())
-            tx_bytes = _pumpportal_build_tx(
-                wallet_pubkey=wallet,
-                action="sell",
-                token_mint=mint,
-                amount="100%",
-                denominated_in_sol=False,
-                slippage_pct=98,
-                priority_fee_sol=0.005,
-            )
+
+            if is_graduated:
+                # Graduated token — PumpPortal will reject with 6005.
+                # Build a Jupiter presigned exit at 99% slippage instead.
+                try:
+                    balance = _token_balance(wallet, mint)
+                    if not balance:
+                        log.debug("Presigned Jupiter exit skipped — zero balance  mint=%s", mint[:8])
+                        return
+                    _jup_fee = max(_helius_priority_fee(mint, "UnsafeMax"), 0.005)
+                    quote    = _jup_get_quote(mint, SOL_MINT, balance)
+                    tx_bytes = _jup_build_swap_tx(
+                        quote, wallet,
+                        slippage_bps=9900,
+                        priority_fee_lamports=int(_jup_fee * 1e9),
+                    )
+                    _path = "Jupiter"
+                except Exception as _jup_e:
+                    log.warning("Presigned Jupiter exit build failed for %s: %s", mint[:8], _jup_e)
+                    return
+            else:
+                tx_bytes = _pumpportal_build_tx(
+                    wallet_pubkey=wallet,
+                    action="sell",
+                    token_mint=mint,
+                    amount="100%",
+                    denominated_in_sol=False,
+                    slippage_pct=98,
+                    priority_fee_sol=0.005,
+                )
+                _path = "PumpPortal"
+
             tx        = VersionedTransaction.from_bytes(tx_bytes)
             signed    = VersionedTransaction(tx.message, [keypair])
             signed_b  = bytes(signed)
@@ -390,29 +418,44 @@ class Portfolio:
                 self._presigned_exits[mint] = signed_b
                 self._presigned_ts[mint]    = time.time()
             log.info(
-                "Presigned exit built  mint=%s  build_ms=%.0f",
-                mint[:8], (time.time() - _t0) * 1000,
+                "Presigned exit built  mint=%s  path=%s  build_ms=%.0f",
+                mint[:8], _path, (time.time() - _t0) * 1000,
             )
         except Exception as e:
             log.warning("Presigned exit build failed for %s: %s", mint[:8], e)
 
-    def _schedule_presigned_exit(self, mint: str) -> None:
+    def _schedule_presigned_exit(self, mint: str, is_graduated: bool = False) -> None:
         """Build presigned exit immediately (non-blocking) after live buy confirms."""
+        if is_graduated:
+            with self._presigned_lock:
+                self._graduated_mints.add(mint)
         threading.Thread(
             target=self._build_presigned_exit,
-            args=(mint,),
+            args=(mint, is_graduated),
             daemon=True,
             name=f"presign-build-{mint[:8]}",
         ).start()
 
     def _presigned_refresh_loop(self) -> None:
-        """Refresh all held presigned exits every 45s (< Solana blockhash TTL)."""
+        """Refresh presigned exits periodically.
+
+        PumpPortal exits: every 45s (server-side blockhash refresh, ~90s TTL).
+        Jupiter exits:    every 30s (embedded blockhash expires in ~60s).
+        """
+        _last_refresh = 0.0
         while True:
-            time.sleep(45)
+            time.sleep(10)
+            now = time.time()
             with self._presigned_lock:
-                mints = list(self._presigned_exits.keys())
+                mints    = list(self._presigned_exits.keys())
+                grad_set = set(self._graduated_mints)
             for mint in mints:
-                self._build_presigned_exit(mint)
+                is_grad  = mint in grad_set
+                interval = 30 if is_grad else 45
+                with self._presigned_lock:
+                    last_ts = self._presigned_ts.get(mint, 0)
+                if now - last_ts >= interval:
+                    self._build_presigned_exit(mint, is_graduated=is_grad)
 
     # ---- open ----
 
@@ -1086,10 +1129,13 @@ class Portfolio:
                     ).start()
 
                 # ── Pre-signed emergency exit ─────────────────────────────────
-                # Build step-3 sell tx immediately; refresh every 45s.
+                # Build step-3 sell tx immediately; refresh periodically.
                 # Dev-dump, rug_lp, and velocity exits use this directly, saving
                 # the ~300-500ms PumpPortal build step at the worst possible moment.
-                self._schedule_presigned_exit(signal.token_address)
+                # For graduated tokens (pp_silent=True) build a Jupiter tx instead —
+                # PumpPortal rejects graduated tokens with Custom:6005 at any slippage.
+                _is_graduated_token = bool(result.get("pp_silent"))
+                self._schedule_presigned_exit(signal.token_address, is_graduated=_is_graduated_token)
 
                 # Store live position — it will be monitored independently
                 self._positions[live_pos.id] = live_pos
@@ -1218,11 +1264,17 @@ class Portfolio:
 
                 if not _presigned_used:
                     ex     = MemeExecutor()
-                    # escalate=True on retries: previous full ladder failed, skip PumpPortal
-                    # and go straight to Jupiter with 99% slippage to guarantee exit.
-                    _is_retry = getattr(pos, "sell_attempts", 0) > 0
+                    # escalate=True when:
+                    #   (a) this is a retry — previous full ladder failed
+                    #   (b) token is graduated (cohort:graduated in notes) — PumpPortal rejects
+                    #       graduated tokens with Custom:6005 at any slippage; skip straight to Jupiter
+                    _is_retry     = getattr(pos, "sell_attempts", 0) > 0
+                    _is_graduated = "|cohort:graduated" in (pos.notes or "")
+                    if _is_graduated and not _is_retry:
+                        log.info("SELL graduated token — skipping PumpPortal ladder, going straight to Jupiter  token=%s",
+                                 pos.token_address[:8])
                     result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
-                                     escalate=_is_retry)
+                                     escalate=_is_retry or _is_graduated)
                     if result.get("success"):
                         _exec_fill = result.get("fill_price")
                         # Only overwrite trigger price if executor measured a real fill.
@@ -1362,6 +1414,7 @@ class Portfolio:
         with self._presigned_lock:
             self._presigned_exits.pop(pos.token_address, None)
             self._presigned_ts.pop(pos.token_address, None)
+            self._graduated_mints.discard(pos.token_address)
         log.info("Closed position %s  reason=%s  pnl=%.1f%%",
                  pos_id, reason, pos.pnl_pct * 100)
         try:
@@ -1678,10 +1731,12 @@ class Portfolio:
             return
 
         try:
-            _tp_ex = _MEx()
+            _tp_ex      = _MEx()
+            _tp_is_grad = "|cohort:graduated" in (pos.notes or "")
             _tp_r  = _tp_ex.sell(
                 pos.token_address, pos.size_usd, pos.entry_price,
                 pos.chain, fraction=sell_frac,
+                escalate=_tp_is_grad,
             )
         except Exception as _tp_err:
             log.warning("LIVE TP BG exception %s: %s — paper estimate kept", pos.token_symbol, _tp_err)
