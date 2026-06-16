@@ -38,7 +38,7 @@ DEV_LAST_SEEN_FILE     = DATA_DIR / "dev_last_seen.json"
 # Rule: never risk more than 3-5% of capital on a single trade.
 # Change ONLY this one number — everything else auto-adjusts.
 # ---------------------------------------------------------------------------
-CAPITAL_USD = 100   # ← set this to your actual capital
+CAPITAL_USD = 18    # ← actual wallet balance (update as it grows)
 
 # ---------------------------------------------------------------------------
 # Live trading flag
@@ -214,8 +214,8 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "time_stop_minutes":   45,
     },
     "social_alert": {
-        "trade_size_usd":      3,       # $3/trade while validating fixes
-        "live_trade_size_usd": 3,
+        "trade_size_usd":      6,       # $6/trade — fixes validated, halves fee drag vs $3
+        "live_trade_size_usd": 6,       # scale to $10 when wallet reaches $50
         "hard_stop_pct":       -0.35,
         "time_stop_minutes":   90,
         # ATH-anchored trail tiers (replaces single trailing_stop_pct / trail_activates_pct).
