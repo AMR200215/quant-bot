@@ -257,11 +257,15 @@ def _token_decimals_from_rpc(wallet_pubkey: str, token_mint: str) -> int:
 
 
 def _sol_balance(wallet_pubkey: str) -> int:
-    """Return wallet SOL balance in lamports. Raises on RPC error."""
+    """Return wallet SOL balance in lamports. Raises on RPC error.
+
+    Uses 'confirmed' commitment so balance reflects txs within ~2s,
+    not ~14s (finalized default). This is the key fix for sol_recv=0.
+    """
     resp = _rpc_post({
         "jsonrpc": "2.0", "id": 1,
         "method":  "getBalance",
-        "params":  [wallet_pubkey],
+        "params":  [wallet_pubkey, {"commitment": "confirmed"}],
     })
     data = resp.json()
     if "result" not in data:
@@ -987,9 +991,20 @@ class MemeExecutor:
                 log.warning("SELL _sol_balance RPC error — fill price will use entry_price fallback: %s", _rpc_err)
 
             all_sigs: list[str] = []
+            _graduated_detected = False  # set True on first 6005 → skip remaining PumpPortal steps
 
             for step, (slip_pct, fee_floor_sol, fee_level) in enumerate(SELL_LADDER, 1):
                 try:
+                    # If first PumpPortal step reverted with 6005, this token has graduated
+                    # (bonding curve exhausted → now on Raydium). Skip remaining PumpPortal
+                    # steps immediately — they will all fail identically and each burns fees.
+                    if _graduated_detected:
+                        log.warning(
+                            "SELL graduated fast-path: skipping PumpPortal step %d  token=%s",
+                            step, token_address[:8],
+                        )
+                        break
+
                     # Dynamic fee: Helius estimate at escalating levels; floor at ladder minimum
                     fee_sol = max(_helius_priority_fee(token_address, level=fee_level), fee_floor_sol)
                     if EXECUTOR_BACKEND == "pumpportal":
@@ -1057,9 +1072,12 @@ class MemeExecutor:
                         except RuntimeError as _rpc_err:
                             log.warning("SELL fill price RPC error — using entry_price fallback: %s", _rpc_err)
 
-                        if fill_price is None:
-                            fill_price = entry_price   # fallback: at least journal closes correctly
-                            log.warning("SELL fill_price unavailable — journaling at entry_price $%.10f", fill_price)
+                        if not fill_price:
+                            # Catches both None (balance query failed) and 0.0 (sol_recv=0).
+                            # Return None so portfolio knows fill is unknown — it will use
+                            # pos.exit_price (stop trigger price) rather than the stale peak.
+                            fill_price = None
+                            log.warning("SELL fill_price unavailable (sol_recv=0) — portfolio will use trigger price  token=%s", token_address[:8])
 
                         log.info(
                             "SELL confirmed step %d  sig=%s  sol_recv=%.6f  fill=$%.10f",
@@ -1075,7 +1093,21 @@ class MemeExecutor:
                         }
 
                     if err is not None:
-                        # On-chain revert → escalate immediately
+                        # On-chain revert → escalate immediately.
+                        # Custom 6005 = slippage exceeded on pump.fun program.  When this
+                        # fires on step 1 it almost always means the token graduated from
+                        # the bonding curve — pump.fun rejects it at any slippage.  Flag it
+                        # so the loop skips steps 2 and 3 and jumps to Jupiter.
+                        _is_6005 = (
+                            isinstance(err, dict)
+                            and err.get("InstructionError", [None, None])[1] == {"Custom": 6005}
+                        )
+                        if _is_6005 and step == 1:
+                            _graduated_detected = True
+                            log.warning(
+                                "SELL 6005 on step 1 — token likely graduated, skipping PumpPortal  token=%s",
+                                token_address[:8],
+                            )
                         log.warning(
                             "SELL reverted step %d/%d  sig=%s  err=%s — escalating",
                             step, len(SELL_LADDER), sig[:16], err,

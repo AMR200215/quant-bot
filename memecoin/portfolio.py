@@ -1220,8 +1220,14 @@ class Portfolio:
                     ex     = MemeExecutor()
                     result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
                     if result.get("success"):
-                        fill  = result.get("fill_price") or pos.exit_price
-                        pos.exit_price = fill   # overwrite trigger price with real on-chain fill
+                        _exec_fill = result.get("fill_price")
+                        # Only overwrite trigger price if executor measured a real fill.
+                        # fill_price=None means sol_recv=0 (balance lag) — keep pos.exit_price
+                        # (the stop trigger price) which is the best estimate we have.
+                        # fill_price=0.0 also indicates unknown — same treatment.
+                        fill  = _exec_fill if _exec_fill else pos.exit_price
+                        if _exec_fill:
+                            pos.exit_price = fill   # real on-chain fill measured
                         _step = result.get("ladder_step", 1)
                         _all  = result.get("all_sigs", [])
                         _sigs_tag = f"|all_sigs:{','.join(_all)}" if len(_all) > 1 else ""
@@ -1681,7 +1687,8 @@ class Portfolio:
         pos = self._positions.get(pos_id)
 
         if _tp_r.get("success"):
-            _tp_fill    = _tp_r.get("fill_price") or (pos.current_price if pos else 0.0)
+            _tp_fill_raw = _tp_r.get("fill_price")
+            _tp_fill     = _tp_fill_raw if _tp_fill_raw else (pos.current_price if pos else 0.0)
             _tp_sig     = _tp_r.get("tx_sig", "")
             _paper_est  = sell_frac * (pos.size_usd if pos else 0.0) * tp_pct
             _real_pnl   = (
