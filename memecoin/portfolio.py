@@ -1218,7 +1218,11 @@ class Portfolio:
 
                 if not _presigned_used:
                     ex     = MemeExecutor()
-                    result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
+                    # escalate=True on retries: previous full ladder failed, skip PumpPortal
+                    # and go straight to Jupiter with 99% slippage to guarantee exit.
+                    _is_retry = getattr(pos, "sell_attempts", 0) > 0
+                    result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
+                                     escalate=_is_retry)
                     if result.get("success"):
                         _exec_fill = result.get("fill_price")
                         # Only overwrite trigger price if executor measured a real fill.

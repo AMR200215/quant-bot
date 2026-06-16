@@ -890,6 +890,7 @@ class MemeExecutor:
         entry_price: float,
         chain: str = "solana",
         fraction: float = 1.0,
+        escalate: bool = False,
     ) -> dict:
         """
         Swap all held token_address → SOL using a 3-step escalating sell ladder.
@@ -991,7 +992,12 @@ class MemeExecutor:
                 log.warning("SELL _sol_balance RPC error — fill price will use entry_price fallback: %s", _rpc_err)
 
             all_sigs: list[str] = []
-            _graduated_detected = False  # set True on first 6005 → skip remaining PumpPortal steps
+            # escalate=True  → previous full cycle failed, skip PumpPortal entirely
+            # _graduated_detected → first 6005 seen, skip remaining PumpPortal steps
+            _graduated_detected = escalate
+            if escalate:
+                log.warning("SELL escalate mode — skipping PumpPortal, going straight to Jupiter  token=%s",
+                            token_address[:8])
 
             for step, (slip_pct, fee_floor_sol, fee_level) in enumerate(SELL_LADDER, 1):
                 try:
@@ -1148,7 +1154,7 @@ class MemeExecutor:
                     _jup_fee   = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
                     _jup_tx    = _jup_build_swap_tx(
                         _jup_quote, wallet,
-                        slippage_bps=5000,          # 50% — graduated token, take the exit
+                        slippage_bps=9900,          # 99% — last resort, get anything out
                         priority_fee_lamports=int(_jup_fee * 1e9),
                     )
                     _, VersionedTransaction, _ = _load_solders()
