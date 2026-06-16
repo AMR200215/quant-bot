@@ -995,12 +995,28 @@ class MemeExecutor:
                     confirmed, err = _confirm_tx(sig)
 
                     if confirmed:
-                        # Success — compute fill from SOL balance delta
+                        # Success — compute fill from SOL balance delta.
+                        # RPC nodes lag 1-3s after tx confirmation before reflecting the
+                        # updated balance. Retry until the balance changes (up to 5s).
                         fill_price   = None
                         sol_received = 0.0
                         try:
                             sol_bal_after = _sol_balance(wallet)
                             if sol_bal_before is not None:
+                                for _sol_retry in range(5):
+                                    if sol_bal_after != sol_bal_before:
+                                        break
+                                    time.sleep(1.0)
+                                    try:
+                                        sol_bal_after = _sol_balance(wallet)
+                                    except RuntimeError:
+                                        break
+                                if sol_bal_after == sol_bal_before:
+                                    log.warning(
+                                        "SELL sol_balance unchanged after 5 retries — "
+                                        "fill price will be unavailable  token=%s",
+                                        token_address[:8],
+                                    )
                                 sol_recv_lam  = max(0, sol_bal_after - sol_bal_before)
                                 sol_received  = sol_recv_lam / 1e9
                                 sol_price     = _sol_price_usd()
@@ -1085,6 +1101,15 @@ class MemeExecutor:
                         sol_bal_after = None
                         try:
                             sol_bal_after = _sol_balance(wallet)
+                            if sol_bal_before is not None:
+                                for _sol_retry in range(5):
+                                    if sol_bal_after != sol_bal_before:
+                                        break
+                                    time.sleep(1.0)
+                                    try:
+                                        sol_bal_after = _sol_balance(wallet)
+                                    except RuntimeError:
+                                        break
                         except RuntimeError:
                             pass
                         sol_received = max(0, sol_bal_after - sol_bal_before) / 1e9 if (sol_bal_after and sol_bal_before) else 0
