@@ -1284,7 +1284,7 @@ class Portfolio:
                             if "|sell_stuck" not in (pos.notes or ""):
                                 pos.notes = (pos.notes or "") + "|sell_stuck"
                             self._positions[pos_id] = pos
-                            self._sell_stuck_until[pos_id] = time.time() + 60
+                            self._sell_stuck_until[pos_id] = time.time() + 5
                             _save_positions(self._positions)
                             log.error(
                                 "SELL STUCK %s — ladder exhausted, position stays open, "
@@ -1334,7 +1334,7 @@ class Portfolio:
                 if "|sell_stuck" not in (pos.notes or ""):
                     pos.notes = (pos.notes or "") + f"|sell_stuck|err:{e}"
                 self._positions[pos_id] = pos
-                self._sell_stuck_until[pos_id] = time.time() + 60
+                self._sell_stuck_until[pos_id] = time.time() + 5
                 _save_positions(self._positions)
                 log.error("SELL STUCK %s (exception path) — stays open, retry in 60s: %s",
                           pos.token_symbol, e)
