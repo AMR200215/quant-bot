@@ -880,6 +880,7 @@ class MemeExecutor:
         size_usd: float,
         entry_price: float,
         chain: str = "solana",
+        fraction: float = 1.0,
     ) -> dict:
         """
         Swap all held token_address → SOL using a 3-step escalating sell ladder.
@@ -949,6 +950,30 @@ class MemeExecutor:
                         log.warning("SELL skipped — zero balance  token=%s", token_address[:8])
                         return {"success": False, "reason": "zero_balance"}
 
+            # Determine sell amount: "100%" for full exits, token count for partial TP sells.
+            # fraction < 1.0 = TP partial sell — must pass exact token count to PumpPortal.
+            if fraction < 1.0:
+                if balance is None or balance == 0:
+                    log.warning(
+                        "SELL partial %.0f%% — cannot get balance, aborting  token=%s",
+                        fraction * 100, token_address[:8],
+                    )
+                    return {"success": False, "reason": "zero_balance_partial"}
+                tokens_to_sell = int(balance * fraction)
+                if tokens_to_sell <= 0:
+                    log.warning(
+                        "SELL partial tokens_to_sell=0  balance=%d  fraction=%.2f  token=%s",
+                        balance, fraction, token_address[:8],
+                    )
+                    return {"success": False, "reason": "zero_tokens_partial"}
+                _sell_amount = str(tokens_to_sell)
+                log.info(
+                    "SELL partial %.0f%%  tokens=%d/%d  token=%s",
+                    fraction * 100, tokens_to_sell, balance, token_address[:8],
+                )
+            else:
+                _sell_amount = "100%"
+
             # Snapshot SOL balance before first attempt (for fill price only — not blocking)
             sol_bal_before = None
             try:
@@ -967,7 +992,7 @@ class MemeExecutor:
                             wallet_pubkey=wallet,
                             action="sell",
                             token_mint=token_address,
-                            amount="100%",
+                            amount=_sell_amount,
                             denominated_in_sol=False,
                             slippage_pct=slip_pct,
                             priority_fee_sol=fee_sol,
@@ -1038,6 +1063,7 @@ class MemeExecutor:
                         return {
                             "success":     True,
                             "fill_price":  fill_price,
+                            "sol_received": sol_received,
                             "tx_sig":      sig,
                             "all_sigs":    all_sigs,
                             "ladder_step": step,

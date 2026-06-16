@@ -1220,6 +1220,7 @@ class Portfolio:
                     result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain)
                     if result.get("success"):
                         fill  = result.get("fill_price") or pos.exit_price
+                        pos.exit_price = fill   # overwrite trigger price with real on-chain fill
                         _step = result.get("ladder_step", 1)
                         _all  = result.get("all_sigs", [])
                         _sigs_tag = f"|all_sigs:{','.join(_all)}" if len(_all) > 1 else ""
@@ -1604,6 +1605,7 @@ class Portfolio:
                     })
             else:
                 # check take-profit ladder
+                _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
                 for tp_pct, tp_fraction in TP_LEVELS:
                     level_key = f"tp_{int(tp_pct*100)}"
                     if gain >= tp_pct and level_key not in pos.tp_levels_hit:
@@ -1611,8 +1613,70 @@ class Portfolio:
                         sell_frac = tp_fraction * pos.remaining_fraction
                         pos.remaining_fraction -= sell_frac
                         partial_usd = sell_frac * pos.size_usd
-                        # Lock in the profit on the sold fraction at this exact TP level
-                        pos.realized_pnl_usd += sell_frac * pos.size_usd * tp_pct
+
+                        # ── Live TP sell ───────────────────────────────────────────
+                        # For live positions: execute a real partial sell on-chain and
+                        # record actual SOL received as realized PnL.
+                        # For paper positions or if live sell fails: fall back to
+                        # price-based estimate (tp_pct × fraction × size).
+                        _tp_pnl_added = False
+                        if LIVE_TRADING and _was_live_buy:
+                            try:
+                                from memecoin.executor import MemeExecutor as _MEx
+                                _tp_ex  = _MEx()
+                                _tp_r   = _tp_ex.sell(
+                                    pos.token_address, pos.size_usd, pos.entry_price,
+                                    pos.chain, fraction=sell_frac,
+                                )
+                                if _tp_r.get("success"):
+                                    _tp_fill = _tp_r.get("fill_price") or pos.current_price
+                                    _tp_sig  = _tp_r.get("tx_sig", "")
+                                    # PnL from real fill, not price estimate
+                                    _tp_real_pnl = (
+                                        (_tp_fill / pos.entry_price - 1)
+                                        * sell_frac * pos.size_usd
+                                        if pos.entry_price > 0 else 0.0
+                                    )
+                                    pos.realized_pnl_usd += _tp_real_pnl
+                                    pos.notes = (
+                                        (pos.notes or "")
+                                        + f"|{level_key}_tx:{_tp_sig}"
+                                        + f"|{level_key}_fill:{_tp_fill:.10f}"
+                                    )
+                                    _tp_pnl_added = True
+                                    log.warning(
+                                        "LIVE TP SELL %s  tp=+%.0f%%  frac=%.0f%%  "
+                                        "fill=%.10f  realized=$%.2f  tx=%s",
+                                        pos.token_symbol, tp_pct * 100, sell_frac * 100,
+                                        _tp_fill, _tp_real_pnl, _tp_sig[:16],
+                                    )
+                                    try:
+                                        from app.alerts import _send
+                                        _send(
+                                            f"✅ LIVE TP {pos.token_symbol} +{tp_pct*100:.0f}%\n"
+                                            f"Sold: {sell_frac*100:.0f}% of position\n"
+                                            f"Locked: ${_tp_real_pnl:.2f}\n"
+                                            f"Remaining: {pos.remaining_fraction*100:.0f}%\n"
+                                            f"tx: {_tp_sig[:20]}"
+                                        )
+                                    except Exception:
+                                        pass
+                                else:
+                                    log.warning(
+                                        "LIVE TP sell FAILED %s — paper estimate applied. reason=%s",
+                                        pos.token_symbol,
+                                        _tp_r.get("reason") or _tp_r.get("error", "unknown"),
+                                    )
+                            except Exception as _tp_err:
+                                log.warning(
+                                    "LIVE TP sell exception %s: %s — paper estimate applied",
+                                    pos.token_symbol, _tp_err,
+                                )
+
+                        if not _tp_pnl_added:
+                            # Paper path or live sell failed: estimate from price
+                            pos.realized_pnl_usd += sell_frac * pos.size_usd * tp_pct
+
                         log.info(
                             "TP hit %s  %s +%.0f%%  sold %.0f%% ($%.2f)  realized=$%.2f",
                             pos.id, pos.token_symbol, gain * 100,
