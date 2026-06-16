@@ -1421,6 +1421,24 @@ def _reconciler_thread() -> None:
                     continue
 
                 if on_chain == 0:
+                    # RPC nodes lag 1-3s after a tx confirms before reflecting the
+                    # updated balance. Retry before treating zero as genuinely gone.
+                    # False-close risk: reconciler runs within 3s of a sell confirming
+                    # → reads stale 0 → phantom-closes a live position.
+                    for _rec_retry in range(4):
+                        time.sleep(1.5)
+                        try:
+                            on_chain = _token_balance(wallet, pos.token_address)
+                        except Exception:
+                            break
+                        if on_chain > 0:
+                            log.info(
+                                "RECONCILER: balance retry %d found %d tokens for %s — not closing",
+                                _rec_retry + 1, on_chain, pos.token_symbol,
+                            )
+                            break
+
+                if on_chain == 0:
                     log.warning(
                         "RECONCILER: zero on-chain balance for open live position %s (%s) — "
                         "closing as reconciled_gone",
