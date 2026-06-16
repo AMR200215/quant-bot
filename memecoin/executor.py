@@ -44,11 +44,15 @@ JUPITER_SWAP_URL  = "https://lite-api.jup.ag/swap/v1/swap"
 
 PUMPPORTAL_TRADE_URL = "https://pumpportal.fun/api/trade-local"
 
-# Buy: 50% — tokens move 20-50% between screen and confirm; 25% was causing 6063 reverts
-#             on tokens that moved 40-50% from DexScreener baseline to on-chain confirm.
+# Buy: 30% — aligns with abort_tripwire threshold (fill > quote*1.30 → abort).
+#             Fills in 0-30% band → held normally (the fills we want).
+#             Fills in 30-50% band were causing fill-then-abort-then-dump (round-trip loss
+#             more expensive than a revert). Setting cap=30 makes those reverts instead.
+#             Graduated tokens historically fill within 2% of Jupiter quote → no regression.
+#             Prior 50% cap was incorrectly suppressing reverts on -EV chase entries.
 # Sell: 35% — stop-loss that fails to execute is the worst outcome in the system.
-SLIPPAGE_BUY_PCT        = 50
-SLIPPAGE_BUY_PCT_RETRY  = 60   # one-time retry on tx_reverted with higher slippage
+SLIPPAGE_BUY_PCT        = 30
+SLIPPAGE_BUY_PCT_RETRY  = 30   # retry at same cap — 6063 at 30% means token moved >30%, revert again is correct
 SLIPPAGE_SELL_PCT       = 35
 
 PRIORITY_FEE_SOL  = 0.0005   # floor fallback (~$0.085 at $170 SOL)
@@ -863,6 +867,7 @@ class MemeExecutor:
                 "entry_slippage_pct":  entry_slippage_pct,
                 "tx_sig":              sig,
                 "jupiter_quote_price": jupiter_quote_price,
+                "pp_silent":           not _pp_active,   # True = graduated token, Gate 2 was skipped
                 "timing": {
                     "t_quote":   round(_t_quoted    - _t0, 3),
                     "t_submit":  round(_t_submitted - _t0, 3),
