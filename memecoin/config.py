@@ -72,7 +72,10 @@ LIVE_DRY_RUN = False
 # behaviour change on miss.
 # ---------------------------------------------------------------------------
 REALTIME_PRICE_FEED   = True
-SLIPPAGE_GATE_RT_PCT  = 0.20   # 20% gate vs PP signal price (real movement only)
+SLIPPAGE_GATE_RT_PCT  = 0.35   # 35% gate vs PP signal price — raised from 20% to capture
+                               # trades where token moves 20-35% during screening window.
+                               # Paper enters at signal price; live was blocking these entries
+                               # and missing the subsequent 100%+ moves.
 SLIPPAGE_GATE_DEX_PCT = 0.50   # 50% gate vs DexScreener baseline — pump.fun tokens move fast
 
 # ---------------------------------------------------------------------------
