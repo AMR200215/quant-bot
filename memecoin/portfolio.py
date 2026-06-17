@@ -346,6 +346,10 @@ class Portfolio:
         # sell_stuck throttle: pos_id → earliest time to retry sell
         # In-memory only — resets on restart (which itself gives a fresh attempt).
         self._sell_stuck_until: dict[str, float] = {}
+        # dex_pair_loss tracking: pos_id → timestamp when Jupiter fallback started
+        self._jup_fallback_since: dict[str, float] = {}
+        # how many positions had PP or DexScreener data last cycle (>0 = feeds healthy)
+        self._last_cycle_n_with_dex: int = 0
         threading.Thread(
             target=self._presigned_refresh_loop,
             daemon=True,
@@ -1213,6 +1217,7 @@ class Portfolio:
         pos.exit_time  = time.time()
         pos.exit_reason = reason
         pos.status = "closed"
+        self._jup_fallback_since.pop(pos_id, None)  # clean up dex_pair_loss tracker
 
         # Live execution gate — only sell on-chain if this position was a live buy
         _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
@@ -1456,6 +1461,7 @@ class Portfolio:
             price_overrides = {}
 
         exits = []
+        _this_cycle_n_with_dex = 0   # positions with PP or DexScreener data this cycle
         for pos in list(self._positions.values()):
             if pos.status != "open":
                 continue
@@ -1465,9 +1471,11 @@ class Portfolio:
             # 2. DexScreener poll (5-30s lag — fallback heartbeat)
             # 3. Jupiter quote (last resort when DexScreener is down)
             pp_price = price_overrides.get(pos.token_address)
+            _used_dex_source = False
             if pp_price and pp_price > 0:
                 pos.current_price = pp_price
                 pos.peak_price = max(pos.peak_price, pp_price)
+                _used_dex_source = True
             else:
                 # DexScreener fallback — used when PumpPortal has no fresh data
                 # (graduated tokens, or token not yet subscribed)
@@ -1477,6 +1485,7 @@ class Portfolio:
                     if price > 0:
                         pos.current_price = price
                         pos.peak_price = max(pos.peak_price, price)
+                        _used_dex_source = True
                 if (not pair or pos.current_price == 0) and pos.chain == "solana":
                     try:
                         from memecoin.executor import _jup_get_quote, _sol_price_usd, SOL_MINT, SOL_DECIMALS
@@ -1492,6 +1501,15 @@ class Portfolio:
                                         pos.token_symbol, _price)
                     except Exception:
                         pass   # both sources failed — price stays stale, time stop will still fire
+
+            # Track which price source was used for dex_pair_loss discriminator
+            if _used_dex_source:
+                _this_cycle_n_with_dex += 1
+                self._jup_fallback_since.pop(pos.id, None)   # clear if previously in Jupiter-only mode
+            else:
+                # Jupiter-only (or stale) — start/continue the fallback timer
+                if pos.id not in self._jup_fallback_since:
+                    self._jup_fallback_since[pos.id] = time.time()
 
             # T+10 buy-velocity snapshot (8–12 min window, logged once per position)
             age_min = (time.time() - pos.entry_time) / 60
@@ -1591,6 +1609,30 @@ class Portfolio:
 
             gain = pos.pnl_pct
             reason = None
+
+            # 0a. DexScreener pair loss — token-specific feed loss while other positions
+            #     still have real data. Fires when:
+            #     • Jupiter-only pricing for ≥10s (DexScreener pair gone for this token)
+            #     • Other positions still had PP/DexScreener data last cycle (not a global outage)
+            #     • Price already -10% from entry (confirming downward move, not just lag)
+            _jup_fb_ts = self._jup_fallback_since.get(pos.id, 0)
+            if (
+                not reason
+                and _jup_fb_ts > 0
+                and (time.time() - _jup_fb_ts) >= 10
+                and self._last_cycle_n_with_dex > 0
+                and pos.entry_price > 0
+                and pos.current_price < pos.entry_price * 0.90
+            ):
+                reason = "dex_pair_loss"
+                log.warning(
+                    "DEX PAIR LOSS %s — Jupiter-only for %.0fs, price -%.1f%% from entry, "
+                    "%d other position(s) have DexScreener data → early exit",
+                    pos.token_symbol,
+                    time.time() - _jup_fb_ts,
+                    (1 - pos.current_price / pos.entry_price) * 100,
+                    self._last_cycle_n_with_dex,
+                )
 
             # Update stall tracker — reset timer whenever peak_price improves
             stall = self._stall_tracker.setdefault(
@@ -1717,6 +1759,9 @@ class Portfolio:
                             alerts.alert_tp_hit(pos, tp_pct, partial_usd)
                         except Exception:
                             pass
+
+        # Update cycle counter for next iteration's dex_pair_loss discriminator
+        self._last_cycle_n_with_dex = _this_cycle_n_with_dex
 
         _save_positions(self._positions)
         return exits
