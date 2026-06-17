@@ -54,7 +54,7 @@ PRICE_STALE_SEC = 15.0
 SOL_PRICE_REFRESH_SEC = 60.0
 
 # Max concurrent screening slots before LRU eviction
-MAX_SCREENING_SLOTS = 30
+MAX_SCREENING_SLOTS = 150  # covers ~12 min of new launches at current rate (~5s/token)
 
 # Reconnect delays: 0.5 → 1 → 2 → 5 (capped)
 _RECONNECT_DELAY_BASE = 0.5

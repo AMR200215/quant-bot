@@ -254,8 +254,13 @@ def _log_screening_outcome(mint: str, entry: dict, state, entry_made: bool):
         log.debug("screening_outcomes log error: %s", e)
 
 
-def _fire_screening_entry(chain: str, mint: str, state):
-    """Open a paper-only position from PumpPortal screening data."""
+def _fire_screening_entry(chain: str, mint: str, state, *, is_telegram: bool = False):
+    """Fire a signal from PumpPortal screening data.
+
+    is_telegram=True  → token was mentioned in Telegram; signal_type and cohort are
+                        set to social_alert / telegram_pump so the live gate fires.
+    is_telegram=False → pure pump.fun stream discovery; paper-only (pumpportal_screen).
+    """
     price       = state.latest_price or state.first_seen_price
     total_txns  = state.buy_count + state.sell_count
     age_min     = (time.time() - state.first_seen_ts) / 60
@@ -291,25 +296,31 @@ def _fire_screening_entry(chain: str, mint: str, state):
         "sell_tax":           0,
         "pair":               {},
     }
+    _src = "telegram_pp" if is_telegram else "pumpportal_screen"
     sig = make_social_alert_signal(chain, mint, screen,
-                                   source="pumpportal_screen",
+                                   source=_src,
                                    channel="pumpdotfunalert")
     if sig is None:
         return
-    # Paper-only gate: override signal_type so live gate in portfolio.py
-    # (requires signal_type=="social_alert") does not trigger.
-    # These signals are paper-only for the 7-day evaluation window.
-    sig.signal_type = "pumpportal_screen"
-    sig.token_cohort = "pumpfun_stream"   # type-1 cohort for live gate (Item 1)
+
+    if is_telegram:
+        # Live gate passes: signal_type + cohort match portfolio.py live gate.
+        sig.signal_type  = "social_alert"
+        sig.token_cohort = "telegram_pump"
+    else:
+        # Paper-only: pure pump.fun stream discovery, no Telegram backing.
+        sig.signal_type  = "pumpportal_screen"
+        sig.token_cohort = "pumpfun_stream"
+
     sig.notes += (f" | screen: buyers={state.unique_buyer_count}"
                   f" net_sol={state.net_sol_inflow:.3f}")
-    # Task 2: carry creator from ScreeningState so dev_dump is wired from day 1
     sig.creator_wallet = state.creator_pubkey or ""
 
     _add_signal(sig)
     log.warning(
-        "SCREEN ENTRY %s — buyers=%d net_sol=%.3f price=$%.8f",
-        mint[:8], state.unique_buyer_count, state.net_sol_inflow, price,
+        "SCREEN ENTRY %s (%s) — buyers=%d net_sol=%.3f price=$%.8f",
+        mint[:8], "LIVE" if is_telegram else "paper",
+        state.unique_buyer_count, state.net_sol_inflow, price,
     )
 
 
@@ -334,7 +345,8 @@ def _run_screening_checks():
             if elapsed >= check_at:
                 state = _pp_monitor.get_screening_state(mint)
                 if state and _screening_conditions_met(state):
-                    _fire_screening_entry(entry["chain"], mint, state)
+                    _fire_screening_entry(entry["chain"], mint, state,
+                                          is_telegram=entry.get("tg", False))
                     _log_screening_outcome(mint, entry, state, entry_made=True)
                     to_evict.append(mint)
                     continue
@@ -849,6 +861,27 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         except Exception as _sub_err:
             log.debug("Early PP subscribe failed %s: %s", address[:8], _sub_err)
 
+    # ── Lever 2: instant PP cache check ─────────────────────────────────────
+    # If this token was already subscribed from the pump.fun stream before Telegram
+    # mentioned it, we have accumulated trade data. Skip DexScreener entirely and
+    # fire a live social_alert signal immediately using cached PP prices.
+    # Condition: 8+ unique buyers, positive net SOL inflow, creator not sold.
+    if chain == "solana":
+        try:
+            _cached = _pp_monitor.get_screening_state(address)
+            if _cached is not None and _screening_conditions_met(_cached):
+                _cache_age = time.time() - _cached.first_seen_ts
+                log.warning(
+                    "TG CACHE HIT %s — age=%.0fs buyers=%d net_sol=%.3f — "
+                    "firing live signal immediately (no DexScreener needed)",
+                    address[:8], _cache_age,
+                    _cached.unique_buyer_count, _cached.net_sol_inflow,
+                )
+                _fire_screening_entry(chain, address, _cached, is_telegram=True)
+                return
+        except Exception as _ce:
+            log.debug("Cache check failed %s: %s", address[:8], _ce)
+
     # Start creator fetch immediately, in parallel with screening.
     # The screen typically takes 1-2s, so the fetch (0.3-1s) is usually done by then.
     # For the DexScreener success path: fail-closed if creator not resolved.
@@ -941,6 +974,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                         "ts":          _t0,
                         "chain":       chain,
                         "checks_done": 0,
+                        "tg":          True,   # Telegram-backed: fires live signal when conditions met
                     }
                     log.info("TG SCREEN-QUEUE %s — PumpPortal accumulator started (creator=%s)",
                              address[:8],
