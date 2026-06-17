@@ -1065,13 +1065,15 @@ class MemeExecutor:
                     return {"success": False, "reason": "zero_tokens_partial"}
                 _sell_amount      = str(tokens_to_sell)
                 _jup_sell_tokens  = tokens_to_sell  # Jupiter fallback respects the fraction
+                _fill_token_count = tokens_to_sell  # fill price denominator (partial, not full)
                 log.info(
                     "SELL partial %.0f%%  tokens=%d/%d  token=%s",
                     fraction * 100, tokens_to_sell, balance, token_address[:8],
                 )
             else:
-                _sell_amount     = "100%"
-                _jup_sell_tokens = balance  # may be None — Jupiter fallback checks before use
+                _sell_amount      = "100%"
+                _jup_sell_tokens  = balance  # may be None — Jupiter fallback checks before use
+                _fill_token_count = balance   # full exit — use full balance for fill price
 
             # sol_bal_before: needed for fill price (sol_received = after − before).
             # escalate path: already fetched in parallel above.
@@ -1163,9 +1165,9 @@ class MemeExecutor:
                                 sol_recv_lam  = max(0, sol_bal_after - sol_bal_before)
                                 sol_received  = sol_recv_lam / 1e9
                                 sol_price     = _sol_price_usd()
-                                if balance is not None:
+                                if _fill_token_count is not None:
                                     decimals      = _token_decimals_from_rpc(wallet, token_address)
-                                    tokens_sold   = balance / (10 ** decimals)
+                                    tokens_sold   = _fill_token_count / (10 ** decimals)
                                     fill_price    = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
                         except RuntimeError as _rpc_err:
                             log.warning("SELL fill price RPC error — using entry_price fallback: %s", _rpc_err)
