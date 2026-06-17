@@ -1225,9 +1225,23 @@ class Portfolio:
                 # PumpPortal build step and send the pre-built tx directly.
                 # Baseline: build-on-demand ~350ms detect→land.
                 # Target:   presigned ~10ms detect→send.
+                # Presigned exits are used for two categories:
+                #   Rug-path  (dev_dump, rug_lp, velocity): always — no TP sell can
+                #             have fired yet since rg detection is near-instant.
+                #   Orderly stops (hard_stop, trailing_stop): ONLY when remaining_fraction
+                #             == 1.0 (no partial TP sell has happened yet).  If a TP sold
+                #             30%, the presigned tx was built for 100% of original balance —
+                #             submitting it would fail (insufficient balance) and fall back
+                #             to a fresh Jupiter quote harmlessly, but wastes ~0.5s.
+                #             With the guard, presigned fires only when token count matches.
                 _RUG_REASONS    = frozenset({"dev_dump", "rug_lp", "velocity"})
+                _STOP_REASONS   = frozenset({"hard_stop", "trailing_stop"})
                 _presigned_used = False
-                if reason in _RUG_REASONS:
+                _use_presigned  = (
+                    reason in _RUG_REASONS
+                    or (reason in _STOP_REASONS and pos.remaining_fraction >= 1.0)
+                )
+                if _use_presigned:
                     with self._presigned_lock:
                         _ps_bytes = self._presigned_exits.pop(pos.token_address, None)
                         self._presigned_ts.pop(pos.token_address, None)
@@ -1243,7 +1257,7 @@ class Portfolio:
                                 (_t_send - _t_detect) * 1000,
                             )
                             pos.notes = (pos.notes or "") + f"|presigned:{_psig}"
-                            _pconf, _perr = _confirm_tx(_psig)
+                            _pconf, _perr = _confirm_tx(_psig, t_sent=_t_send)
                             if _pconf:
                                 log.info("Presigned exit confirmed %s  sig=%s",
                                          pos.token_symbol, _psig[:16])

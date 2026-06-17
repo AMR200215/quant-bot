@@ -273,7 +273,8 @@ def _sol_balance(wallet_pubkey: str) -> int:
     return int(data["result"]["value"])
 
 
-def _confirm_tx(sig: str, max_wait: int = 40) -> tuple[bool, object]:
+def _confirm_tx(sig: str, max_wait: int = 40,
+                t_sent: float = 0.0) -> tuple[bool, object]:
     """
     Poll getSignatureStatuses until confirmed/finalized or timeout.
 
@@ -284,19 +285,37 @@ def _confirm_tx(sig: str, max_wait: int = 40) -> tuple[bool, object]:
 
     IMPORTANT: callers must check err even when success=False. A reverted tx
     is on-chain; do not record it as a success.
+
+    t_sent: time.time() when sendTransaction was called.  When provided, logs
+    the confirmed slot so we can measure whether the tx is landing in 1-3 slots
+    (fast — detection lag is the bottleneck) or many more (slow — landing is
+    the bottleneck, and maxRetries / fee changes help).
+    Detection-lag notes:
+      searchTransactionHistory=False — sig is always fresh (<40s), recent-cache
+        is sufficient and the call is ~3× faster.  Falls back gracefully if cache
+        misses (None result → next poll).
+      Poll interval: 0.5s for the first 6 polls (~3s window), then 2s.
+        The first slot usually confirms in 1-3 blocks (0.4-1.2s); tight polling
+        catches it early.  Switching to 2s after 3s avoids burning Helius quota
+        while waiting for slower-landing txs.
+      429 backoff: capped at 2s for the first 15s of waiting, then allows 4s.
+        Old escalation to 10s was ballooning detection time under rate-limit.
     """
+    _t0      = t_sent or time.time()
     deadline = time.time() + max_wait
+    _poll    = 0
     backoff  = 2
     while time.time() < deadline:
         try:
             resp = _rpc_post({
                 "jsonrpc": "2.0", "id": 1,
                 "method":  "getSignatureStatuses",
-                "params":  [[sig], {"searchTransactionHistory": True}],
+                "params":  [[sig], {"searchTransactionHistory": False}],
             })
             if resp.status_code == 429:
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 10)
+                _wait_429 = 2 if (time.time() - _t0) < 15 else 4
+                log.debug("getSignatureStatuses 429 — backoff %ds  sig=%s", _wait_429, sig[:16])
+                time.sleep(_wait_429)
                 continue
             status = (resp.json().get("result", {}).get("value") or [None])[0]
             if status:
@@ -306,10 +325,22 @@ def _confirm_tx(sig: str, max_wait: int = 40) -> tuple[bool, object]:
                     if err is not None:
                         log.warning("Tx REVERTED on-chain  sig=%s  err=%s", sig[:16], err)
                         return False, err
+                    # ── Step 0 instrumentation ────────────────────────────────
+                    # Logs confirmed slot so we can compare to send-slot and
+                    # determine if latency is tx-landing (slot delta large) or
+                    # detection-lag (slot delta small, t_detected large).
+                    _t_detected = time.time()
+                    if t_sent:
+                        log.warning(
+                            "TX LANDED  sig=%s  slot=%s  detected=+%.1fs_after_send",
+                            sig[:16], status.get("slot", "?"),
+                            _t_detected - _t0,
+                        )
                     return True, None
         except Exception:
             pass
-        time.sleep(2)
+        _poll += 1
+        time.sleep(0.5 if _poll <= 6 else 2)
     return False, None   # timeout
 
 
@@ -965,14 +996,31 @@ class MemeExecutor:
             # _token_balance / _sol_balance can raise RuntimeError on RPC rate-limit.
             # For PumpPortal sells we use amount="100%" so balance is only needed for
             # fill price calculation — not for the tx itself.  Never block a sell on RPC.
-            balance = None
-            try:
-                balance = _token_balance(wallet, token_address)
-            except RuntimeError as _rpc_err:
-                if EXECUTOR_BACKEND == "pumpportal":
-                    log.warning("SELL _token_balance RPC error — proceeding with 100%% sell: %s", _rpc_err)
-                else:
-                    raise   # Jupiter path needs exact balance for quote lamports
+            #
+            # When escalate=True (graduated token fast path), both calls are needed
+            # before the Jupiter quote — fire them in parallel to save ~300ms.
+            balance        = None
+            sol_bal_before = None
+            if escalate:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
+                    _bal_f = _pool.submit(_token_balance, wallet, token_address)
+                    _sol_f = _pool.submit(_sol_balance, wallet)
+                    try:
+                        balance = _bal_f.result(timeout=5)
+                    except RuntimeError as _rpc_err:
+                        log.warning("SELL _token_balance RPC error (escalate): %s", _rpc_err)
+                    try:
+                        sol_bal_before = _sol_f.result(timeout=5)
+                    except RuntimeError as _rpc_err:
+                        log.warning("SELL _sol_balance RPC error (escalate): %s", _rpc_err)
+            else:
+                try:
+                    balance = _token_balance(wallet, token_address)
+                except RuntimeError as _rpc_err:
+                    if EXECUTOR_BACKEND == "pumpportal":
+                        log.warning("SELL _token_balance RPC error — proceeding with 100%% sell: %s", _rpc_err)
+                    else:
+                        raise   # Jupiter path needs exact balance for quote lamports
 
             if balance is not None and balance == 0:
                 # RPC nodes can lag 1-3s after a recent buy confirmation — retry before giving up.
@@ -1025,12 +1073,14 @@ class MemeExecutor:
                 _sell_amount     = "100%"
                 _jup_sell_tokens = balance  # may be None — Jupiter fallback checks before use
 
-            # Snapshot SOL balance before first attempt (for fill price only — not blocking)
-            sol_bal_before = None
-            try:
-                sol_bal_before = _sol_balance(wallet)
-            except RuntimeError as _rpc_err:
-                log.warning("SELL _sol_balance RPC error — fill price will use entry_price fallback: %s", _rpc_err)
+            # sol_bal_before: needed for fill price (sol_received = after − before).
+            # escalate path: already fetched in parallel above.
+            # normal path: fetch now (serial, before ladder starts).
+            if not escalate:
+                try:
+                    sol_bal_before = _sol_balance(wallet)
+                except RuntimeError as _rpc_err:
+                    log.warning("SELL _sol_balance RPC error — fill price will use entry_price fallback: %s", _rpc_err)
 
             all_sigs: list[str] = []
             # escalate=True  → previous full cycle failed, skip PumpPortal entirely
@@ -1077,6 +1127,7 @@ class MemeExecutor:
                     tx        = VersionedTransaction.from_bytes(tx_bytes)
                     signed_tx = VersionedTransaction(tx.message, [keypair])
                     sig       = _send_transaction(bytes(signed_tx))
+                    _t_sig_sent = time.time()
                     all_sigs.append(sig)
 
                     log.info(
@@ -1084,7 +1135,7 @@ class MemeExecutor:
                         step, len(SELL_LADDER), sig[:16], slip_pct, fee_sol, token_address[:8],
                     )
 
-                    confirmed, err = _confirm_tx(sig)
+                    confirmed, err = _confirm_tx(sig, t_sent=_t_sig_sent)
 
                     if confirmed:
                         # Success — compute fill from SOL balance delta.
@@ -1202,11 +1253,12 @@ class MemeExecutor:
                     _jup_signed = VersionedTransaction(
                         VersionedTransaction.from_bytes(_jup_tx).message, [keypair]
                     )
-                    _jup_sig  = _send_transaction(bytes(_jup_signed))
+                    _jup_sig      = _send_transaction(bytes(_jup_signed))
+                    _t_jup_sent   = time.time()
                     all_sigs.append(_jup_sig)
                     log.warning("SELL Jupiter fallback sent  sig=%s  token=%s",
                                 _jup_sig[:16], token_address[:8])
-                    _jup_conf, _jup_err = _confirm_tx(_jup_sig)
+                    _jup_conf, _jup_err = _confirm_tx(_jup_sig, t_sent=_t_jup_sent)
                     if _jup_conf:
                         sol_bal_after = None
                         try:
