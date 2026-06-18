@@ -23,8 +23,10 @@ Environment variables:
 
 import base64
 import concurrent.futures
+import hashlib as _hashlib
 import logging
 import os
+import struct as _struct
 import threading
 import time
 
@@ -70,6 +72,29 @@ SELL_LADDER = [
 _PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 # Estimated compute units per pump.fun buy/sell tx (used to convert microlamports/CU → SOL)
 _CU_BUDGET_EST   = 200_000
+
+# ---------------------------------------------------------------------------
+# pump.fun local build — eliminates PumpPortal HTTP round-trip (~500-1000ms)
+# ---------------------------------------------------------------------------
+# Discriminators = sha256("global:<method>")[:8] (Anchor IDL convention).
+# Verified: hashlib.sha256(b"global:buy").digest()[:8]  == [102,6,61,18,1,218,235,234]
+#           hashlib.sha256(b"global:sell").digest()[:8] == [51,230,133,164,1,127,131,173]
+_PUMP_BUY_DISCRIMINATOR  = _hashlib.sha256(b"global:buy").digest()[:8]
+_PUMP_SELL_DISCRIMINATOR = _hashlib.sha256(b"global:sell").digest()[:8]
+
+# Fixed accounts (derived once from mainnet; pump.fun program does not rotate these)
+_PUMPFUN_GLOBAL_PDA  = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
+_PUMPFUN_EVENT_AUTH  = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
+_TOKEN_PROGRAM_ID    = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+_ATA_PROGRAM_ID      = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bRS"
+_RENT_SYSVAR_ID      = "SysvarRent111111111111111111111111111111111"
+_SYSTEM_PROGRAM_ID   = "11111111111111111111111111111111"
+_COMPUTE_BUDGET_ID   = "ComputeBudget111111111111111111111111111111"
+
+# Fee recipient lives in the pump.fun global account (offset 41:73).
+# Read once from chain and cached; falls back to hardcoded if RPC unavailable.
+_pumpfun_fee_recipient_cache: str = ""
+_pumpfun_fee_recipient_lock        = threading.Lock()
 
 # 8 Jito tip accounts (only used when EXECUTOR_BACKEND == "jupiter" + JITO_TIPS = True)
 _JITO_TIP_ACCOUNTS = [
@@ -158,6 +183,199 @@ def _get_cached_blockhash() -> str | None:
         if time.time() - _blockhash_cache["ts"] < 5.0:
             return _blockhash_cache["blockhash"]
     return None
+
+
+# ---------------------------------------------------------------------------
+# pump.fun local build helpers
+# ---------------------------------------------------------------------------
+
+def _pumpfun_fee_recipient() -> str:
+    """Return pump.fun fee_recipient pubkey, reading from global account once then caching."""
+    global _pumpfun_fee_recipient_cache
+    with _pumpfun_fee_recipient_lock:
+        if _pumpfun_fee_recipient_cache:
+            return _pumpfun_fee_recipient_cache
+    try:
+        resp = _rpc_post({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getAccountInfo",
+            "params": [_PUMPFUN_GLOBAL_PDA, {"encoding": "base64"}],
+        }, timeout=5)
+        raw  = base64.b64decode(resp.json()["result"]["value"]["data"][0])
+        # Layout: 8 discriminator + 1 initialized + 32 authority + 32 feeRecipient
+        from solders.pubkey import Pubkey
+        fee_pk = str(Pubkey.from_bytes(raw[41:73]))
+        with _pumpfun_fee_recipient_lock:
+            _pumpfun_fee_recipient_cache = fee_pk
+        log.info("pump.fun fee_recipient cached: %s", fee_pk)
+        return fee_pk
+    except Exception as e:
+        log.warning("pump.fun fee_recipient read failed: %s — using hardcoded fallback", e)
+        # Fallback: known mainnet fee recipient (valid as of 2026-06)
+        return "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"
+
+
+def _derive_ata(owner_str: str, mint_str: str) -> str:
+    """Derive Associated Token Account address for owner+mint."""
+    from solders.pubkey import Pubkey
+    ata_prog = Pubkey.from_string(_ATA_PROGRAM_ID)
+    owner    = Pubkey.from_string(owner_str)
+    mint     = Pubkey.from_string(mint_str)
+    tok_prog = Pubkey.from_string(_TOKEN_PROGRAM_ID)
+    ata, _   = Pubkey.find_program_address(
+        [bytes(owner), bytes(tok_prog), bytes(mint)],
+        ata_prog,
+    )
+    return str(ata)
+
+
+def _pumpfun_read_bc(bc_pubkey: str) -> tuple[int, int]:
+    """
+    Fetch pump.fun bonding curve account → (v_token_reserves, v_sol_reserves).
+    Account data layout (after 8-byte Anchor discriminator):
+      offset  8: virtual_token_reserves  u64 LE
+      offset 16: virtual_sol_reserves    u64 LE
+    """
+    resp = _rpc_post({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "getAccountInfo",
+        "params": [bc_pubkey, {"encoding": "base64"}],
+    }, timeout=5)
+    val = resp.json()["result"]["value"]
+    if val is None:
+        raise ValueError(f"Bonding curve not found: {bc_pubkey[:8]} — token may have graduated")
+    raw = base64.b64decode(val["data"][0])
+    if len(raw) < 24:
+        raise ValueError(f"BC account data too short ({len(raw)} bytes) for {bc_pubkey[:8]}")
+    v_token, v_sol = _struct.unpack_from("<QQ", raw, 8)
+    return v_token, v_sol
+
+
+def _pumpfun_local_build_tx(
+    action: str,            # "buy" | "sell"
+    wallet_pubkey: str,
+    token_mint: str,
+    keypair,
+    sol_amount: float = 0.0,    # buy: SOL to spend (float)
+    token_amount: int = 0,       # sell: exact raw token count
+    slippage_pct: int = 30,
+    priority_fee_sol: float = PRIORITY_FEE_SOL,
+) -> bytes:
+    """
+    Build and sign a pump.fun bonding-curve buy/sell instruction locally.
+    Eliminates the PumpPortal HTTP round-trip (~500-1000ms per buy or sell).
+
+    Returns fully-signed VersionedTransaction bytes ready for _send_transaction().
+    Raises on any failure so callers can fall back to PumpPortal.
+
+    Do NOT call for graduated tokens (bonding curve complete → Raydium):
+    those always route through PumpPortal pool="auto" → Jupiter.
+    """
+    from solders.pubkey import Pubkey
+    from solders.instruction import Instruction, AccountMeta
+    from solders.message import MessageV0
+    from solders.hash import Hash
+    from solders.transaction import VersionedTransaction as _VT
+
+    prog         = Pubkey.from_string(_PUMPFUN_PROGRAM)
+    mint_pk      = Pubkey.from_string(token_mint)
+    wallet_pk    = Pubkey.from_string(wallet_pubkey)
+    system_pk    = Pubkey.from_string(_SYSTEM_PROGRAM_ID)
+    tok_prog_pk  = Pubkey.from_string(_TOKEN_PROGRAM_ID)
+    rent_pk      = Pubkey.from_string(_RENT_SYSVAR_ID)
+    ata_prog_pk  = Pubkey.from_string(_ATA_PROGRAM_ID)
+    compute_pk   = Pubkey.from_string(_COMPUTE_BUDGET_ID)
+    global_pk    = Pubkey.from_string(_PUMPFUN_GLOBAL_PDA)
+    event_pk     = Pubkey.from_string(_PUMPFUN_EVENT_AUTH)
+    fee_recv_pk  = Pubkey.from_string(_pumpfun_fee_recipient())
+
+    # Derive bonding curve PDA and its ATA
+    bc_pk_str    = str(Pubkey.find_program_address([b"bonding-curve", bytes(mint_pk)], prog)[0])
+    bc_pk        = Pubkey.from_string(bc_pk_str)
+    assoc_bc_pk  = Pubkey.from_string(_derive_ata(bc_pk_str, token_mint))
+    assoc_usr_pk = Pubkey.from_string(_derive_ata(wallet_pubkey, token_mint))
+
+    # Read bonding curve reserves (1 RPC call — ~30ms on Helius)
+    v_token, v_sol = _pumpfun_read_bc(bc_pk_str)
+
+    if action == "buy":
+        sol_in_lam = int(sol_amount * 1e9)
+        # Constant-product AMM: tokens_out = v_token * sol_in / (v_sol + sol_in)
+        # pump.fun charges 1% buy fee on sol_in; effective sol = sol_in * 0.99
+        eff_sol    = sol_in_lam * 99 // 100
+        tokens_out = (v_token * eff_sol) // (v_sol + eff_sol) if (v_sol + eff_sol) > 0 else 0
+        if tokens_out <= 0:
+            raise ValueError(f"local buy: tokens_out=0 (v_token={v_token} v_sol={v_sol} sol={sol_in_lam})")
+        min_tokens  = int(tokens_out * (1 - slippage_pct / 100))
+        max_sol_lam = int(sol_in_lam * (1 + slippage_pct / 100))
+        ix_data  = bytes(_PUMP_BUY_DISCRIMINATOR) + _struct.pack("<QQ", min_tokens, max_sol_lam)
+        accounts = [
+            AccountMeta(pubkey=global_pk,    is_signer=False, is_writable=False),
+            AccountMeta(pubkey=fee_recv_pk,  is_signer=False, is_writable=True),
+            AccountMeta(pubkey=mint_pk,      is_signer=False, is_writable=False),
+            AccountMeta(pubkey=bc_pk,        is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_bc_pk,  is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_usr_pk, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=wallet_pk,    is_signer=True,  is_writable=True),
+            AccountMeta(pubkey=system_pk,    is_signer=False, is_writable=False),
+            AccountMeta(pubkey=tok_prog_pk,  is_signer=False, is_writable=False),
+            AccountMeta(pubkey=rent_pk,      is_signer=False, is_writable=False),
+            AccountMeta(pubkey=event_pk,     is_signer=False, is_writable=False),
+            AccountMeta(pubkey=prog,         is_signer=False, is_writable=False),
+        ]
+        log.debug("local buy  token=%s  v_tok=%d  v_sol=%d  tokens_out=%d  min=%d  max_sol=%d",
+                  token_mint[:8], v_token, v_sol, tokens_out, min_tokens, max_sol_lam)
+    elif action == "sell":
+        if token_amount <= 0:
+            raise ValueError(f"local sell: token_amount={token_amount} — exact count required")
+        # sol_out ≈ v_sol * token_amount / (v_token + token_amount)
+        # Apply 1% pump.fun sell fee + slippage tolerance
+        sol_out     = (v_sol * token_amount) // (v_token + token_amount) if (v_token + token_amount) > 0 else 0
+        min_sol_lam = int(sol_out * 0.99 * (1 - slippage_pct / 100))
+        ix_data  = bytes(_PUMP_SELL_DISCRIMINATOR) + _struct.pack("<QQ", token_amount, min_sol_lam)
+        accounts = [
+            AccountMeta(pubkey=global_pk,    is_signer=False, is_writable=False),
+            AccountMeta(pubkey=fee_recv_pk,  is_signer=False, is_writable=True),
+            AccountMeta(pubkey=mint_pk,      is_signer=False, is_writable=False),
+            AccountMeta(pubkey=bc_pk,        is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_bc_pk,  is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_usr_pk, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=wallet_pk,    is_signer=True,  is_writable=True),
+            AccountMeta(pubkey=system_pk,    is_signer=False, is_writable=False),
+            AccountMeta(pubkey=ata_prog_pk,  is_signer=False, is_writable=False),
+            AccountMeta(pubkey=tok_prog_pk,  is_signer=False, is_writable=False),
+            AccountMeta(pubkey=event_pk,     is_signer=False, is_writable=False),
+            AccountMeta(pubkey=prog,         is_signer=False, is_writable=False),
+        ]
+        log.debug("local sell  token=%s  tokens=%d  min_sol=%d", token_mint[:8], token_amount, min_sol_lam)
+    else:
+        raise ValueError(f"_pumpfun_local_build_tx: unknown action {action!r}")
+
+    # ComputeBudget instructions
+    micro_lam = max(1, int(priority_fee_sol * 1e15 / _CU_BUDGET_EST))   # microlamports per CU
+    cb_limit  = Instruction(
+        program_id=compute_pk,
+        data=bytes([0x02]) + _struct.pack("<I", _CU_BUDGET_EST),
+        accounts=[],
+    )
+    cb_price  = Instruction(
+        program_id=compute_pk,
+        data=bytes([0x03]) + _struct.pack("<Q", micro_lam),
+        accounts=[],
+    )
+    pump_ix = Instruction(program_id=prog, data=ix_data, accounts=accounts)
+
+    blockhash = _get_cached_blockhash()
+    if not blockhash:
+        raise RuntimeError("Blockhash cache empty — local build blocked (refreshes every 2s)")
+
+    msg = MessageV0.try_compile(
+        payer=keypair.pubkey(),
+        instructions=[cb_limit, cb_price, pump_ix],
+        address_lookup_table_accounts=[],
+        recent_blockhash=Hash.from_string(blockhash),
+    )
+    return bytes(_VT(msg, [keypair]))
 
 
 # ---------------------------------------------------------------------------
@@ -820,26 +1038,49 @@ class MemeExecutor:
             bal_before = _token_balance(wallet, token_address)
 
             # ── Build and sign transaction ────────────────────────────────────
+            # PRIMARY (pumpportal backend): local pump.fun instruction build.
+            #   Saves ~500-1000ms PumpPortal HTTP round-trip on every buy.
+            #   Falls back to PumpPortal on any exception (graduated token,
+            #   RPC error, bonding-curve not found, etc.).
+            # FALLBACK: PumpPortal trade-local (handles graduated tokens via pool="auto").
+            # ALTERNATE backend: Jupiter (unchanged).
             if EXECUTOR_BACKEND == "pumpportal":
-                tx_bytes = _pumpportal_build_tx(
-                    wallet_pubkey=wallet,
-                    action="buy",
-                    token_mint=token_address,
-                    amount=sol_amount,
-                    denominated_in_sol=True,
-                    slippage_pct=SLIPPAGE_BUY_PCT,
-                    priority_fee_sol=_buy_fee,
-                )
+                _sig_sent = False
+                try:
+                    _t_lb     = time.time()
+                    _lb_bytes = _pumpfun_local_build_tx(
+                        action="buy",
+                        wallet_pubkey=wallet,
+                        token_mint=token_address,
+                        keypair=keypair,
+                        sol_amount=sol_amount,
+                        slippage_pct=SLIPPAGE_BUY_PCT,
+                        priority_fee_sol=_buy_fee,
+                    )
+                    log.info("LOCAL BUILD buy  token=%s  build_ms=%.0f",
+                             token_address[:8], (time.time() - _t_lb) * 1000)
+                    sig       = _send_transaction(_lb_bytes)
+                    _sig_sent = True
+                except Exception as _lb_err:
+                    log.warning("LOCAL BUILD buy failed (%s) — PumpPortal fallback  token=%s",
+                                _lb_err, token_address[:8])
+                if not _sig_sent:
+                    tx_bytes  = _pumpportal_build_tx(
+                        wallet_pubkey=wallet, action="buy", token_mint=token_address,
+                        amount=sol_amount, denominated_in_sol=True,
+                        slippage_pct=SLIPPAGE_BUY_PCT, priority_fee_sol=_buy_fee,
+                    )
+                    tx        = VersionedTransaction.from_bytes(tx_bytes)
+                    signed_tx = VersionedTransaction(tx.message, [keypair])
+                    sig       = _send_transaction(bytes(signed_tx))
             else:
-                # Jupiter fallback
+                # Jupiter fallback backend
                 if not jupiter_quote_price:
                     quote = _jup_get_quote(SOL_MINT, token_address, lamports)
-                tx_bytes = _jup_build_swap_tx(quote, wallet)
-
-            tx        = VersionedTransaction.from_bytes(tx_bytes)
-            signed_tx = VersionedTransaction(tx.message, [keypair])
-
-            sig          = _send_transaction(bytes(signed_tx))
+                tx_bytes  = _jup_build_swap_tx(quote, wallet)
+                tx        = VersionedTransaction.from_bytes(tx_bytes)
+                signed_tx = VersionedTransaction(tx.message, [keypair])
+                sig       = _send_transaction(bytes(signed_tx))
             _t_submitted = time.time()
             log.info("BUY tx sent  sig=%s  token=%s  size=$%.2f  backend=%s",
                      sig[:16], token_address[:8], size_usd, EXECUTOR_BACKEND)
@@ -1052,8 +1293,12 @@ class MemeExecutor:
             # before the Jupiter quote — fire them in parallel to save ~300ms.
             balance        = None
             sol_bal_before = None
-            if known_token_count > 0 and fraction < 1.0:
-                # Use caller-supplied count — avoids RPC settle lag on fast-pumping tokens.
+            if known_token_count > 0:
+                # Use caller-supplied count — avoids RPC settle lag.
+                # Works for both partial TP sells (fraction < 1.0) and full exits
+                # (fraction == 1.0, e.g. close_position passing pos.tokens_held).
+                # PumpPortal full exits still use amount="100%" in the build call;
+                # balance is used here for fill-price calculation and local build.
                 balance = known_token_count
                 log.info("SELL using known_token_count=%d (no RPC query)  token=%s",
                          known_token_count, token_address[:8])
@@ -1131,6 +1376,13 @@ class MemeExecutor:
                 _jup_sell_tokens  = balance  # may be None — Jupiter fallback checks before use
                 _fill_token_count = balance   # full exit — use full balance for fill price
 
+            # Local build needs exact token count (can't use "100%").
+            # fraction < 1.0: use tokens_to_sell (computed above).
+            # fraction == 1.0: use balance (may be None if RPC failed → local build skipped).
+            _tokens_to_sell_local = tokens_to_sell if fraction < 1.0 else (
+                balance if (balance and balance > 0) else 0
+            )
+
             # sol_bal_before: needed for fill price (sol_received = after − before).
             # escalate path: already fetched in parallel above.
             # normal path: fetch now (serial, before ladder starts).
@@ -1163,15 +1415,37 @@ class MemeExecutor:
                     # Dynamic fee: Helius estimate at escalating levels; floor at ladder minimum
                     fee_sol = max(_helius_priority_fee(token_address, level=fee_level), fee_floor_sol)
                     if EXECUTOR_BACKEND == "pumpportal":
-                        tx_bytes = _pumpportal_build_tx(
-                            wallet_pubkey=wallet,
-                            action="sell",
-                            token_mint=token_address,
-                            amount=_sell_amount,
-                            denominated_in_sol=False,
-                            slippage_pct=slip_pct,
-                            priority_fee_sol=fee_sol,
-                        )
+                        # PRIMARY: local build (no HTTP round-trip).
+                        # FALLBACK: PumpPortal trade-local.
+                        _sig_sent_local = False
+                        if _tokens_to_sell_local > 0:
+                            try:
+                                _t_lb     = time.time()
+                                _lb_bytes = _pumpfun_local_build_tx(
+                                    action="sell",
+                                    wallet_pubkey=wallet,
+                                    token_mint=token_address,
+                                    keypair=keypair,
+                                    token_amount=_tokens_to_sell_local,
+                                    slippage_pct=slip_pct,
+                                    priority_fee_sol=fee_sol,
+                                )
+                                log.info("LOCAL BUILD sell step %d  token=%s  build_ms=%.0f",
+                                         step, token_address[:8], (time.time() - _t_lb) * 1000)
+                                sig             = _send_transaction(_lb_bytes)
+                                _sig_sent_local = True
+                            except Exception as _lb_err:
+                                log.warning("LOCAL BUILD sell step %d failed (%s) — PumpPortal  token=%s",
+                                            step, _lb_err, token_address[:8])
+                        if not _sig_sent_local:
+                            tx_bytes  = _pumpportal_build_tx(
+                                wallet_pubkey=wallet, action="sell", token_mint=token_address,
+                                amount=_sell_amount, denominated_in_sol=False,
+                                slippage_pct=slip_pct, priority_fee_sol=fee_sol,
+                            )
+                            tx        = VersionedTransaction.from_bytes(tx_bytes)
+                            signed_tx = VersionedTransaction(tx.message, [keypair])
+                            sig       = _send_transaction(bytes(signed_tx))
                     else:
                         # Jupiter fallback — slippage via dynamicSlippage, fee via
                         # prioritizationFeeLamports
@@ -1181,10 +1455,9 @@ class MemeExecutor:
                             slippage_bps=slip_pct * 100,
                             priority_fee_lamports=int(fee_sol * 1e9),
                         )
-
-                    tx        = VersionedTransaction.from_bytes(tx_bytes)
-                    signed_tx = VersionedTransaction(tx.message, [keypair])
-                    sig       = _send_transaction(bytes(signed_tx))
+                        tx        = VersionedTransaction.from_bytes(tx_bytes)
+                        signed_tx = VersionedTransaction(tx.message, [keypair])
+                        sig       = _send_transaction(bytes(signed_tx))
                     _t_sig_sent = time.time()
                     all_sigs.append(sig)
 

@@ -1242,7 +1242,12 @@ class Portfolio:
                 #             to a fresh Jupiter quote harmlessly, but wastes ~0.5s.
                 #             With the guard, presigned fires only when token count matches.
                 _RUG_REASONS    = frozenset({"dev_dump", "rug_lp", "velocity"})
-                _STOP_REASONS   = frozenset({"hard_stop", "trailing_stop"})
+                # hard_stop_pp / trailing_stop_pp = same stop logic via PP event-driven thread.
+                # Include them so the presigned path fires for both poll and PP-callback triggers.
+                _STOP_REASONS   = frozenset({
+                    "hard_stop", "trailing_stop",
+                    "hard_stop_pp", "trailing_stop_pp",
+                })
                 _presigned_used = False
                 _use_presigned  = (
                     reason in _RUG_REASONS
@@ -1294,8 +1299,14 @@ class Portfolio:
                     if _is_graduated and not _is_retry:
                         log.info("SELL graduated token — skipping PumpPortal ladder, going straight to Jupiter  token=%s",
                                  pos.token_address[:8])
-                    result = ex.sell(pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
-                                     escalate=_is_retry or _is_graduated)
+                    result = ex.sell(
+                        pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
+                        escalate=_is_retry or _is_graduated,
+                        # Pass tokens_held so local build can use exact count without RPC.
+                        # Only valid for full exits (fraction=1.0 default); partial TPs
+                        # pass known_token_count separately in _run_tp_sell_bg.
+                        known_token_count=int(pos.tokens_held or 0),
+                    )
                     if result.get("success"):
                         _exec_fill = result.get("fill_price")
                         # Only overwrite trigger price if executor measured a real fill.
