@@ -670,18 +670,32 @@ class MemeExecutor:
                 except Exception:
                     pass
 
-            # Gate 1: no quote → unquotable token, block before spending
+            # Gate 1: no quote → unquotable token, block before spending.
+            # Exception: PumpPortal backend routes directly via pump.fun bonding curve
+            # and does NOT use Jupiter for the actual swap. Jupiter HTTP 400 for these
+            # tokens means they are still on the bonding curve — exactly what PP handles.
+            # Blocking on no_quote for PP backend creates a systematic selection bias:
+            # it blocks fresh bonding-curve tokens (the fast pumpers / best performers)
+            # and only allows through older tokens that Jupiter can already route
+            # (later in their cycle, past peak). Skip Gate 1 for PP backend.
             if signal_price > 0 and jupiter_quote_price == 0:
-                log.warning(
-                    "BUY blocked — no_quote  token=%s  err=%s",
-                    token_address[:8], _quote_fetch_err,
-                )
-                return {
-                    "success":             False,
-                    "reason":              "no_quote",
-                    "jupiter_quote_price": 0,
-                    "error":               str(_quote_fetch_err),
-                }
+                if EXECUTOR_BACKEND != "pumpportal":
+                    log.warning(
+                        "BUY blocked — no_quote  token=%s  err=%s",
+                        token_address[:8], _quote_fetch_err,
+                    )
+                    return {
+                        "success":             False,
+                        "reason":              "no_quote",
+                        "jupiter_quote_price": 0,
+                        "error":               str(_quote_fetch_err),
+                    }
+                else:
+                    log.info(
+                        "Jupiter no_quote (PP backend) — bonding-curve token, proceeding via PumpPortal  "
+                        "token=%s  err=%s",
+                        token_address[:8], _quote_fetch_err,
+                    )
 
             # Gate 2: drift gate — only fires when PP live price is available.
             #
