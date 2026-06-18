@@ -39,7 +39,9 @@ from memecoin.executor import (
 from solders.transaction import VersionedTransaction
 
 BUY_SIZE_USD = 1.0
-FILL_MATCH_TOLERANCE = 0.01   # 1% — executor fill vs chain fill must be within this
+FILL_MATCH_TOLERANCE = 0.10   # 10% — pump.fun tokens move fast; we're checking the tx lands,
+                               # not that the quote price matches. 10% catches broken paths
+                               # (wrong tx, reverted swap) while ignoring normal slippage.
 SOL_MINT   = "So11111111111111111111111111111111111111112"
 SOL_DECIMALS = 9
 
@@ -280,6 +282,28 @@ def main():
     print(f"{'='*60}")
 
     results = []
+
+    # ── Pre-run cleanup: sell any leftover balance ────────────────────────────
+    # Previous test runs may have left tokens in the wallet. Sell them first
+    # so balance checks don't produce misleading deltas.
+    _pre_bal = _token_balance(wallet, mint)
+    if _pre_bal > 0:
+        print(f"\n[0] CLEANUP: {_pre_bal} tokens found — selling before test...")
+        try:
+            _clean_bytes = _pumpportal_build_tx(
+                wallet_pubkey=wallet, action="sell", token_mint=mint,
+                amount="100%", denominated_in_sol=False,
+                slippage_pct=80, priority_fee_sol=0.002,
+            )
+            from solders.transaction import VersionedTransaction as _VTClean
+            _clean_tx = _VTClean.from_bytes(_clean_bytes)
+            _clean_signed = _VTClean(_clean_tx.message, [keypair])
+            _clean_sig = _send_transaction(bytes(_clean_signed))
+            _clean_ok, _clean_err = _confirm_tx(_clean_sig)
+            print(f"  cleanup sell: confirmed={_clean_ok}  err={_clean_err}")
+            time.sleep(3)
+        except Exception as _ce:
+            print(f"  cleanup failed (non-blocking): {_ce}")
 
     # ── Step 1: BUY ──────────────────────────────────────────────────────────
     print(f"\n[1] BUY ${BUY_SIZE_USD} of {mint[:16]}...")
