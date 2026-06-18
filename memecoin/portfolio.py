@@ -1788,6 +1788,21 @@ class Portfolio:
             log.info("LIVE TP BG: position %s already closed, skipping TP sell", pos_id)
             return
 
+        # Solana RPC nodes lag 5-20s after a buy tx confirms — the token balance may read 0
+        # if the TP fires very quickly after entry (e.g. a fast +120% within 2s of buy).
+        # Wait until at least 12s post-entry before attempting the balance check.
+        _age = time.time() - pos.entry_time
+        if _age < 12.0:
+            _wait = 12.0 - _age
+            log.info("LIVE TP BG: waiting %.1fs for balance to settle (entry age=%.1fs)",
+                     _wait, _age)
+            time.sleep(_wait)
+            # Re-check: position may have been closed during the wait
+            pos = self._positions.get(pos_id)
+            if pos is None or pos.status != "open":
+                log.info("LIVE TP BG: position %s closed during balance-settle wait, skipping", pos_id)
+                return
+
         try:
             _tp_ex      = _MEx()
             _tp_is_grad = "|cohort:graduated" in (pos.notes or "")
