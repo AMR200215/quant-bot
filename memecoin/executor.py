@@ -86,10 +86,17 @@ _PUMP_SELL_DISCRIMINATOR = _hashlib.sha256(b"global:sell").digest()[:8]
 _PUMPFUN_GLOBAL_PDA  = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 _PUMPFUN_EVENT_AUTH  = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
 _TOKEN_PROGRAM_ID    = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+_TOKEN22_PROGRAM_ID  = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"   # Token-2022
 _ATA_PROGRAM_ID      = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bRS"
 _RENT_SYSVAR_ID      = "SysvarRent111111111111111111111111111111111"
 _SYSTEM_PROGRAM_ID   = "11111111111111111111111111111111"
 _COMPUTE_BUDGET_ID   = "ComputeBudget111111111111111111111111111111"
+
+# Per-mint token program cache (Token SPL vs Token-2022).
+# pump.fun migrated all new tokens to Token-2022 in 2025; old tokens stay SPL.
+# Populated lazily on first local build per mint; never evicted (mints don't change).
+_mint_token_program_cache: dict[str, str] = {}
+_mint_token_program_lock = threading.Lock()
 
 # Fee recipient lives in the pump.fun global account (offset 41:73).
 # Read once from chain and cached; falls back to hardcoded if RPC unavailable.
@@ -215,18 +222,47 @@ def _pumpfun_fee_recipient() -> str:
         return "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"
 
 
-def _derive_ata(owner_str: str, mint_str: str) -> str:
-    """Derive Associated Token Account address for owner+mint."""
+def _derive_ata(owner_str: str, mint_str: str, token_program_id: str = _TOKEN_PROGRAM_ID) -> str:
+    """Derive Associated Token Account address for owner+mint.
+
+    token_program_id: pass _TOKEN22_PROGRAM_ID for Token-2022 mints.
+    """
     from solders.pubkey import Pubkey
     ata_prog = Pubkey.from_string(_ATA_PROGRAM_ID)
     owner    = Pubkey.from_string(owner_str)
     mint     = Pubkey.from_string(mint_str)
-    tok_prog = Pubkey.from_string(_TOKEN_PROGRAM_ID)
+    tok_prog = Pubkey.from_string(token_program_id)
     ata, _   = Pubkey.find_program_address(
         [bytes(owner), bytes(tok_prog), bytes(mint)],
         ata_prog,
     )
     return str(ata)
+
+
+def _pumpfun_mint_token_program(mint_str: str) -> str:
+    """Return the token program ID for a given mint (cached after first call).
+
+    pump.fun switched all new tokens to Token-2022 in 2025. The owner field
+    of the mint account identifies the token program.
+    Returns _TOKEN22_PROGRAM_ID or _TOKEN_PROGRAM_ID.
+    """
+    with _mint_token_program_lock:
+        if mint_str in _mint_token_program_cache:
+            return _mint_token_program_cache[mint_str]
+    try:
+        resp = _rpc_post({
+            "jsonrpc": "2.0", "id": 1,
+            "method":  "getAccountInfo",
+            "params":  [mint_str, {"encoding": "base64"}],
+        }, timeout=5)
+        owner = (resp.json().get("result") or {}).get("value", {}).get("owner", "")
+    except Exception:
+        owner = ""
+    prog = _TOKEN22_PROGRAM_ID if owner == _TOKEN22_PROGRAM_ID else _TOKEN_PROGRAM_ID
+    with _mint_token_program_lock:
+        _mint_token_program_cache[mint_str] = prog
+    log.debug("mint_token_program  mint=%s  prog=%s", mint_str[:8], "T22" if prog == _TOKEN22_PROGRAM_ID else "SPL")
+    return prog
 
 
 def _pumpfun_read_bc(bc_pubkey: str) -> tuple[int, int]:
@@ -277,11 +313,14 @@ def _pumpfun_local_build_tx(
     from solders.hash import Hash
     from solders.transaction import VersionedTransaction as _VT
 
+    # Detect token program (SPL vs Token-2022) — cached after first call per mint
+    tok_prog_id = _pumpfun_mint_token_program(token_mint)
+
     prog         = Pubkey.from_string(_PUMPFUN_PROGRAM)
     mint_pk      = Pubkey.from_string(token_mint)
     wallet_pk    = Pubkey.from_string(wallet_pubkey)
     system_pk    = Pubkey.from_string(_SYSTEM_PROGRAM_ID)
-    tok_prog_pk  = Pubkey.from_string(_TOKEN_PROGRAM_ID)
+    tok_prog_pk  = Pubkey.from_string(tok_prog_id)
     rent_pk      = Pubkey.from_string(_RENT_SYSVAR_ID)
     ata_prog_pk  = Pubkey.from_string(_ATA_PROGRAM_ID)
     compute_pk   = Pubkey.from_string(_COMPUTE_BUDGET_ID)
@@ -289,11 +328,11 @@ def _pumpfun_local_build_tx(
     event_pk     = Pubkey.from_string(_PUMPFUN_EVENT_AUTH)
     fee_recv_pk  = Pubkey.from_string(_pumpfun_fee_recipient())
 
-    # Derive bonding curve PDA and its ATA
+    # Derive bonding curve PDA and its ATA (using detected token program for seeds)
     bc_pk_str    = str(Pubkey.find_program_address([b"bonding-curve", bytes(mint_pk)], prog)[0])
     bc_pk        = Pubkey.from_string(bc_pk_str)
-    assoc_bc_pk  = Pubkey.from_string(_derive_ata(bc_pk_str, token_mint))
-    assoc_usr_pk = Pubkey.from_string(_derive_ata(wallet_pubkey, token_mint))
+    assoc_bc_pk  = Pubkey.from_string(_derive_ata(bc_pk_str, token_mint, tok_prog_id))
+    assoc_usr_pk = Pubkey.from_string(_derive_ata(wallet_pubkey, token_mint, tok_prog_id))
 
     # Read bonding curve reserves (1 RPC call — ~30ms on Helius)
     v_token, v_sol = _pumpfun_read_bc(bc_pk_str)
@@ -431,6 +470,12 @@ def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
 
 def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 1) -> int:
     """Return raw token balance (smallest unit) for a wallet.
+
+    Checks both SPL Token and Token-2022 accounts. pump.fun migrated all new
+    tokens to Token-2022 in 2025; standard getTokenAccountsByOwner{mint:...}
+    does not cross program boundaries, so we must query each program explicitly
+    when {mint:...} returns nothing.
+
     Raises RuntimeError on RPC error so callers can decide how to handle it
     (e.g. fall back to quote price) rather than silently returning 0.
     """
@@ -439,23 +484,71 @@ def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 1) -> int
         if attempt > 0:
             time.sleep(2)
         try:
-            resp = _rpc_post({
-                "jsonrpc": "2.0", "id": 1,
-                "method":  "getTokenAccountsByOwner",
-                "params":  [
-                    wallet_pubkey,
-                    {"mint": token_mint},
-                    {"encoding": "jsonParsed"},
-                ],
-            })
-            data = resp.json()
-            if "result" not in data:
-                last_err = data.get("error", resp.status_code)
-                continue
-            accounts = data["result"].get("value", [])
-            if not accounts:
+            # Use cached token program if known, otherwise try SPL first
+            cached_prog = _mint_token_program_cache.get(token_mint)
+            if cached_prog:
+                # Known program — query directly with programId filter for efficiency
+                resp = _rpc_post({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method":  "getTokenAccountsByOwner",
+                    "params":  [
+                        wallet_pubkey,
+                        {"programId": cached_prog},
+                        {"encoding": "jsonParsed"},
+                    ],
+                })
+                data = resp.json()
+                if "result" not in data:
+                    last_err = data.get("error", resp.status_code)
+                    continue
+                # Filter to our mint (programId returns all accounts for that program)
+                accounts = [
+                    a for a in data["result"].get("value", [])
+                    if a["account"]["data"]["parsed"]["info"].get("mint") == token_mint
+                ]
+                if accounts:
+                    return int(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"])
                 return 0
-            return int(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"])
+            else:
+                # Unknown program — try SPL Token first (legacy + most non-pump tokens)
+                resp = _rpc_post({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method":  "getTokenAccountsByOwner",
+                    "params":  [
+                        wallet_pubkey,
+                        {"mint": token_mint},
+                        {"encoding": "jsonParsed"},
+                    ],
+                })
+                data = resp.json()
+                if "result" not in data:
+                    last_err = data.get("error", resp.status_code)
+                    continue
+                accounts = data["result"].get("value", [])
+                if accounts:
+                    return int(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"])
+                # SPL returned nothing — check Token-2022
+                resp22 = _rpc_post({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method":  "getTokenAccountsByOwner",
+                    "params":  [
+                        wallet_pubkey,
+                        {"programId": _TOKEN22_PROGRAM_ID},
+                        {"encoding": "jsonParsed"},
+                    ],
+                })
+                data22 = resp22.json()
+                if "result" in data22:
+                    accounts22 = [
+                        a for a in data22["result"].get("value", [])
+                        if a["account"]["data"]["parsed"]["info"].get("mint") == token_mint
+                    ]
+                    if accounts22:
+                        # Cache for future calls
+                        with _mint_token_program_lock:
+                            _mint_token_program_cache[token_mint] = _TOKEN22_PROGRAM_ID
+                        return int(accounts22[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"])
+                return 0
         except Exception as e:
             last_err = e
     raise RuntimeError(f"Token balance unavailable: {last_err}")
@@ -464,16 +557,24 @@ def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 1) -> int
 def _token_decimals_from_rpc(wallet_pubkey: str, token_mint: str) -> int:
     """Return token decimals from the wallet's token account. Defaults to 6."""
     try:
+        # Try SPL first, then Token-2022 (matching _token_balance logic)
         resp = _rpc_post({
             "jsonrpc": "2.0", "id": 1,
             "method":  "getTokenAccountsByOwner",
-            "params":  [
-                wallet_pubkey,
-                {"mint": token_mint},
-                {"encoding": "jsonParsed"},
-            ],
+            "params":  [wallet_pubkey, {"mint": token_mint}, {"encoding": "jsonParsed"}],
         })
         accounts = resp.json().get("result", {}).get("value", [])
+        if not accounts:
+            prog = _mint_token_program_cache.get(token_mint, _TOKEN22_PROGRAM_ID)
+            resp22 = _rpc_post({
+                "jsonrpc": "2.0", "id": 1,
+                "method":  "getTokenAccountsByOwner",
+                "params":  [wallet_pubkey, {"programId": prog}, {"encoding": "jsonParsed"}],
+            })
+            accounts = [
+                a for a in resp22.json().get("result", {}).get("value", [])
+                if a["account"]["data"]["parsed"]["info"].get("mint") == token_mint
+            ]
         if accounts:
             return int(
                 accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["decimals"]
