@@ -44,12 +44,10 @@ JUPITER_SWAP_URL  = "https://lite-api.jup.ag/swap/v1/swap"
 
 PUMPPORTAL_TRADE_URL = "https://pumpportal.fun/api/trade-local"
 
-# Buy: 30% — aligns with abort_tripwire threshold (fill > quote*1.30 → abort).
-#             Fills in 0-30% band → held normally (the fills we want).
-#             Fills in 30-50% band were causing fill-then-abort-then-dump (round-trip loss
-#             more expensive than a revert). Setting cap=30 makes those reverts instead.
-#             Graduated tokens historically fill within 2% of Jupiter quote → no regression.
-#             Prior 50% cap was incorrectly suppressing reverts on -EV chase entries.
+# Buy: 30% — aligns with abort_tripwire threshold (fill > signal*1.30 → abort) AND
+#             entry gate (SLIPPAGE_GATE_RT_PCT=0.30). All three are intentionally identical:
+#             tokens 0-30% above signal → held normally; tokens >30% → revert (no fill-abort
+#             round trip). Graduated tokens fill within 2% of Jupiter quote → no regression.
 # Sell: 35% — stop-loss that fails to execute is the worst outcome in the system.
 SLIPPAGE_BUY_PCT        = 30
 SLIPPAGE_BUY_PCT_RETRY  = 30   # retry at same cap — 6063 at 30% means token moved >30%, revert again is correct
@@ -109,7 +107,7 @@ try:
     from memecoin.config import SLIPPAGE_GATE_RT_PCT  as _SLIPPAGE_GATE_RT_PCT
 except ImportError:
     _SLIPPAGE_GATE_DEX_PCT = 0.50
-    _SLIPPAGE_GATE_RT_PCT  = 0.20
+    _SLIPPAGE_GATE_RT_PCT  = 0.30
 SLIPPAGE_GATE_DEX_PCT = _SLIPPAGE_GATE_DEX_PCT
 SLIPPAGE_GATE_RT_PCT  = _SLIPPAGE_GATE_RT_PCT
 
@@ -178,12 +176,23 @@ def _load_solders():
         ) from e
 
 
+_keypair_cache = None
+_keypair_lock  = threading.Lock()
+
 def _get_keypair():
-    Keypair, _, base58 = _load_solders()
-    raw = os.getenv("SOLANA_PRIVATE_KEY", "")
-    if not raw:
-        raise RuntimeError("SOLANA_PRIVATE_KEY env var not set")
-    return Keypair.from_bytes(base58.b58decode(raw))
+    """Return the wallet Keypair, constructing it once and caching as a singleton."""
+    global _keypair_cache
+    if _keypair_cache is not None:
+        return _keypair_cache
+    with _keypair_lock:
+        if _keypair_cache is not None:
+            return _keypair_cache
+        Keypair, _, base58 = _load_solders()
+        raw = os.getenv("SOLANA_PRIVATE_KEY", "")
+        if not raw:
+            raise RuntimeError("SOLANA_PRIVATE_KEY env var not set")
+        _keypair_cache = Keypair.from_bytes(base58.b58decode(raw))
+        return _keypair_cache
 
 
 # ---------------------------------------------------------------------------
@@ -414,8 +423,17 @@ def _fill_from_transaction(sig: str, wallet: str, token_address: str,
     return None, True, 0
 
 
+_sol_price_cache: dict = {"price": 170.0, "ts": 0.0}
+_sol_price_lock  = threading.Lock()
+_SOL_PRICE_TTL   = 60.0   # seconds before refreshing from Jupiter
+
 def _sol_price_usd() -> float:
-    """Fetch current SOL/USD price by quoting 1 SOL → USDC via Jupiter."""
+    """Return SOL/USD price, cached for 60s. On fetch failure returns last cached value."""
+    now = time.time()
+    with _sol_price_lock:
+        if now - _sol_price_cache["ts"] < _SOL_PRICE_TTL:
+            return _sol_price_cache["price"]
+    # Stale — fetch outside lock to avoid blocking callers during the network round-trip.
     try:
         resp = requests.get(
             JUPITER_QUOTE_URL,
@@ -427,10 +445,17 @@ def _sol_price_usd() -> float:
             timeout=5,
         )
         resp.raise_for_status()
-        return round(float(resp.json()["outAmount"]) / 1e6, 4)
+        price = round(float(resp.json()["outAmount"]) / 1e6, 4)
+        with _sol_price_lock:
+            _sol_price_cache["price"] = price
+            _sol_price_cache["ts"]    = time.time()
+        return price
     except Exception as e:
-        log.warning("SOL price fetch failed: %s — using fallback $170", e)
-        return 170.0
+        log.warning("SOL price fetch failed: %s — returning cached $%.2f", e, _sol_price_cache["price"])
+        # Bump ts so we don't hammer Jupiter on repeated failures inside the same cycle.
+        with _sol_price_lock:
+            _sol_price_cache["ts"] = time.time()
+        return _sol_price_cache["price"]
 
 
 def _helius_priority_fee(token_mint: str, level: str = "High") -> float:
