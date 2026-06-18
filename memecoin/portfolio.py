@@ -156,6 +156,7 @@ class Position:
     t30_logged: bool = False   # True once T+30s post-signal price is recorded
     t60_logged: bool = False   # True once T+60s post-signal price is recorded
     creator_wallet: str = ""   # token deployer — triggers dev_dump exit if they sell
+    tokens_held: int = 0       # raw token count from buy tx delta — used for known-balance TP sells
 
     @property
     def pnl_pct(self) -> float:
@@ -1031,6 +1032,7 @@ class Portfolio:
                 live_pos.entry_price   = fill_price
                 live_pos.current_price = fill_price
                 live_pos.peak_price    = fill_price
+                live_pos.tokens_held   = result.get("tokens_received_raw", 0)  # known-balance TP sells
                 _dry_tag     = "DRY_RUN|" if result.get("dry_run") else ""
                 _est_tag     = "|entry_estimated" if result.get("entry_estimated") else ""
                 _slip_tag    = f"|slip:{result['entry_slippage_pct']:+.1f}%" if result.get("entry_slippage_pct") is not None else ""
@@ -1788,20 +1790,17 @@ class Portfolio:
             log.info("LIVE TP BG: position %s already closed, skipping TP sell", pos_id)
             return
 
-        # Solana RPC nodes lag 5-20s after a buy tx confirms — the token balance may read 0
-        # if the TP fires very quickly after entry (e.g. a fast +120% within 2s of buy).
-        # Wait until at least 12s post-entry before attempting the balance check.
-        _age = time.time() - pos.entry_time
-        if _age < 12.0:
-            _wait = 12.0 - _age
-            log.info("LIVE TP BG: waiting %.1fs for balance to settle (entry age=%.1fs)",
-                     _wait, _age)
-            time.sleep(_wait)
-            # Re-check: position may have been closed during the wait
-            pos = self._positions.get(pos_id)
-            if pos is None or pos.status != "open":
-                log.info("LIVE TP BG: position %s closed during balance-settle wait, skipping", pos_id)
-                return
+        # Use the exact token count received at buy time (from tx postTokenBalances delta).
+        # This bypasses the _token_balance() RPC call entirely — no settle lag, no
+        # zero_balance_partial failure on fast-pumping tokens that TP within 2-5s of entry.
+        # tokens_held is set on the live position at buy confirm time.
+        _known_count = int(pos.tokens_held * sell_frac) if pos.tokens_held > 0 else 0
+        if _known_count > 0:
+            log.info("LIVE TP BG: using known_token_count=%d for %.0f%% sell  %s",
+                     _known_count, sell_frac * 100, pos.token_symbol)
+        else:
+            log.info("LIVE TP BG: tokens_held=0, falling back to RPC balance query  %s",
+                     pos.token_symbol)
 
         try:
             _tp_ex      = _MEx()
@@ -1810,6 +1809,7 @@ class Portfolio:
                 pos.token_address, pos.size_usd, pos.entry_price,
                 pos.chain, fraction=sell_frac,
                 escalate=_tp_is_grad,
+                known_token_count=_known_count,
             )
         except Exception as _tp_err:
             log.warning("LIVE TP BG exception %s: %s — paper estimate kept", pos.token_symbol, _tp_err)

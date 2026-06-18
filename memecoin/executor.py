@@ -349,10 +349,14 @@ def _fill_from_transaction(sig: str, wallet: str, token_address: str,
     """
     Fetch a confirmed tx and compute fill price from on-chain token balance deltas.
 
-    Returns (fill_price, entry_estimated):
-      fill_price      — real fill derived from postTokenBalances; None if unavailable
-      entry_estimated — True if fill_price is None (caller should use Jupiter quote fallback
-                        and tag the position entry_estimated=True)
+    Returns (fill_price, entry_estimated, tokens_received_raw):
+      fill_price          — real fill derived from postTokenBalances; None if unavailable
+      entry_estimated     — True if fill_price is None (caller should use Jupiter quote fallback
+                            and tag the position entry_estimated=True)
+      tokens_received_raw — exact raw integer token count received (before decimal division).
+                            Used for known-balance TP sells — eliminates the RPC query lag
+                            that causes zero_balance_partial on fast-pumping tokens.
+                            0 when the delta cannot be read.
 
     Uses one getTransaction call instead of getTokenAccounts + getTokenDecimals.
     Replaces three separate RPC calls and eliminates the stale-Jupiter-quote entry bug.
@@ -396,18 +400,18 @@ def _fill_from_transaction(sig: str, wallet: str, token_address: str,
                     fill_price = size_usd / (tokens_received / 10 ** decimals)
                     log.info("fill_from_tx  sig=%s  tokens=%d  decimals=%d  fill=$%.10f",
                              sig[:16], tokens_received, decimals, fill_price)
-                    return fill_price, False
+                    return fill_price, False, tokens_received
 
             log.warning("fill_from_tx: no matching token delta for %s in tx %s",
                         token_address[:8], sig[:16])
-            return None, True
+            return None, True, 0
 
         except Exception as e:
             log.debug("fill_from_tx attempt %d/%d failed: %s", attempt + 1, retries, e)
             time.sleep(2)
 
     log.warning("fill_from_tx: all %d attempts failed for sig=%s", retries, sig[:16])
-    return None, True
+    return None, True, 0
 
 
 def _sol_price_usd() -> float:
@@ -875,6 +879,7 @@ class MemeExecutor:
                     return {
                         "success":             True,
                         "fill_price":          fill_price,
+                        "tokens_received_raw": tokens_received,
                         "tx_sig":              sig,
                         "confirm_fallback":    True,
                         "jupiter_quote_price": jupiter_quote_price,
@@ -892,7 +897,7 @@ class MemeExecutor:
             # Returns the real fill from postTokenBalances — same token, same tx,
             # correct venue (PumpPortal curve), correct time.
             # Falls back to Jupiter quote only if getTransaction can't parse the delta.
-            fill_price, entry_estimated = _fill_from_transaction(
+            fill_price, entry_estimated, tokens_received_raw = _fill_from_transaction(
                 sig, wallet, token_address, size_usd
             )
 
@@ -948,6 +953,7 @@ class MemeExecutor:
             return {
                 "success":             True,
                 "fill_price":          fill_price,
+                "tokens_received_raw": tokens_received_raw,   # raw int — for known-balance TP sells
                 "entry_estimated":     entry_estimated,
                 "entry_slippage_pct":  entry_slippage_pct,
                 "sol_spent_usd":       sol_spent_usd,
@@ -973,6 +979,7 @@ class MemeExecutor:
         chain: str = "solana",
         fraction: float = 1.0,
         escalate: bool = False,
+        known_token_count: int = 0,
     ) -> dict:
         """
         Swap all held token_address → SOL using a 3-step escalating sell ladder.
@@ -1011,11 +1018,21 @@ class MemeExecutor:
             # For PumpPortal sells we use amount="100%" so balance is only needed for
             # fill price calculation — not for the tx itself.  Never block a sell on RPC.
             #
+            # known_token_count: caller passes the exact raw count received at buy time
+            # (read from the buy tx's postTokenBalances delta). For partial TP sells this
+            # bypasses the RPC query entirely — zero latency, no settle-lag, no zero_balance.
+            # Only used for partial sells (fraction < 1.0); full exits use "100%" anyway.
+            #
             # When escalate=True (graduated token fast path), both calls are needed
             # before the Jupiter quote — fire them in parallel to save ~300ms.
             balance        = None
             sol_bal_before = None
-            if escalate:
+            if known_token_count > 0 and fraction < 1.0:
+                # Use caller-supplied count — avoids RPC settle lag on fast-pumping tokens.
+                balance = known_token_count
+                log.info("SELL using known_token_count=%d (no RPC query)  token=%s",
+                         known_token_count, token_address[:8])
+            elif escalate:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
                     _bal_f = _pool.submit(_token_balance, wallet, token_address)
                     _sol_f = _pool.submit(_sol_balance, wallet)
