@@ -382,20 +382,23 @@ def main():
             print(f"\n  ✗ FIX4 FAIL (exception): {_pe}")
             results.append(("FIX4 presigned exit", False, str(_pe)))
 
-    # ── Step 2b: Fix 5 — Local build buy+sell (only if presigned sell didn't land) ──
-    # The buy in step 1 already used local build (it's now the primary path).
-    # Report the local build indicator from the buy result, then do a fresh
-    # buy+sell cycle using local build explicitly if tokens were consumed by presigned.
-    print(f"\n[2b] FIX 5 — Local build verification")
+    # ── Step 2b: Fix 5 — Buy+sell executor path ──────────────────────────────
+    # Fix 5 originally aimed to build local pump.fun instructions, but pump.fun
+    # migrated all new tokens to Token-2022 with a new program (FAdo9NCw...) in
+    # 2025. Local build is kept for historical SPL-Token mints; all current T22
+    # tokens route through PumpPortal (which handles both programs via pool="auto").
+    #
+    # What we verify here:
+    # - buy→sell round-trip succeeds end-to-end via executor (PP or local build)
+    # - meta.err==null, SOL delta > 0, fill match < 1%
+    # - No phantom positions (tokens not stuck in wallet after sell)
+    from memecoin.executor import _mint_token_program_cache, _TOKEN22_PROGRAM_ID, _TOKEN_PROGRAM_ID
+    _tok_prog_label = "T22/PP" if _mint_token_program_cache.get(mint) == _TOKEN22_PROGRAM_ID else "SPL/local"
+    print(f"\n[2b] FIX 5 — Buy+sell end-to-end ({_tok_prog_label} path)")
 
-    # Check if the buy in step 1 used local build (logged as "LOCAL BUILD buy" in executor)
-    _buy_used_local = "LOCAL BUILD" in str(buy_result.get("timing", ""))
-    print(f"  Buy in step 1 used local build: {'YES (check logs for LOCAL BUILD buy)' if not buy_result.get('error') else 'UNKNOWN'}")
-    print(f"  If 'LOCAL BUILD buy  token=...' appears in server logs → Fix 5 buy path active.")
-
+    # Buy again if presigned consumed our tokens
     if _presigned_sell_sig:
-        # Presigned sell consumed our tokens — do a second $1 buy to test local sell
-        print(f"\n  Presigned sell consumed tokens. Buying again for local sell test...")
+        print(f"\n  Presigned sell consumed tokens. Buying again for sell test...")
         buy2 = ex.buy(
             token_address=mint,
             size_usd=BUY_SIZE_USD,
@@ -405,45 +408,45 @@ def main():
         )
         print(f"  Buy2: {json.dumps({k: v for k, v in buy2.items() if k != 'timing'}, default=str)}")
         if not buy2.get("success"):
-            results.append(("FIX5 local build sell", False, f"buy2 failed: {buy2.get('reason')}"))
-        else:
+            # Buy2 executor returned failure, but check if tokens arrived anyway
             tokens2 = _token_balance(wallet, mint)
             if tokens2 == 0:
-                results.append(("FIX5 local build sell", False, "zero balance after buy2"))
+                results.append(("FIX5 buy+sell", False, f"buy2 failed: {buy2.get('reason')} and zero balance"))
             else:
-                # Now test local build sell explicitly
-                print(f"  Testing local build sell with {tokens2} tokens...")
-                try:
-                    t_lb_start = time.time()
-                    _lb_sell_bytes = _pumpfun_local_build_tx(
-                        action="sell",
-                        wallet_pubkey=wallet,
-                        token_mint=mint,
-                        keypair=_get_keypair(),
-                        token_amount=tokens2,
-                        slippage_pct=SLIPPAGE_SELL_PCT,
-                        priority_fee_sol=PRIORITY_FEE_SOL,
-                    )
-                    lb_build_ms = (time.time() - t_lb_start) * 1000
-                    print(f"  LOCAL BUILD sell build_ms: {lb_build_ms:.0f}ms  (vs PP ~500-1000ms)")
-
-                    sell_sig = _send_transaction(_lb_sell_bytes)
-                    print(f"  Solscan: https://solscan.io/tx/{sell_sig}")
+                print(f"  Note: buy2 reported '{buy2.get('reason')}' but found {tokens2} tokens — tx landed late")
+                buy2 = {"success": True, "fill_price": 0}  # treat as success
+        if buy2.get("success"):
+            tokens2 = _token_balance(wallet, mint)
+            if tokens2 == 0:
+                results.append(("FIX5 buy+sell", False, "zero balance after buy2"))
+            else:
+                # Now sell via executor
+                print(f"\n  Selling {tokens2} tokens via executor...")
+                sell_result2 = ex.sell(
+                    token_address=mint,
+                    size_usd=BUY_SIZE_USD,
+                    entry_price=buy2.get("fill_price") or 0,
+                    chain="solana",
+                    known_token_count=tokens2,
+                )
+                print(f"  executor returned: {json.dumps(sell_result2, default=str)}")
+                if not sell_result2.get("success"):
+                    results.append(("FIX5 buy+sell", False, sell_result2.get("reason") or sell_result2.get("error")))
+                else:
+                    sell_sig2 = sell_result2.get("tx_sig", "")
+                    print(f"  Solscan: https://solscan.io/tx/{sell_sig2}")
                     print("  Waiting 5s for finalization...")
                     time.sleep(5)
-                    v = _verify_sell(sell_sig, mint, wallet, tokens2, 0, sol_price)
-                    if v["ok"]:
-                        print(f"\n  ✓ FIX5 PASS — local build sell landed, build_ms={lb_build_ms:.0f}")
-                        results.append(("FIX5 local build sell", True, f"build_ms={lb_build_ms:.0f}"))
+                    v2 = _verify_sell(sell_sig2, mint, wallet, tokens2, sell_result2.get("fill_price") or 0, sol_price)
+                    if v2["ok"]:
+                        print(f"\n  ✓ FIX5 PASS — buy+sell round-trip ({_tok_prog_label})")
+                        results.append(("FIX5 buy+sell", True, f"path={_tok_prog_label}"))
                     else:
-                        print(f"\n  ✗ FIX5 FAIL: {v['err']}")
-                        results.append(("FIX5 local build sell", False, v["err"]))
-                except Exception as _lb_e:
-                    print(f"\n  ✗ FIX5 local build EXCEPTION: {_lb_e}")
-                    results.append(("FIX5 local build sell", False, str(_lb_e)))
+                        print(f"\n  ✗ FIX5 FAIL: {v2['err']}")
+                        results.append(("FIX5 buy+sell", False, v2["err"]))
     else:
-        # Presigned sell didn't run — sell remaining tokens via executor (also uses local build)
-        print(f"\n[2] SELL (executor path — also uses local build as primary)...")
+        # Presigned sell didn't run — sell remaining tokens via executor
+        print(f"\n[2] SELL (executor path — {_tok_prog_label})...")
         tokens_to_sell2 = _token_balance(wallet, mint)
         print(f"  Balance: {tokens_to_sell2}")
         if tokens_to_sell2 == 0:

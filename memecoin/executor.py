@@ -1140,31 +1140,43 @@ class MemeExecutor:
 
             # ── Build and sign transaction ────────────────────────────────────
             # PRIMARY (pumpportal backend): local pump.fun instruction build.
-            #   Saves ~500-1000ms PumpPortal HTTP round-trip on every buy.
+            #   Saves ~500-1000ms PumpPortal HTTP round-trip for SPL-Token mints.
+            #   Skipped for Token-2022 mints: pump.fun migrated all new tokens to
+            #   Token-2022 in 2025 and uses a new program+instruction format
+            #   (FAdo9NCw...) that local build does not yet implement.
             #   Falls back to PumpPortal on any exception (graduated token,
-            #   RPC error, bonding-curve not found, etc.).
-            # FALLBACK: PumpPortal trade-local (handles graduated tokens via pool="auto").
+            #   RPC error, bonding-curve not found, Token-2022, etc.).
+            # FALLBACK: PumpPortal trade-local (handles all cases via pool="auto").
             # ALTERNATE backend: Jupiter (unchanged).
             if EXECUTOR_BACKEND == "pumpportal":
                 _sig_sent = False
-                try:
-                    _t_lb     = time.time()
-                    _lb_bytes = _pumpfun_local_build_tx(
-                        action="buy",
-                        wallet_pubkey=wallet,
-                        token_mint=token_address,
-                        keypair=keypair,
-                        sol_amount=sol_amount,
-                        slippage_pct=SLIPPAGE_BUY_PCT,
-                        priority_fee_sol=_buy_fee,
-                    )
-                    log.info("LOCAL BUILD buy  token=%s  build_ms=%.0f",
-                             token_address[:8], (time.time() - _t_lb) * 1000)
-                    sig       = _send_transaction(_lb_bytes)
-                    _sig_sent = True
-                except Exception as _lb_err:
-                    log.warning("LOCAL BUILD buy failed (%s) — PumpPortal fallback  token=%s",
-                                _lb_err, token_address[:8])
+                # Check token program — local build only works for classic SPL Token mints
+                _tok_prog = _mint_token_program_cache.get(token_address)
+                if _tok_prog is None:
+                    _tok_prog = _pumpfun_mint_token_program(token_address)
+                _use_local_build = (_tok_prog == _TOKEN_PROGRAM_ID)
+                if _use_local_build:
+                    try:
+                        _t_lb     = time.time()
+                        _lb_bytes = _pumpfun_local_build_tx(
+                            action="buy",
+                            wallet_pubkey=wallet,
+                            token_mint=token_address,
+                            keypair=keypair,
+                            sol_amount=sol_amount,
+                            slippage_pct=SLIPPAGE_BUY_PCT,
+                            priority_fee_sol=_buy_fee,
+                        )
+                        log.info("LOCAL BUILD buy  token=%s  build_ms=%.0f",
+                                 token_address[:8], (time.time() - _t_lb) * 1000)
+                        sig       = _send_transaction(_lb_bytes)
+                        _sig_sent = True
+                    except Exception as _lb_err:
+                        log.warning("LOCAL BUILD buy failed (%s) — PumpPortal fallback  token=%s",
+                                    _lb_err, token_address[:8])
+                else:
+                    log.info("LOCAL BUILD buy SKIPPED (Token-2022) — PumpPortal  token=%s",
+                             token_address[:8])
                 if not _sig_sent:
                     tx_bytes  = _pumpportal_build_tx(
                         wallet_pubkey=wallet, action="buy", token_mint=token_address,
@@ -1516,10 +1528,14 @@ class MemeExecutor:
                     # Dynamic fee: Helius estimate at escalating levels; floor at ladder minimum
                     fee_sol = max(_helius_priority_fee(token_address, level=fee_level), fee_floor_sol)
                     if EXECUTOR_BACKEND == "pumpportal":
-                        # PRIMARY: local build (no HTTP round-trip).
-                        # FALLBACK: PumpPortal trade-local.
+                        # PRIMARY: local build for classic SPL Token mints.
+                        # SKIPPED for Token-2022 (new pump.fun program, not yet implemented).
+                        # FALLBACK: PumpPortal trade-local (all cases).
                         _sig_sent_local = False
-                        if _tokens_to_sell_local > 0:
+                        _sell_tok_prog  = _mint_token_program_cache.get(token_address, _TOKEN22_PROGRAM_ID)
+                        _use_lb_sell    = (_tokens_to_sell_local > 0 and
+                                           _sell_tok_prog == _TOKEN_PROGRAM_ID)
+                        if _use_lb_sell:
                             try:
                                 _t_lb     = time.time()
                                 _lb_bytes = _pumpfun_local_build_tx(
@@ -1538,6 +1554,9 @@ class MemeExecutor:
                             except Exception as _lb_err:
                                 log.warning("LOCAL BUILD sell step %d failed (%s) — PumpPortal  token=%s",
                                             step, _lb_err, token_address[:8])
+                        elif _tokens_to_sell_local > 0:
+                            log.info("LOCAL BUILD sell SKIPPED (Token-2022) — PumpPortal  token=%s",
+                                     token_address[:8])
                         if not _sig_sent_local:
                             tx_bytes  = _pumpportal_build_tx(
                                 wallet_pubkey=wallet, action="sell", token_mint=token_address,
