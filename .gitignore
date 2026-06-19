@@ -10,3 +10,6 @@ data/historical_raw.json
 # Keep logs in repo so GitHub Actions can commit daily results
 !logs/market_journal.csv
 !logs/live_scan_results.csv
+!logs/memecoin_live_journal.csv
+!logs/memecoin_social_journal.csv
+!logs/memecoin_journal.csv
