@@ -570,11 +570,13 @@ def main():
         # We rely on the user supplying a known graduated mint — harness trusts the arg.
 
         # Buy $1 first (pool=auto — PP will route via PumpSwap if graduated)
-        print(f"\n[6a] BUY $1 of graduated token {grad_mint[:16]} (pool=auto, may go via PumpSwap)...")
+        # Convert USD → SOL for the PumpPortal amount field.
+        _g_sol_amount = round(BUY_SIZE_USD / sol_price, 6)   # e.g. $1 / $170 = 0.00588 SOL
+        print(f"\n[6a] BUY ${BUY_SIZE_USD} ({_g_sol_amount} SOL) of graduated token {grad_mint[:16]} (pool=auto)...")
         _g_sol_before = _sol_balance(wallet)
         _g_buy_bytes = _pumpportal_build_tx(
             wallet_pubkey=wallet, action="buy", token_mint=grad_mint,
-            amount=BUY_SIZE_USD, denominated_in_sol=True,
+            amount=_g_sol_amount, denominated_in_sol=True,
             slippage_pct=99, priority_fee_sol=0.005,
             pool="auto",
         )
