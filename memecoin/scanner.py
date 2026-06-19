@@ -1082,6 +1082,20 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                     pass
             return
 
+        # Block graduated tokens (pumpswap/raydium) — PP is silent, no live price
+        # baseline available. Multiple losses (Derp, AXJ, Cuakssant) from this category.
+        # Re-enable when PumpSwap price source is built.
+        _dex = (screen.get("dex_id") or "").lower()
+        if _dex and "pump" not in _dex and "fun" not in _dex:
+            log.info("TG REJECT %s — graduated token (dex_id=%s), skipping until PumpSwap feed ready",
+                     address[:8], _dex)
+            if chain == "solana":
+                try:
+                    _pp_monitor.evict_screening({address})
+                except Exception:
+                    pass
+            return
+
         # Social alert entry filters (data-derived from v5+v6, 192 trades)
         bs   = screen.get("buy_sell_ratio_5m") or 0
         v5m  = screen.get("volume_5m") or 0
