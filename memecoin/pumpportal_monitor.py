@@ -54,9 +54,11 @@ PRICE_STALE_SEC = 15.0
 SOL_PRICE_REFRESH_SEC = 60.0
 
 # Max concurrent screening slots before LRU eviction.
-# pump.fun launches ~20-30 tokens/min; Telegram alerts fire 30-120 min after launch.
-# 500 slots = ~25 min of coverage at 20 tok/min — matches the early TG alert window.
-MAX_SCREENING_SLOTS = 500
+# pump.fun launches ~20-30 tokens/min; Telegram alerts fire 5-60 min after launch.
+# Worst case: 30 tok/min × 60 min = 1800 slots needed.
+# 1000 slots = ~33 min at 30/min — covers the bulk of TG alert timing.
+# Memory: ~2KB/slot × 1000 = ~2MB. Acceptable on 4GB VPS.
+MAX_SCREENING_SLOTS = 1000
 
 # Reconnect delays: 0.5 → 1 → 2 → 5 (capped)
 _RECONNECT_DELAY_BASE = 0.5
