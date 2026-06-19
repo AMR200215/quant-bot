@@ -1081,6 +1081,22 @@ class MemeExecutor:
             except Exception:
                 pass
 
+            # Block PP-silent tokens entirely — no live price = no trade.
+            # dex_id from DexScreener is unreliable for detecting graduation
+            # (still shows "pumpfun" even after bonding curve completes).
+            # _pp_active is the only trustworthy signal we have.
+            # Losses: Derp, AXJ, Cuakssant — all PP-silent at execution.
+            if not _pp_active and chain == "solana":
+                log.warning(
+                    "BUY blocked — PP silent, no live price baseline  token=%s  "
+                    "signal=$%.10f  jup=$%.10f",
+                    token_address[:8], signal_price, jupiter_quote_price,
+                )
+                return {
+                    "success": False,
+                    "reason":  "blocked_pp_silent",
+                }
+
             if _pp_active and signal_price > 0 and jupiter_quote_price > 0:
                 # Same-venue gate: PP live vs Jupiter quote (measures real movement only)
                 slippage = (jupiter_quote_price / _gate_baseline - 1)
@@ -1099,49 +1115,6 @@ class MemeExecutor:
                         "gate_baseline":       _gate_baseline,
                         "pp_used":             True,
                     }
-            elif not _pp_active and signal_price > 0 and jupiter_quote_price > 0:
-                # Cross-venue gate: Jupiter (real-time) vs DexScreener signal_price
-                # (~10-30s stale at best, up to minutes for graduated tokens).
-                # DexScreener indexer lag creates ~20-40% apparent drift on its own.
-                # 60% threshold: passes indexer lag artifacts, blocks real blow-offs.
-                # AXJ was +105%, Cuakssant was +75% — both should have been blocked.
-                # abort_tripwire cannot catch this: it compares fill vs Jupiter quote
-                # (fresh vs fresh), so a 5% fill-above-quote passes even at +105% drift.
-                _cross_gate  = 0.60
-                _cv_slippage = (jupiter_quote_price / signal_price - 1)
-                if _cv_slippage > _cross_gate:
-                    log.warning(
-                        "BUY blocked — cross_venue_drift %.1f%% > %.0f%%  "
-                        "(PP silent: Jupiter vs DexScreener signal)  "
-                        "token=%s  sig=$%.10f  quote=$%.10f",
-                        _cv_slippage * 100, _cross_gate * 100,
-                        token_address[:8], signal_price, jupiter_quote_price,
-                    )
-                    try:
-                        from app.alerts import _send as _alert_send
-                        _alert_send(
-                            f"\U0001f6ab DRIFT BLOCK {token_address[:8]} \u2014 "
-                            f"Jupiter {_cv_slippage*100:.0f}% above signal "
-                            f"(sig ${signal_price:.8f} \u2192 quote ${jupiter_quote_price:.8f}). "
-                            f"Token moved too fast at execution, skipped."
-                        )
-                    except Exception:
-                        pass
-                    return {
-                        "success":             False,
-                        "reason":              "blocked_cross_venue_drift",
-                        "slippage_pct":        round(_cv_slippage * 100, 1),
-                        "jupiter_quote_price": jupiter_quote_price,
-                        "gate_baseline":       signal_price,
-                        "pp_used":             False,
-                    }
-                else:
-                    log.info(
-                        "Gate 2 cross-venue OK — %.1f%% within %.0f%% gate  "
-                        "token=%s  sig=$%.10f  jup=$%.10f",
-                        _cv_slippage * 100, _cross_gate * 100,
-                        token_address[:8], signal_price, jupiter_quote_price,
-                    )
 
             # ── Shadow-live / dry-run mode ────────────────────────────────────
             # LIVE_DRY_RUN = True → full live path traversal (pre-flight + quote)
