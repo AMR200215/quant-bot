@@ -194,7 +194,11 @@ def _load_positions() -> dict[str, Position]:
 def _save_positions(positions: dict[str, Position]):
     POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
     data = [asdict(p) for p in positions.values()]
-    POSITIONS_FILE.write_text(json.dumps(data, indent=2))
+    # Atomic write: write to temp then rename so a mid-write kill never corrupts the file.
+    # os.replace / Path.replace is atomic on POSIX (single filesystem).
+    _tmp = POSITIONS_FILE.with_suffix(".json.tmp")
+    _tmp.write_text(json.dumps(data, indent=2))
+    _tmp.replace(POSITIONS_FILE)
 
 
 def _ensure_journal_header(path=None):
