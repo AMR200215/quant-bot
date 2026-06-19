@@ -1336,7 +1336,10 @@ class Portfolio:
                     #   (b) token is graduated (cohort:graduated in notes) — pool="auto" returns
                     #       Custom:6005; executor escalate path uses pump-amm → Jupiter fallback
                     _is_retry     = getattr(pos, "sell_attempts", 0) > 0
-                    _is_graduated = "|cohort:graduated" in (pos.notes or "")
+                    _is_graduated = (
+                        "|cohort:graduated" in (pos.notes or "")
+                        or reason == "graduated_exit"
+                    )
                     if _is_graduated and not _is_retry:
                         log.info("SELL graduated token — pump-amm PRIMARY, Jupiter FALLBACK  token=%s",
                                  pos.token_address[:8])

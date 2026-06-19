@@ -1268,6 +1268,11 @@ def _near_miss_poller_thread():
 
 _FEED_BLIND_SEC = 20.0   # both feeds silent for this long → market-sell live position
 
+# Dedup set: position IDs already queued for graduated exit.
+# Prevents firing multiple close_position calls for the same position
+# when the DexScreener dex_id stays "pumpswap" across poll cycles.
+_graduated_exit_fired: set[str] = set()
+
 
 def _portfolio_thread():
     """
@@ -1362,6 +1367,59 @@ def _portfolio_thread():
                              e["token_symbol"], e["reason"], e["pnl_pct"])
 
             if _slow_tick:
+                # ── Graduated exit: token migrated to PumpSwap mid-hold ──────────
+                # Confirmed via DexScreener dex_id == "pumpswap" (not PP silence).
+                # Supersedes feed_blind for this position — exits via pump-amm path.
+                for pos in list(portfolio.open_positions()):
+                    if not (pos.notes and "live|tx:" in pos.notes):
+                        continue
+                    if pos.chain != "solana":
+                        continue
+                    if pos.id in _graduated_exit_fired:
+                        continue
+                    if pos.status == "closed" or pos.exit_reason:
+                        continue
+                    mint = pos.token_address
+                    # Only check tokens currently on the bonding curve (in open_pumpfun).
+                    # Already-graduated tokens (dex_id=pumpswap at entry) are not in
+                    # open_pumpfun and are handled by DexScreener price feeds, not here.
+                    if mint not in open_pumpfun:
+                        continue
+                    mig_age = _pp_monitor.migration_age(mint)
+                    if mig_age < 30.0:
+                        continue   # post-migration suppression — pool not yet live
+                    # Confirmed graduation: DexScreener dex_id flips to "pumpswap"
+                    try:
+                        from memecoin.data_client import dex_get_token as _dex_grad
+                        _grad_pair = _dex_grad("solana", mint)
+                        _grad_dex_id = (_grad_pair.get("dexId") or "").lower() if _grad_pair else ""
+                    except Exception:
+                        _grad_dex_id = ""
+                    if _grad_dex_id != "pumpswap":
+                        continue
+                    # All conditions met — exit via pump-amm
+                    log.error(
+                        "GRADUATED EXIT — %s (%s) migrated to PumpSwap, "
+                        "exiting via pump-amm  mig_age=%.0fs",
+                        pos.token_symbol, pos.id, mig_age,
+                    )
+                    try:
+                        from app.alerts import _send
+                        _send(
+                            f"GRADUATED EXIT {pos.token_symbol} — "
+                            f"migrated to PumpSwap (dex_id=pumpswap). "
+                            f"Selling via pump-amm."
+                        )
+                    except Exception:
+                        pass
+                    _graduated_exit_fired.add(pos.id)
+                    # Swap cohort tag so close_position routes via escalate (pump-amm)
+                    if pos.notes and "|cohort:bonding_curve" in pos.notes:
+                        pos.notes = pos.notes.replace(
+                            "|cohort:bonding_curve", "|cohort:graduated"
+                        )
+                    portfolio.close_position(pos.id, "graduated_exit", pos.current_price)
+
                 # ── Blind-exit check: both feeds silent >20s for live positions ──
                 # Fires a market-sell so we don't hold through an unobservable dump.
                 for pos in list(portfolio.open_positions()):
