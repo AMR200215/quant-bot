@@ -295,7 +295,9 @@ class PumpListener:
     # ------------------------------------------------------------------
 
     def _handle_create(self, sig: str):
-        time.sleep(1)   # wait 1s for tx to be indexable
+        # PP subscribeNewToken fires ~200ms after creation and is the primary path.
+        # This Helius path is the backup — reduced sleep since we're no longer racing.
+        time.sleep(0.5)   # was 1s; PP already handled subscribe_screening() faster
         tx = self._fetch_tx(sig)
         if not tx:
             return
@@ -324,7 +326,7 @@ class PumpListener:
         log.debug("CREATE  mint=%s  creator=%s", mint[:8], creator[:8])
 
     def _handle_buy(self, sig: str):
-        time.sleep(1)
+        time.sleep(0.5)   # was 1s; reduced — early_buy still needs RPC for buyer address
         tx = self._fetch_tx(sig)
         if not tx:
             return

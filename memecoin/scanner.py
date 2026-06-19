@@ -82,6 +82,74 @@ _seen: dict[str, float] = {}   # f"{chain}:{address}:{type}" → timestamp
 # re-entries for the rest of the day — prevents re-entering dying tokens after close
 _traded_today: dict[str, str] = {}   # f"{chain}:{address}" → ISO date string
 
+# ---------------------------------------------------------------------------
+# Fresh mint tracker
+# ---------------------------------------------------------------------------
+# Populated by PP subscribeNewToken callback (~200ms after on-chain confirm)
+# and backed up by pumpfun_listener new_token events.
+# Used for: dev wallet check at creation, early_buy path from pumpfun_listener,
+# and any future fast-entry logic that needs to gate on token age.
+_fresh_mints: dict[str, float] = {}   # mint → created_ts (UTC unix)
+_fm_lock      = threading.Lock()
+_FRESH_WINDOW_SEC = 600   # 10-minute window (generous — pumpfun_listener uses 10min too)
+
+
+def _on_pp_new_token(mint: str, creator: str, name: str, symbol: str) -> None:
+    """
+    Fired by PP subscribeNewToken ~200ms after a new pump.fun token is created.
+    Called from the WS recv thread — must not block.
+
+    Responsibilities:
+    1. Register in _fresh_mints so early_buy path can gate on token age.
+    2. Trigger async dev-wallet check so a dev_launch signal can fire immediately
+       if this creator is a known profitable deployer — before DexScreener indexing.
+    3. PP subscribe_screening() is already called in _handle_message() before this
+       callback fires, so trade accumulation starts automatically.
+    """
+    _now = time.time()
+
+    # 1. Register in fresh-mint tracker
+    with _fm_lock:
+        _fresh_mints[mint] = _now
+        # Evict old entries to bound memory (~600 mints max at 1/min)
+        _cutoff = _now - _FRESH_WINDOW_SEC
+        _stale  = [m for m, ts in _fresh_mints.items() if ts < _cutoff]
+        for _m in _stale:
+            del _fresh_mints[_m]
+
+    # 2. Async dev-wallet check — don't block the WS recv thread
+    if creator:
+        def _check_dev(mint=mint, creator=creator, name=name, symbol=symbol):
+            try:
+                from memecoin.dev_tracker import load_dev_wallets, dev_signal_strength
+                dev_wallets = load_dev_wallets()
+                dev_map     = {d["address"]: d for d in dev_wallets if d.get("win_count", 0) >= 2}
+                if creator not in dev_map:
+                    return
+                dev_entry = dev_map[creator]
+                strength  = dev_signal_strength(dev_entry)
+                screen    = screen_token("solana", mint)
+                screen["passed"] = True   # trust the dev's track record
+                sig = make_dev_launch_signal(
+                    "solana", mint, screen,
+                    dev_address=creator, dev_entry=dev_entry, strength=strength,
+                )
+                if sig:
+                    if symbol:
+                        sig.token_symbol = symbol
+                    log.info(
+                        "DEV LAUNCH (PP fast)  dev=%s  mint=%s  wins=%d  symbol=%s",
+                        creator[:8], mint[:8], dev_entry.get("win_count", 0), symbol,
+                    )
+                    _add_signal(sig)
+            except Exception as _e:
+                log.debug("PP new_token dev check error %s: %s", mint[:8], _e)
+
+        threading.Thread(target=_check_dev, daemon=True, name="pp-dev-check").start()
+
+    log.debug("PP new_token registered: %s (%s) creator=%s",
+              symbol or mint[:8], mint[:8], creator[:8] if creator else "?")
+
 
 # ---------------------------------------------------------------------------
 # Parallel-prefetch pool (screening only)
@@ -730,16 +798,24 @@ def _pumpfun_thread():
                 addr    = event.mint
                 creator = event.creator
 
-                # 0. Subscribe PP immediately at launch — before DexScreener wait.
-                # TG alerts fire 5-60s after launch; PP needs ~3s to warm up.
-                # By the time TG alert matches, PP already has a live price.
-                # This eliminates quote drift from stale DexScreener baseline.
+                # Backup: register in fresh-mint tracker (PP subscribeNewToken fires
+                # ~2-4s earlier and already did this, but pumpfun_listener is the
+                # fallback if PP WS is down or reconnecting).
+                _now_ft = time.time()
+                with _fm_lock:
+                    if addr not in _fresh_mints:   # don't overwrite PP's earlier timestamp
+                        _fresh_mints[addr] = _now_ft
+
+                # Backup: subscribe PP if not already done by subscribeNewToken handler.
+                # subscribe_screening() is idempotent — safe to call twice.
                 try:
                     _pp_monitor.subscribe_screening(addr, creator)
                 except Exception:
                     pass
 
-                # 1. Dev wallet check — fire dev_launch immediately if known dev
+                # 1. Dev wallet check — only run here if PP callback didn't fire it
+                # (PP callback fires async; this is the synchronous fallback for tokens
+                # that PP missed or where the callback thread is still pending).
                 from memecoin.dev_tracker import load_dev_wallets, dev_signal_strength
                 dev_wallets = load_dev_wallets()
                 dev_map     = {d["address"]: d for d in dev_wallets if d.get("win_count", 0) >= 2}
@@ -1539,6 +1615,16 @@ def start(daemon: bool = True):
     _pp_monitor.start(daemon=daemon)
     _pp_monitor.add_price_callback(_on_pp_price_tick)
     _pp_monitor.add_creator_sell_callback(_on_pp_creator_sell)
+
+    # Subscribe to every new pump.fun token creation via PP WebSocket.
+    # PP fires ~200ms after on-chain confirm vs 2-5s for Helius logsSubscribe.
+    # subscribe_screening() is auto-called in _handle_message(), so PP starts
+    # accumulating trade data for every new token before Telegram ever mentions it.
+    # By the time TG fires (30-120s later), PP cache hit fires live signal
+    # immediately — bypassing DexScreener and the preflight_no_price block.
+    _pp_monitor.subscribe_new_tokens()
+    _pp_monitor.add_new_token_callback(_on_pp_new_token)
+    log.info("PP subscribeNewToken wired — fresh mint tracker + dev-check enabled")
 
     for target, kwargs in [
         (_wallet_thread,       {"wallets": wallets, "ranks": ranks}),

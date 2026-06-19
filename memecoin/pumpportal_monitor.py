@@ -53,8 +53,10 @@ PRICE_STALE_SEC = 15.0
 # SOL price refresh interval — runs in its own thread, never in WS recv loop
 SOL_PRICE_REFRESH_SEC = 60.0
 
-# Max concurrent screening slots before LRU eviction
-MAX_SCREENING_SLOTS = 150  # covers ~12 min of new launches at current rate (~5s/token)
+# Max concurrent screening slots before LRU eviction.
+# pump.fun launches ~20-30 tokens/min; Telegram alerts fire 30-120 min after launch.
+# 500 slots = ~25 min of coverage at 20 tok/min — matches the early TG alert window.
+MAX_SCREENING_SLOTS = 500
 
 # Reconnect delays: 0.5 → 1 → 2 → 5 (capped)
 _RECONNECT_DELAY_BASE = 0.5
@@ -197,6 +199,26 @@ class PumpPortalMonitor:
         # Signature: fn(mint: str, price_usd: float) — must not block.
         self._creator_sell_callbacks: list = []
         self._cs_cb_lock             = threading.Lock()
+
+        # ── Account trade subscriptions (Tier 1/2 whale wallets) ─────────
+        # subscribeAccountTrade fires when any tracked wallet buys/sells ANY token.
+        # Kept for future use; no wallets currently subscribed (polling paused).
+        # Signature: fn(mint, buyer, tx_type, sol_amount) — must not block.
+        self._acct_subscribed: set[str]  = set()
+        self._acct_sub_lock              = threading.Lock()
+        self._acct_trade_callbacks: list = []
+        self._acct_cb_lock               = threading.Lock()
+
+        # ── New token subscription (subscribeNewToken) ────────────────────
+        # Fires for every pump.fun token creation (~200ms latency vs 2-5s for
+        # Helius logsSubscribe + getTransaction).  Automatically calls
+        # subscribe_screening() so PP accumulates trade data before Telegram
+        # alerts fire — reduces preflight_no_price blocks from ~23% to <5%.
+        # No per-event cost (unlike subscribeAccountTrade).
+        self._new_token_sub: bool        = False
+        self._new_token_sub_lock         = threading.Lock()
+        self._new_token_callbacks: list  = []
+        self._nt_cb_lock                 = threading.Lock()
 
         # mint → creator_wallet mapping for held positions
         self._creator_map: dict[str, str] = {}
@@ -357,6 +379,58 @@ class PumpPortalMonitor:
         """
         with self._cs_cb_lock:
             self._creator_sell_callbacks.append(fn)
+
+    def subscribe_account_trades(self, wallets: set) -> None:
+        """
+        Subscribe to account-level trade events for whale wallet addresses.
+        Fires account_trade callbacks when any subscribed wallet buys/sells.
+        PP charges 0.01 SOL per 10,000 events — limited to Tier 1/2 only.
+        Safe to call multiple times; only new wallets are subscribed.
+        """
+        with self._acct_sub_lock:
+            new = wallets - self._acct_subscribed
+            if not new:
+                return
+            self._acct_subscribed |= new
+        msg = json.dumps({"method": "subscribeAccountTrade", "keys": list(new)})
+        self._ws_send(msg)
+        log.info("PP subscribeAccountTrade: %d wallets subscribed (total=%d)",
+                 len(new), len(self._acct_subscribed))
+
+    def add_account_trade_callback(self, fn) -> None:
+        """
+        Register callback for whale account trade events.
+        Signature: fn(mint: str, buyer: str, tx_type: str, sol_amount: float)
+        Called from WS recv thread — must not block. Push to queue for heavy work.
+        """
+        with self._acct_cb_lock:
+            self._acct_trade_callbacks.append(fn)
+
+    def subscribe_new_tokens(self) -> None:
+        """
+        Subscribe to pump.fun new token creation events via PumpPortal WS.
+        On each creation event: auto-calls subscribe_screening() so PP starts
+        accumulating trade data immediately (~200ms after on-chain confirm).
+        By the time a Telegram alert fires (30-120s later), PP has a full
+        trade history → cache hit path fires live signal without DexScreener.
+
+        Idempotent — safe to call multiple times.
+        """
+        with self._new_token_sub_lock:
+            if self._new_token_sub:
+                return
+            self._new_token_sub = True
+        self._ws_send(json.dumps({"method": "subscribeNewToken"}))
+        log.info("PP subscribeNewToken: subscribed — every pump.fun launch will be pre-monitored")
+
+    def add_new_token_callback(self, fn) -> None:
+        """
+        Register callback fired on every new pump.fun token creation.
+        Signature: fn(mint: str, creator: str, name: str, symbol: str) → None
+        Called from WS recv thread — must not block.
+        """
+        with self._nt_cb_lock:
+            self._new_token_callbacks.append(fn)
 
     def set_creator(self, mint: str, creator_wallet: str) -> None:
         """Store creator wallet for a held mint — used for dev_dump detection."""
@@ -544,7 +618,7 @@ class PumpPortalMonitor:
                     pass
             return
 
-        # Subscribe all current mints on the new connection
+        # Subscribe all current mints + account trade wallets on the new connection
         with self._sub_lock:
             current_mints = set(self._subscribed)
         with self._screening_lock:
@@ -570,6 +644,26 @@ class PumpPortalMonitor:
                     except Exception:
                         pass
                 return
+
+        # Also re-subscribe account trade wallets on the rotation WS (future use)
+        with self._acct_sub_lock:
+            _rot_acct_wallets = set(self._acct_subscribed)
+        if _rot_acct_wallets:
+            _rot_acct_msg = json.dumps({"method": "subscribeAccountTrade",
+                                        "keys": list(_rot_acct_wallets)})
+            try:
+                new_ws.send(_rot_acct_msg)
+            except Exception as _rae:
+                log.debug("PP rotation: account trade subscribe failed: %s", _rae)
+
+        # Re-subscribe new token feed on rotation WS
+        with self._new_token_sub_lock:
+            _rot_nt_active = self._new_token_sub
+        if _rot_nt_active:
+            try:
+                new_ws.send(json.dumps({"method": "subscribeNewToken"}))
+            except Exception as _rot_nte:
+                log.debug("PP rotation: subscribeNewToken failed: %s", _rot_nte)
 
         # Wait for first tick on new WS — proves the connection is alive and subscribed
         tick_event = threading.Event()
@@ -701,6 +795,26 @@ class PumpPortalMonitor:
                 current |= set(self._screening.keys())
             if current:
                 self._send_subscribe(current)
+            # Re-subscribe account trade wallets (kept for future use — currently empty)
+            with self._acct_sub_lock:
+                acct_wallets = set(self._acct_subscribed)
+            if acct_wallets:
+                _acct_msg = json.dumps({"method": "subscribeAccountTrade", "keys": list(acct_wallets)})
+                try:
+                    ws.send(_acct_msg)
+                    log.info("PP reconnect: re-subscribed %d account trade wallets", len(acct_wallets))
+                except Exception as _ae:
+                    log.debug("PP reconnect: account trade re-subscribe failed: %s", _ae)
+
+            # Re-subscribe new token feed
+            with self._new_token_sub_lock:
+                _nt_active = self._new_token_sub
+            if _nt_active:
+                try:
+                    ws.send(json.dumps({"method": "subscribeNewToken"}))
+                    log.info("PP reconnect: re-subscribed new token feed")
+                except Exception as _nte:
+                    log.debug("PP reconnect: subscribeNewToken failed: %s", _nte)
 
         # ── Pure recv loop — NO HTTP, NO sleeps, NO RPC ──────────────────
         try:
@@ -820,6 +934,31 @@ class PumpPortalMonitor:
 
         tx_type = msg.get("txType", "")
 
+        # ── New token creation (subscribeNewToken) ────────────────────────
+        # Fires ~200ms after on-chain confirm — before Helius logsSubscribe
+        # (+1-3s) and before Telegram alerts (+30-120s).
+        # Auto-subscribe to trade events so price data accumulates immediately.
+        # By the time TG fires, we have enough buyers for the cache-hit path.
+        if tx_type == "create":
+            with self._new_token_sub_lock:
+                _nt_active = self._new_token_sub
+            if _nt_active:
+                creator = msg.get("traderPublicKey", "")
+                name    = msg.get("name", "")
+                symbol  = msg.get("symbol", "")
+                self.subscribe_screening(mint, creator_pubkey=creator or None)
+                log.debug("PP new_token %s (%s) creator=%s — screening subscribed",
+                          symbol or mint[:8], mint[:8], creator[:8] if creator else "?")
+                # Fire new-token callbacks (scanner.py populates fresh_mints, dev check, etc.)
+                with self._nt_cb_lock:
+                    _nt_cbs = list(self._new_token_callbacks)
+                for _ntcb in _nt_cbs:
+                    try:
+                        _ntcb(mint, creator, name, symbol)
+                    except Exception as _nte:
+                        log.debug("new_token callback error: %s", _nte)
+            return   # no price to process on create events
+
         # ── Migration event ───────────────────────────────────────────────
         # Fired when a bonding curve token graduates to Raydium/pump.swap.
         # Suppress blind-exit for this mint for 30s; sells stay pool:"auto".
@@ -855,6 +994,22 @@ class PumpPortalMonitor:
                     cb(mint, price_usd)
                 except Exception as _e:
                     log.debug("price callback error: %s", _e)
+
+        # ── Account trade callbacks (fast-entry whale detection) ──────────
+        # Fire when ANY subscribed whale wallet (Tier 1/2) buys/sells any token.
+        # Checked before creator-sell so buy events are never missed.
+        trader = msg.get("traderPublicKey", "")
+        with self._acct_sub_lock:
+            _is_tracked_whale = trader in self._acct_subscribed
+        if _is_tracked_whale and mint and tx_type in ("buy", "sell"):
+            _sol_amt = float(msg.get("solAmount") or 0)
+            with self._acct_cb_lock:
+                _acct_cbs = list(self._acct_trade_callbacks)
+            for _acb in _acct_cbs:
+                try:
+                    _acb(mint, trader, tx_type, _sol_amt)
+                except Exception as _acb_e:
+                    log.debug("account_trade callback error: %s", _acb_e)
 
         # ── Creator-sell detection (dev_dump) ─────────────────────────────
         # Only checked for held positions (in _subscribed) to avoid false fires
