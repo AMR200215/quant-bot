@@ -849,12 +849,19 @@ def _pumpportal_build_tx(
     denominated_in_sol: bool,
     slippage_pct: int,
     priority_fee_sol: float = PRIORITY_FEE_SOL,
+    pool: str = "auto",   # "auto" (default), "pump-amm" (PumpSwap direct for graduated tokens)
 ) -> bytes:
     """
     Call PumpPortal trade-local API to get a pre-built serialized transaction.
     Returns raw transaction bytes ready for signing.
 
     Docs: https://pumpportal.fun/integrate/trading-api
+
+    pool="auto":     routes bonding-curve OR graduated tokens automatically.
+                     WARNING: returns Custom:6005 on graduated tokens when called
+                     via trade-local (bonding curve lookup fails). Use "pump-amm".
+    pool="pump-amm": PumpSwap direct — use for tokens that have graduated from
+                     the bonding curve. Bypasses bonding curve lookup entirely.
     """
     payload = {
         "publicKey":       wallet_pubkey,
@@ -864,7 +871,7 @@ def _pumpportal_build_tx(
         "denominatedInSol": "true" if denominated_in_sol else "false",
         "slippage":        slippage_pct,
         "priorityFee":     priority_fee_sol,
-        "pool":            "auto",   # routes bonding-curve and graduated tokens; handles migration
+        "pool":            pool,
     }
     resp = requests.post(PUMPPORTAL_TRADE_URL, data=payload, timeout=15)
     if resp.status_code != 200:
@@ -1506,12 +1513,157 @@ class MemeExecutor:
                     log.warning("SELL _sol_balance RPC error — fill price will use entry_price fallback: %s", _rpc_err)
 
             all_sigs: list[str] = []
-            # escalate=True  → previous full cycle failed, skip PumpPortal entirely
-            # _graduated_detected → first 6005 seen, skip remaining PumpPortal steps
-            _graduated_detected = escalate
+
+            # ── Graduated token fast-path (escalate=True) ────────────────────────
+            # Token has migrated to PumpSwap (bonding curve exhausted).
+            # pool="auto" returns Custom:6005 — it tries the bonding curve first.
+            # PRIMARY:  PumpPortal pool="pump-amm" (PumpSwap direct, single RPC call).
+            # FALLBACK: Jupiter (in case pump-amm also reverts, e.g. T22 account ordering).
+            # If both fail: alert "graduated unsellable" and return — do NOT loop-retry
+            # burning fees; caller (portfolio) will keep position open for manual exit.
             if escalate:
-                log.warning("SELL escalate mode — skipping PumpPortal, going straight to Jupiter  token=%s",
-                            token_address[:8])
+                log.warning("SELL escalate (graduated) — pump-amm PRIMARY  token=%s", token_address[:8])
+                _grad_fee = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
+
+                # ── PRIMARY: PumpPortal pool="pump-amm" ──────────────────────────
+                _pamm_sig  = None
+                _pamm_conf = False
+                _pamm_err  = None
+                try:
+                    _t_pamm = time.time()
+                    _pamm_bytes = _pumpportal_build_tx(
+                        wallet_pubkey=wallet, action="sell", token_mint=token_address,
+                        amount=_sell_amount, denominated_in_sol=False,
+                        slippage_pct=98, priority_fee_sol=_grad_fee,
+                        pool="pump-amm",
+                    )
+                    _pamm_tx     = VersionedTransaction.from_bytes(_pamm_bytes)
+                    _pamm_signed = VersionedTransaction(_pamm_tx.message, [keypair])
+                    _pamm_sig    = _send_transaction(bytes(_pamm_signed))
+                    all_sigs.append(_pamm_sig)
+                    log.warning("SELL pump-amm sent  sig=%s  token=%s  build_ms=%.0f",
+                                _pamm_sig[:16], token_address[:8], (time.time() - _t_pamm) * 1000)
+                    _pamm_conf, _pamm_err = _confirm_tx(_pamm_sig, t_sent=_t_pamm)
+                except Exception as _pamm_ex:
+                    log.warning("SELL pump-amm build/send failed: %s  token=%s", _pamm_ex, token_address[:8])
+
+                if _pamm_conf:
+                    fill_price   = None
+                    sol_received = 0.0
+                    try:
+                        sol_bal_after = _sol_balance(wallet)
+                        if sol_bal_before is not None:
+                            for _sr in range(5):
+                                if sol_bal_after != sol_bal_before:
+                                    break
+                                time.sleep(1.0)
+                                try:
+                                    sol_bal_after = _sol_balance(wallet)
+                                except RuntimeError:
+                                    break
+                            sol_recv_lam = max(0, sol_bal_after - sol_bal_before)
+                            sol_received = sol_recv_lam / 1e9
+                            sol_price    = _sol_price_usd()
+                            if _fill_token_count is not None:
+                                decimals   = _token_decimals_from_rpc(wallet, token_address)
+                                tokens_sold = _fill_token_count / (10 ** decimals)
+                                fill_price = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
+                    except RuntimeError as _rpc_err:
+                        log.warning("SELL pump-amm fill price RPC error: %s", _rpc_err)
+                    log.info("SELL pump-amm confirmed  sig=%s  sol_recv=%.6f  fill=$%.10f",
+                             _pamm_sig[:16], sol_received, fill_price or 0)
+                    return {
+                        "success":      True,
+                        "fill_price":   fill_price,
+                        "sol_received": sol_received,
+                        "tx_sig":       _pamm_sig,
+                        "all_sigs":     all_sigs,
+                        "ladder_step":  1,
+                        "pump_amm":     True,
+                    }
+                if _pamm_sig:
+                    log.warning("SELL pump-amm reverted  sig=%s  err=%s  token=%s",
+                                _pamm_sig[:16], _pamm_err, token_address[:8])
+
+                # ── FALLBACK: Jupiter ─────────────────────────────────────────────
+                if _jup_sell_tokens is not None and _jup_sell_tokens > 0:
+                    log.warning("SELL pump-amm failed — trying Jupiter fallback  token=%s", token_address[:8])
+                    try:
+                        _jup_quote = _jup_get_quote(token_address, SOL_MINT, _jup_sell_tokens)
+                        _jup_fee   = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
+                        _jup_tx    = _jup_build_swap_tx(
+                            _jup_quote, wallet,
+                            slippage_bps=9900,
+                            priority_fee_lamports=int(_jup_fee * 1e9),
+                        )
+                        _, VersionedTransaction, _ = _load_solders()
+                        _jup_signed = VersionedTransaction(
+                            VersionedTransaction.from_bytes(_jup_tx).message, [keypair]
+                        )
+                        _jup_sig    = _send_transaction(bytes(_jup_signed))
+                        _t_jup      = time.time()
+                        all_sigs.append(_jup_sig)
+                        log.warning("SELL Jupiter fallback sent  sig=%s  token=%s", _jup_sig[:16], token_address[:8])
+                        _jup_conf, _jup_ferr = _confirm_tx(_jup_sig, t_sent=_t_jup)
+                        if _jup_conf:
+                            sol_bal_after = None
+                            try:
+                                sol_bal_after = _sol_balance(wallet)
+                                if sol_bal_before is not None:
+                                    for _sr in range(5):
+                                        if sol_bal_after != sol_bal_before:
+                                            break
+                                        time.sleep(1.0)
+                                        try:
+                                            sol_bal_after = _sol_balance(wallet)
+                                        except RuntimeError:
+                                            break
+                            except RuntimeError:
+                                pass
+                            sol_received = max(0, sol_bal_after - sol_bal_before) / 1e9 if (sol_bal_after and sol_bal_before) else 0
+                            sol_price    = _sol_price_usd()
+                            decimals     = _token_decimals_from_rpc(wallet, token_address) if _jup_sell_tokens else 6
+                            tokens_sold  = _jup_sell_tokens / (10 ** decimals) if _jup_sell_tokens else 0
+                            fill_price   = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else entry_price
+                            log.info("SELL Jupiter fallback confirmed  sig=%s  fill=$%.10f", _jup_sig[:16], fill_price)
+                            return {
+                                "success":       True,
+                                "fill_price":    fill_price,
+                                "tx_sig":        _jup_sig,
+                                "all_sigs":      all_sigs,
+                                "ladder_step":   2,
+                                "jup_fallback":  True,
+                            }
+                        log.warning("SELL Jupiter fallback reverted  sig=%s  err=%s", _jup_sig[:16], _jup_ferr)
+                    except Exception as _jup_ex:
+                        log.warning("SELL Jupiter fallback error: %s  token=%s", _jup_ex, token_address[:8])
+                else:
+                    log.warning("SELL Jupiter fallback skipped — _jup_sell_tokens=0  token=%s", token_address[:8])
+
+                # Both paths failed — alert and return without retrying (caller keeps position open)
+                log.error(
+                    "SELL graduated unsellable — pump-amm + Jupiter both failed  token=%s  mint=%s  sigs=%s",
+                    token_address[:8], token_address, all_sigs,
+                )
+                try:
+                    from app.alerts import _send
+                    _send(
+                        f"\U0001f6a8 GRADUATED UNSELLABLE {token_address[:8]} — "
+                        f"pump-amm + Jupiter both failed. Manual sell needed. "
+                        f"mint={token_address}"
+                    )
+                except Exception:
+                    pass
+                return {
+                    "success":    False,
+                    "reason":     "graduated_unsellable",
+                    "all_sigs":   all_sigs,
+                    "ladder_step": 0,
+                }
+
+            # escalate=False: bonding-curve path below (unchanged)
+            # _graduated_detected → first 6005 seen mid-ladder, skip remaining PP steps
+            _graduated_detected = False
 
             for step, (slip_pct, fee_floor_sol, fee_level) in enumerate(SELL_LADDER, 1):
                 try:

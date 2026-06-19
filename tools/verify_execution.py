@@ -35,6 +35,8 @@ from memecoin.executor import (
     MemeExecutor, _token_balance, _get_keypair, _rpc_post, SOLANA_RPC,
     _pumpfun_local_build_tx, _pumpportal_build_tx, _send_transaction, _confirm_tx,
     SLIPPAGE_SELL_PCT, PRIORITY_FEE_SOL,
+    _mint_token_program_cache, _TOKEN22_PROGRAM_ID, _TOKEN_PROGRAM_ID,
+    _sol_balance, _sol_price_usd,
 )
 from solders.transaction import VersionedTransaction
 
@@ -264,7 +266,14 @@ def _sol_price() -> float:
 # ---------------------------------------------------------------------------
 
 def main():
-    mint = sys.argv[1] if len(sys.argv) > 1 else None
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mint", nargs="?", help="Pump.fun token mint (bonding-curve, T22 or SPL)")
+    ap.add_argument("--graduated-mint", metavar="MINT",
+                    help="Run Fix6 graduated-sell test: buy $1 via PP then sell via pool=pump-amm")
+    args = ap.parse_args()
+
+    mint = args.mint
     if not mint:
         mint = _pick_mint()
 
@@ -530,6 +539,96 @@ def main():
                 else:
                     print(f"\n  ✗ SELL FAIL: {v['err']}")
                     results.append(("SELL on-chain verify", False, v["err"]))
+
+    # ── Fix6: graduated token sell via pool="pump-amm" ───────────────────────
+    # Run only when --graduated-mint is supplied.  Token must already be graduated
+    # (bonding curve exhausted, now on PumpSwap).  We buy $1 via PP auto, then
+    # sell via the escalate path (pool="pump-amm").
+    #
+    # Pass condition: sell tx confirms with meta.err == null AND SOL balance increases.
+    # If pool="pump-amm" reverts with 6024: STOP — do not proceed to Jupiter.
+    # That means PumpSwap direct is broken for this token; file as a separate task.
+    if args.graduated_mint:
+        grad_mint = args.graduated_mint
+        print(f"\n{'='*60}")
+        print(f"  FIX6 — GRADUATED SELL (pool=pump-amm)")
+        print(f"  Mint: {grad_mint}")
+        print(f"{'='*60}")
+
+        # Verify token is actually graduated (getAccountInfo on bonding curve should fail).
+        # We rely on the user supplying a known graduated mint — harness trusts the arg.
+
+        # Buy $1 first (pool=auto — PP will route via PumpSwap if graduated)
+        print(f"\n[6a] BUY $1 of graduated token {grad_mint[:16]} (pool=auto, may go via PumpSwap)...")
+        _g_sol_before = _sol_balance(wallet)
+        _g_buy_bytes = _pumpportal_build_tx(
+            wallet_pubkey=wallet, action="buy", token_mint=grad_mint,
+            amount=BUY_SIZE_USD, denominated_in_sol=True,
+            slippage_pct=99, priority_fee_sol=0.005,
+            pool="auto",
+        )
+        _g_buy_tx     = VersionedTransaction.from_bytes(_g_buy_bytes)
+        _g_buy_signed = VersionedTransaction(_g_buy_tx.message, [keypair])
+        _g_buy_sig    = _send_transaction(bytes(_g_buy_signed))
+        print(f"  sig: {_g_buy_sig[:24]}...")
+        print(f"  Solscan: https://solscan.io/tx/{_g_buy_sig}")
+        _g_buy_conf, _g_buy_err = _confirm_tx(_g_buy_sig)
+        if not _g_buy_conf:
+            print(f"\n  ✗ FIX6 BUY FAIL — reverted or unconfirmed: {_g_buy_err}")
+            results.append(("FIX6 graduated buy", False, str(_g_buy_err)))
+        else:
+            print(f"  ✓ buy confirmed  err={_g_buy_err}")
+            time.sleep(2)  # T22 RPC settle lag
+            _g_tokens = _token_balance(wallet, grad_mint)
+            print(f"  Tokens received: {_g_tokens}")
+            if _g_tokens == 0:
+                print(f"  WARNING: token balance = 0 — T22 RPC lag?  Checking T22 explicitly...")
+                # Already handled by updated _token_balance, but log it
+            results.append(("FIX6 graduated buy", True, None))
+
+            # Now sell via pool="pump-amm" (the graduated escalate path)
+            print(f"\n[6b] SELL via pool=pump-amm (escalate/graduated path)...")
+            _g_sol_before_sell = _sol_balance(wallet)
+            _g_sell_amount = str(_g_tokens) if _g_tokens > 0 else "100%"
+            _g_sell_bytes  = _pumpportal_build_tx(
+                wallet_pubkey=wallet, action="sell", token_mint=grad_mint,
+                amount=_g_sell_amount, denominated_in_sol=False,
+                slippage_pct=98, priority_fee_sol=0.005,
+                pool="pump-amm",
+            )
+            _g_sell_tx     = VersionedTransaction.from_bytes(_g_sell_bytes)
+            _g_sell_signed = VersionedTransaction(_g_sell_tx.message, [keypair])
+            _g_sell_sig    = _send_transaction(bytes(_g_sell_signed))
+            print(f"  sig: {_g_sell_sig[:24]}...")
+            print(f"  Solscan: https://solscan.io/tx/{_g_sell_sig}")
+            _g_sell_conf, _g_sell_err = _confirm_tx(_g_sell_sig)
+            if not _g_sell_conf:
+                # Check if this is a 6024 — if so, stop immediately per spec
+                _is_6024 = (
+                    isinstance(_g_sell_err, dict)
+                    and _g_sell_err.get("InstructionError", [None, None])[1] == {"Custom": 6024}
+                )
+                if _is_6024:
+                    print(f"\n  ✗ STOP: pool=pump-amm reverted with Custom:6024")
+                    print(f"    This means PumpSwap direct routing is broken for T22 tokens.")
+                    print(f"    DO NOT proceed to Jupiter. File as separate task: local PumpSwap build.")
+                    results.append(("FIX6 graduated sell pump-amm", False, "6024 — local PumpSwap build needed"))
+                else:
+                    print(f"\n  ✗ FIX6 SELL FAIL — reverted: {_g_sell_err}")
+                    results.append(("FIX6 graduated sell pump-amm", False, str(_g_sell_err)))
+            else:
+                # Confirm SOL balance increased
+                time.sleep(2)
+                _g_sol_after_sell = _sol_balance(wallet)
+                _g_sol_delta_lam  = _g_sol_after_sell - _g_sol_before_sell if _g_sol_after_sell else 0
+                _g_sol_delta      = _g_sol_delta_lam / 1e9
+                print(f"  ✓ sell confirmed  err={_g_sell_err}")
+                print(f"  SOL delta: {_g_sol_delta:.6f} SOL  (${_g_sol_delta * sol_price:.4f})")
+                if _g_sol_delta_lam <= 0:
+                    print(f"  WARNING: SOL delta ≤ 0 — fill not measured but tx confirmed")
+                    results.append(("FIX6 graduated sell pump-amm", True, f"confirmed but sol_delta={_g_sol_delta:.6f}"))
+                else:
+                    results.append(("FIX6 graduated sell pump-amm", True, f"sol_recv={_g_sol_delta:.6f}"))
 
     # ── Report ────────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")

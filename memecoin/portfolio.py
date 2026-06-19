@@ -344,6 +344,12 @@ class Portfolio:
         self._presigned_ts:    dict = {}   # mint → last-sign time (float)
         self._presigned_lock        = threading.Lock()
         self._graduated_mints: set  = set()  # mints that traded on Raydium (not bonding curve)
+        # Per-position close lock: prevents double-sell when the 0.5s poll loop and
+        # the event-driven exit queue both fire for the same position simultaneously.
+        # Key: pos_id → Lock.  Acquired at close_position entry, released after
+        # pos.status = "closed" is set.  Second caller blocks then sees "closed" → no-op.
+        self._close_locks: dict[str, threading.Lock] = {}
+        self._close_locks_meta = threading.Lock()  # guards _close_locks dict itself
         # sell_stuck throttle: pos_id → earliest time to retry sell
         # In-memory only — resets on restart (which itself gives a fresh attempt).
         self._sell_stuck_until: dict[str, float] = {}
@@ -364,19 +370,18 @@ class Portfolio:
         Build and sign the emergency sell tx for a held mint and store it.
 
         Bonding-curve tokens (is_graduated=False):
-          PumpPortal 98% slippage, 0.005 SOL fee.  PumpPortal re-fetches the
-          latest blockhash server-side so the tx stays valid through 45s refresh.
+          PumpPortal pool="auto", 98% slippage, 0.005 SOL fee.  PumpPortal
+          re-fetches the latest blockhash server-side → valid through 45s refresh.
 
         Graduated tokens (is_graduated=True):
-          PumpPortal rejects these with Custom:6005.  Build Jupiter 99% slippage
-          tx instead.  Jupiter embeds a blockhash that expires in ~60s, so these
-          are refreshed every 30s (vs 45s for PumpPortal).
+          pool="auto" returns Custom:6005 (tries bonding curve, fails).
+          Use pool="pump-amm" (PumpSwap direct) instead — same PP trade-local
+          API, same 45s blockhash TTL, no Jupiter needed.
         """
         try:
             from memecoin.executor import (
                 _get_keypair, _load_solders, _pumpportal_build_tx,
-                _jup_get_quote, _jup_build_swap_tx, _helius_priority_fee,
-                _token_balance, SOL_MINT, EXECUTOR_BACKEND,
+                _helius_priority_fee, EXECUTOR_BACKEND,
             )
             if EXECUTOR_BACKEND != "pumpportal":
                 return
@@ -386,23 +391,24 @@ class Portfolio:
             wallet  = str(keypair.pubkey())
 
             if is_graduated:
-                # Graduated token — PumpPortal will reject with 6005.
-                # Build a Jupiter presigned exit at 99% slippage instead.
+                # Graduated token — pool="auto" returns Custom:6005 (bonding curve path).
+                # Use pool="pump-amm" (PumpSwap direct) for the presigned exit.
+                # PumpPortal re-fetches blockhash server-side → stays valid ~90s.
                 try:
-                    balance = _token_balance(wallet, mint)
-                    if not balance:
-                        log.debug("Presigned Jupiter exit skipped — zero balance  mint=%s", mint[:8])
-                        return
-                    _jup_fee = max(_helius_priority_fee(mint, "UnsafeMax"), 0.005)
-                    quote    = _jup_get_quote(mint, SOL_MINT, balance)
-                    tx_bytes = _jup_build_swap_tx(
-                        quote, wallet,
-                        slippage_bps=9900,
-                        priority_fee_lamports=int(_jup_fee * 1e9),
+                    _grad_fee = max(_helius_priority_fee(mint, "UnsafeMax"), 0.005)
+                    tx_bytes  = _pumpportal_build_tx(
+                        wallet_pubkey=wallet,
+                        action="sell",
+                        token_mint=mint,
+                        amount="100%",
+                        denominated_in_sol=False,
+                        slippage_pct=98,
+                        priority_fee_sol=_grad_fee,
+                        pool="pump-amm",
                     )
-                    _path = "Jupiter"
-                except Exception as _jup_e:
-                    log.warning("Presigned Jupiter exit build failed for %s: %s", mint[:8], _jup_e)
+                    _path = "PumpPortal/pump-amm"
+                except Exception as _pamm_e:
+                    log.warning("Presigned pump-amm exit build failed for %s: %s", mint[:8], _pamm_e)
                     return
             else:
                 tx_bytes = _pumpportal_build_tx(
@@ -444,8 +450,9 @@ class Portfolio:
     def _presigned_refresh_loop(self) -> None:
         """Refresh presigned exits periodically.
 
-        PumpPortal exits: every 45s (server-side blockhash refresh, ~90s TTL).
-        Jupiter exits:    every 30s (embedded blockhash expires in ~60s).
+        All exits now use PumpPortal trade-local (server-side blockhash refresh, ~90s TTL).
+        Bonding-curve tokens: pool="auto",      refresh every 45s.
+        Graduated tokens:     pool="pump-amm",  refresh every 45s (same TTL).
         """
         _last_refresh = 0.0
         while True:
@@ -456,7 +463,7 @@ class Portfolio:
                 grad_set = set(self._graduated_mints)
             for mint in mints:
                 is_grad  = mint in grad_set
-                interval = 30 if is_grad else 45
+                interval = 45  # same for both; PP re-fetches blockhash server-side
                 with self._presigned_lock:
                     last_ts = self._presigned_ts.get(mint, 0)
                 if now - last_ts >= interval:
@@ -1198,28 +1205,48 @@ class Portfolio:
 
     def close_position(self, pos_id: str, reason: str,
                        price: float = 0.0) -> Optional[Position]:
+        # Fast pre-check without the per-position lock — eliminates lock allocation
+        # overhead for already-closed positions on the hot monitor path.
         pos = self._positions.get(pos_id)
         if not pos or pos.status == "closed":
             return None
 
-        # sell_stuck throttle: position is stuck waiting for a sell to confirm.
-        # The monitor will re-trigger close_position every cycle — rate-limit retries
-        # to 60s so we don't hammer the RPC with back-to-back submissions.
-        if pos.status == "sell_stuck":
-            _retry_at = self._sell_stuck_until.get(pos_id, 0)
-            if time.time() < _retry_at:
-                return pos   # too soon — skip this cycle
-            # Reset for the next ladder attempt
-            pos.status = "open"
-            pos.sell_attempts = 0
-            self._sell_stuck_until.pop(pos_id, None)
-            log.info("SELL STUCK retry window open for %s", pos.token_symbol)
+        # Per-position lock: prevents double-sell when the 0.5s poll loop and the
+        # event-driven exit queue both fire simultaneously for the same position.
+        # Second caller blocks here, then re-checks status and finds "closed" → no-op.
+        with self._close_locks_meta:
+            if pos_id not in self._close_locks:
+                self._close_locks[pos_id] = threading.Lock()
+            _pos_lock = self._close_locks[pos_id]
 
-        pos.exit_price = price or pos.current_price
-        pos.exit_time  = time.time()
-        pos.exit_reason = reason
-        pos.status = "closed"
-        self._jup_fallback_since.pop(pos_id, None)  # clean up dex_pair_loss tracker
+        with _pos_lock:
+            # Re-read inside lock — another thread may have closed it while we waited.
+            pos = self._positions.get(pos_id)
+            if not pos or pos.status == "closed":
+                return None
+
+            # sell_stuck throttle: position is stuck waiting for a sell to confirm.
+            # The monitor will re-trigger close_position every cycle — rate-limit retries
+            # to 60s so we don't hammer the RPC with back-to-back submissions.
+            if pos.status == "sell_stuck":
+                _retry_at = self._sell_stuck_until.get(pos_id, 0)
+                if time.time() < _retry_at:
+                    return pos   # too soon — skip this cycle
+                # Reset for the next ladder attempt
+                pos.status = "open"
+                pos.sell_attempts = 0
+                self._sell_stuck_until.pop(pos_id, None)
+                log.info("SELL STUCK retry window open for %s", pos.token_symbol)
+
+            # Set status="closed" atomically inside the lock so any concurrent call
+            # (0.5s poll loop and event-driven exit queue) sees it immediately.
+            # The actual on-chain sell below happens outside the lock; on failure
+            # the sell path restores status to "open" or "sell_stuck" safely.
+            pos.exit_price = price or pos.current_price
+            pos.exit_time  = time.time()
+            pos.exit_reason = reason
+            pos.status = "closed"
+            self._jup_fallback_since.pop(pos_id, None)  # clean up dex_pair_loss tracker
 
         # Live execution gate — only sell on-chain if this position was a live buy
         _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
@@ -1292,12 +1319,12 @@ class Portfolio:
                     ex     = MemeExecutor()
                     # escalate=True when:
                     #   (a) this is a retry — previous full ladder failed
-                    #   (b) token is graduated (cohort:graduated in notes) — PumpPortal rejects
-                    #       graduated tokens with Custom:6005 at any slippage; skip straight to Jupiter
+                    #   (b) token is graduated (cohort:graduated in notes) — pool="auto" returns
+                    #       Custom:6005; executor escalate path uses pump-amm → Jupiter fallback
                     _is_retry     = getattr(pos, "sell_attempts", 0) > 0
                     _is_graduated = "|cohort:graduated" in (pos.notes or "")
                     if _is_graduated and not _is_retry:
-                        log.info("SELL graduated token — skipping PumpPortal ladder, going straight to Jupiter  token=%s",
+                        log.info("SELL graduated token — pump-amm PRIMARY, Jupiter FALLBACK  token=%s",
                                  pos.token_address[:8])
                     result = ex.sell(
                         pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
@@ -1336,6 +1363,23 @@ class Portfolio:
                         log.warning("Live sell %s — zero balance, tokens already sold. Closing.",
                                     pos.token_symbol)
                         pos.notes = (pos.notes or "") + "|sell_already_gone"
+                    elif result.get("reason") == "graduated_unsellable":
+                        # pump-amm + Jupiter both failed — executor already sent alert.
+                        # Go directly to sell_stuck (no retry loop — retrying would just
+                        # burn fees again on the same unsellable token).
+                        pos.status = "sell_stuck"
+                        pos.exit_price  = 0.0
+                        pos.exit_time   = 0.0
+                        pos.exit_reason = ""
+                        pos.sell_attempts = 0
+                        if "|graduated_unsellable" not in (pos.notes or ""):
+                            pos.notes = (pos.notes or "") + "|graduated_unsellable"
+                        self._positions[pos_id] = pos
+                        self._sell_stuck_until[pos_id] = time.time() + 60
+                        _save_positions(self._positions)
+                        log.error("SELL STUCK (graduated_unsellable) %s — pump-amm + Jupiter failed, "
+                                  "retry in 60s.  mint=%s", pos.token_symbol, pos.token_address)
+                        return pos
                     else:
                         # Sell failed or unconfirmed — retry up to MAX_SELL_RETRIES
                         pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
