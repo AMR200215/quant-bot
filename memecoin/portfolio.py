@@ -1101,8 +1101,8 @@ class Portfolio:
                 try:
                     from app.alerts import alert_live_buy
                     alert_live_buy(live_pos, result.get("tx_sig",""), result.get("sol_spent", _live_size / 70))
-                except Exception:
-                    pass
+                except Exception as _alert_err:
+                    log.warning("alert_live_buy failed: %s", _alert_err)
                 # ── Wire creator wallet ───────────────────────────────────────
                 # If already resolved (type-1 or resolved type-2) → wire immediately.
                 # Otherwise → background fetch (should only be non-social_alert paths
@@ -1305,6 +1305,16 @@ class Portfolio:
                                             pos.token_symbol, _psig[:16], _perr)
                                 pos.notes += "|presigned_unconf"
                             _presigned_used = True
+                            # Alert for presigned exits (feed_blind, hard_stop, etc.)
+                            # The ladder path has its own alert at the sell confirm block.
+                            try:
+                                from app.alerts import alert_live_sell
+                                # sol_received not measured for presigned — use 0 as placeholder.
+                                # Append unconf flag to sig so alert shows uncertainty if needed.
+                                _psig_tag = _psig if _pconf else f"{_psig}(unconf)"
+                                alert_live_sell(pos, 0.0, _psig_tag)
+                            except Exception as _alert_err:
+                                log.warning("alert_live_sell (presigned) failed: %s", _alert_err)
                         except Exception as _pe:
                             log.warning(
                                 "Presigned exit send failed %s: %s — falling back to ladder",
