@@ -274,7 +274,11 @@ def main():
     args = ap.parse_args()
 
     mint = args.mint
-    if not mint:
+    # When only --graduated-mint is given, skip the main buy/sell test entirely.
+    # The main test requires an active bonding-curve token; if none is supplied and
+    # DexScreener is rate-limited, _pick_mint() fails. Graduate-only mode avoids that.
+    _grad_only = (not mint and args.graduated_mint)
+    if not mint and not _grad_only:
         mint = _pick_mint()
 
     keypair    = _get_keypair()
@@ -284,7 +288,10 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"  EXECUTION VERIFICATION HARNESS")
-    print(f"  Mint:   {mint}")
+    if mint:
+        print(f"  Mint:   {mint}")
+    if args.graduated_mint:
+        print(f"  Grad:   {args.graduated_mint}")
     print(f"  Wallet: {wallet}")
     print(f"  SOL:    ${sol_price}")
     print(f"  Buy:    ${BUY_SIZE_USD}")
@@ -292,254 +299,258 @@ def main():
 
     results = []
 
-    # ── Pre-run cleanup: sell any leftover balance ────────────────────────────
-    # Previous test runs may have left tokens in the wallet. Sell them first
-    # so balance checks don't produce misleading deltas.
-    _pre_bal = _token_balance(wallet, mint)
-    if _pre_bal > 0:
-        print(f"\n[0] CLEANUP: {_pre_bal} tokens found — selling before test...")
-        try:
-            _clean_bytes = _pumpportal_build_tx(
-                wallet_pubkey=wallet, action="sell", token_mint=mint,
-                amount="100%", denominated_in_sol=False,
-                slippage_pct=80, priority_fee_sol=0.002,
-            )
-            from solders.transaction import VersionedTransaction as _VTClean
-            _clean_tx = _VTClean.from_bytes(_clean_bytes)
-            _clean_signed = _VTClean(_clean_tx.message, [keypair])
-            _clean_sig = _send_transaction(bytes(_clean_signed))
-            _clean_ok, _clean_err = _confirm_tx(_clean_sig)
-            print(f"  cleanup sell: confirmed={_clean_ok}  err={_clean_err}")
-            time.sleep(3)
-        except Exception as _ce:
-            print(f"  cleanup failed (non-blocking): {_ce}")
+    if _grad_only:
+        print("  Mode: Fix6 graduated-sell only (skipping main buy/sell test)")
 
-    # ── Step 1: BUY ──────────────────────────────────────────────────────────
-    print(f"\n[1] BUY ${BUY_SIZE_USD} of {mint[:16]}...")
-    tokens_before = _token_balance(wallet, mint)
+    if not _grad_only:
+        # ── Pre-run cleanup: sell any leftover balance ────────────────────────
+        # Previous test runs may have left tokens in the wallet. Sell them first
+        # so balance checks don't produce misleading deltas.
+        _pre_bal = _token_balance(wallet, mint)
+        if _pre_bal > 0:
+            print(f"\n[0] CLEANUP: {_pre_bal} tokens found — selling before test...")
+            try:
+                _clean_bytes = _pumpportal_build_tx(
+                    wallet_pubkey=wallet, action="sell", token_mint=mint,
+                    amount="100%", denominated_in_sol=False,
+                    slippage_pct=80, priority_fee_sol=0.002,
+                )
+                from solders.transaction import VersionedTransaction as _VTClean
+                _clean_tx = _VTClean.from_bytes(_clean_bytes)
+                _clean_signed = _VTClean(_clean_tx.message, [keypair])
+                _clean_sig = _send_transaction(bytes(_clean_signed))
+                _clean_ok, _clean_err = _confirm_tx(_clean_sig)
+                print(f"  cleanup sell: confirmed={_clean_ok}  err={_clean_err}")
+                time.sleep(3)
+            except Exception as _ce:
+                print(f"  cleanup failed (non-blocking): {_ce}")
 
-    buy_result = ex.buy(
-        token_address=mint,
-        size_usd=BUY_SIZE_USD,
-        chain="solana",
-        signal_price=0,         # no slippage gate for this test
-        max_slippage_pct=1.0,   # 100% — let it go through no matter what
-    )
+        # ── Step 1: BUY ──────────────────────────────────────────────────────
+        print(f"\n[1] BUY ${BUY_SIZE_USD} of {mint[:16]}...")
+        tokens_before = _token_balance(wallet, mint)
 
-    print(f"  executor returned: {json.dumps({k: v for k, v in buy_result.items() if k != 'timing'}, default=str)}")
-    if buy_result.get("timing"):
-        t = buy_result["timing"]
-        print(f"  timing: quote={t.get('t_quote'):.2f}s  submit={t.get('t_submit'):.2f}s  confirm={t.get('t_confirm'):.2f}s")
-
-    if not buy_result.get("success"):
-        # Executor reported failure — but check if tokens arrived anyway (confirm lag)
-        time.sleep(2)  # give RPC index time to catch up
-        tokens_after_fail = _token_balance(wallet, mint)
-        if tokens_after_fail > 0:
-            print(f"\n  Note: executor reported '{buy_result.get('reason')}' but found {tokens_after_fail} tokens — treating as success")
-            buy_result = {
-                "success":            True,
-                "tx_sig":             buy_result.get("tx_sig", ""),
-                "fill_price":         buy_result.get("jupiter_quote_price") or 0,
-                "tokens_received_raw": tokens_after_fail,
-            }
-        else:
-            print(f"\n  FAIL: executor reported failure — {buy_result.get('reason') or buy_result.get('error')}")
-            results.append(("BUY executor", False, buy_result.get("reason") or buy_result.get("error")))
-
-    if buy_result.get("success"):
-        buy_sig          = buy_result.get("tx_sig", "")
-        executor_fill    = buy_result.get("fill_price") or 0
-
-        # Give RPC index time to reflect new token accounts (T22 lag ~1-3s post-confirm)
-        time.sleep(2)
-        tokens_after     = _token_balance(wallet, mint)
-        tokens_received  = buy_result.get("tokens_received_raw") or max(0, tokens_after - tokens_before)
-
-        print(f"\n  Solscan: https://solscan.io/tx/{buy_sig}")
-        print(f"  Executor fill:  ${executor_fill:.10f}")
-        print(f"  Balance before: {tokens_before}")
-        print(f"  Balance after:  {tokens_after}")
-        print(f"  Tokens (executor): {tokens_received}")
-
-        # Wait for finalization before getTransaction
-        print("  Waiting 5s for finalization...")
-        time.sleep(5)
-
-        v = _verify_buy(buy_sig, mint, wallet, BUY_SIZE_USD, executor_fill)
-        if v["ok"]:
-            print(f"\n  ✓ BUY PASS")
-            print(f"    meta.err:    null")
-            print(f"    chain fill:  ${v['chain_fill']:.10f}")
-            print(f"    match:       within tolerance")
-            results.append(("BUY on-chain verify", True, None))
-        else:
-            # If only fill price mismatch (tx DID land, tokens DID arrive), warn not fail
-            if "mismatch" in (v.get("err") or "") and v.get("chain_fill", 0) > 0:
-                print(f"\n  ✓ BUY PASS (fill mismatch is fee overhead, not an error)")
-                print(f"    meta.err:    null")
-                print(f"    chain fill:  ${v['chain_fill']:.10f}  executor fill:  ${executor_fill:.10f}")
-                print(f"    Note: {v['err']}")
-                results.append(("BUY on-chain verify", True, f"fill match warn: {v['err']}"))
-            else:
-                print(f"\n  ✗ BUY FAIL: {v['err']}")
-                results.append(("BUY on-chain verify", False, v["err"]))
-
-    # ── Step 2a: Fix 4 — Presigned exit (build once, send instantly) ─────────
-    # Simulates what _build_presigned_exit stores: a step-3 sell tx (98% slippage,
-    # 0.005 SOL fee) built immediately after buy, then sent on stop-loss trigger.
-    # Goal: detect→send latency shows build is off critical path.
-    print(f"\n[2a] FIX 4 — Presigned exit test for {mint[:16]}...")
-    tokens_to_sell = _token_balance(wallet, mint)
-    # T22 accounts may lag in RPC index; fall back to executor's reported raw count
-    if tokens_to_sell == 0 and buy_result.get("tokens_received_raw", 0) > 0:
-        tokens_to_sell = buy_result["tokens_received_raw"]
-        print(f"  Token balance: 0 (RPC lag) — using executor reported: {tokens_to_sell}")
-    else:
-        print(f"  Token balance: {tokens_to_sell}")
-
-    _presigned_sell_sig = None
-    if tokens_to_sell == 0:
-        print("  SKIP: zero token balance")
-        results.append(("FIX4 presigned exit", False, "zero balance — buy failed"))
-    else:
-        # Build the presigned tx (simulates _build_presigned_exit)
-        print("  Building presigned sell tx (PP step-3: 98% slippage, 0.005 SOL fee)...")
-        t_build_start = time.time()
-        try:
-            _ps_bytes = _pumpportal_build_tx(
-                wallet_pubkey=wallet,
-                action="sell",
-                token_mint=mint,
-                amount="100%",
-                denominated_in_sol=False,
-                slippage_pct=98,
-                priority_fee_sol=0.005,
-            )
-            keypair_obj = _get_keypair()
-            _ps_tx      = VersionedTransaction.from_bytes(_ps_bytes)
-            _ps_signed  = VersionedTransaction(_ps_tx.message, [keypair_obj])
-            _ps_signed_bytes = bytes(_ps_signed)
-            t_build_ms  = (time.time() - t_build_start) * 1000
-            print(f"  Build time (presign phase): {t_build_ms:.0f}ms")
-
-            # Now simulate "stop detected" → send presigned (should be <20ms)
-            t_detect    = time.time()
-            _presigned_sell_sig = _send_transaction(_ps_signed_bytes)
-            t_send_ms   = (time.time() - t_detect) * 1000
-            print(f"  detect→send latency: {t_send_ms:.0f}ms  (target <20ms)")
-            print(f"  Solscan: https://solscan.io/tx/{_presigned_sell_sig}")
-
-            print("  Waiting 5s for finalization...")
-            time.sleep(5)
-
-            v = _verify_sell(_presigned_sell_sig, mint, wallet, tokens_to_sell, 0, sol_price)
-            if v["ok"]:
-                print(f"\n  ✓ FIX4 PASS — presigned exit landed, detect→send={t_send_ms:.0f}ms")
-                results.append(("FIX4 presigned exit", True, f"detect→send={t_send_ms:.0f}ms"))
-            else:
-                print(f"\n  ✗ FIX4 FAIL: {v['err']}")
-                results.append(("FIX4 presigned exit", False, v["err"]))
-        except Exception as _pe:
-            print(f"\n  ✗ FIX4 FAIL (exception): {_pe}")
-            results.append(("FIX4 presigned exit", False, str(_pe)))
-
-    # ── Step 2b: Fix 5 — Buy+sell executor path ──────────────────────────────
-    # Fix 5 originally aimed to build local pump.fun instructions, but pump.fun
-    # migrated all new tokens to Token-2022 with a new program (FAdo9NCw...) in
-    # 2025. Local build is kept for historical SPL-Token mints; all current T22
-    # tokens route through PumpPortal (which handles both programs via pool="auto").
-    #
-    # What we verify here:
-    # - buy→sell round-trip succeeds end-to-end via executor (PP or local build)
-    # - meta.err==null, SOL delta > 0, fill match < 1%
-    # - No phantom positions (tokens not stuck in wallet after sell)
-    from memecoin.executor import _mint_token_program_cache, _TOKEN22_PROGRAM_ID, _TOKEN_PROGRAM_ID
-    _tok_prog_label = "T22/PP" if _mint_token_program_cache.get(mint) == _TOKEN22_PROGRAM_ID else "SPL/local"
-    print(f"\n[2b] FIX 5 — Buy+sell end-to-end ({_tok_prog_label} path)")
-
-    # Buy again if presigned consumed our tokens
-    if _presigned_sell_sig:
-        print(f"\n  Presigned sell consumed tokens. Buying again for sell test...")
-        buy2 = ex.buy(
+        buy_result = ex.buy(
             token_address=mint,
             size_usd=BUY_SIZE_USD,
             chain="solana",
-            signal_price=0,
-            max_slippage_pct=1.0,
+            signal_price=0,         # no slippage gate for this test
+            max_slippage_pct=1.0,   # 100% — let it go through no matter what
         )
-        print(f"  Buy2: {json.dumps({k: v for k, v in buy2.items() if k != 'timing'}, default=str)}")
-        if not buy2.get("success"):
-            # Buy2 executor returned failure, but check if tokens arrived anyway
-            tokens2 = _token_balance(wallet, mint)
-            if tokens2 == 0:
-                results.append(("FIX5 buy+sell", False, f"buy2 failed: {buy2.get('reason')} and zero balance"))
+    
+        print(f"  executor returned: {json.dumps({k: v for k, v in buy_result.items() if k != 'timing'}, default=str)}")
+        if buy_result.get("timing"):
+            t = buy_result["timing"]
+            print(f"  timing: quote={t.get('t_quote'):.2f}s  submit={t.get('t_submit'):.2f}s  confirm={t.get('t_confirm'):.2f}s")
+    
+        if not buy_result.get("success"):
+            # Executor reported failure — but check if tokens arrived anyway (confirm lag)
+            time.sleep(2)  # give RPC index time to catch up
+            tokens_after_fail = _token_balance(wallet, mint)
+            if tokens_after_fail > 0:
+                print(f"\n  Note: executor reported '{buy_result.get('reason')}' but found {tokens_after_fail} tokens — treating as success")
+                buy_result = {
+                    "success":            True,
+                    "tx_sig":             buy_result.get("tx_sig", ""),
+                    "fill_price":         buy_result.get("jupiter_quote_price") or 0,
+                    "tokens_received_raw": tokens_after_fail,
+                }
             else:
-                print(f"  Note: buy2 reported '{buy2.get('reason')}' but found {tokens2} tokens — tx landed late")
-                buy2 = {"success": True, "fill_price": 0}  # treat as success
-        if buy2.get("success"):
-            tokens2 = _token_balance(wallet, mint)
-            if tokens2 == 0:
-                results.append(("FIX5 buy+sell", False, "zero balance after buy2"))
+                print(f"\n  FAIL: executor reported failure — {buy_result.get('reason') or buy_result.get('error')}")
+                results.append(("BUY executor", False, buy_result.get("reason") or buy_result.get("error")))
+    
+        if buy_result.get("success"):
+            buy_sig          = buy_result.get("tx_sig", "")
+            executor_fill    = buy_result.get("fill_price") or 0
+    
+            # Give RPC index time to reflect new token accounts (T22 lag ~1-3s post-confirm)
+            time.sleep(2)
+            tokens_after     = _token_balance(wallet, mint)
+            tokens_received  = buy_result.get("tokens_received_raw") or max(0, tokens_after - tokens_before)
+    
+            print(f"\n  Solscan: https://solscan.io/tx/{buy_sig}")
+            print(f"  Executor fill:  ${executor_fill:.10f}")
+            print(f"  Balance before: {tokens_before}")
+            print(f"  Balance after:  {tokens_after}")
+            print(f"  Tokens (executor): {tokens_received}")
+    
+            # Wait for finalization before getTransaction
+            print("  Waiting 5s for finalization...")
+            time.sleep(5)
+    
+            v = _verify_buy(buy_sig, mint, wallet, BUY_SIZE_USD, executor_fill)
+            if v["ok"]:
+                print(f"\n  ✓ BUY PASS")
+                print(f"    meta.err:    null")
+                print(f"    chain fill:  ${v['chain_fill']:.10f}")
+                print(f"    match:       within tolerance")
+                results.append(("BUY on-chain verify", True, None))
             else:
-                # Now sell via executor
-                print(f"\n  Selling {tokens2} tokens via executor...")
-                sell_result2 = ex.sell(
-                    token_address=mint,
-                    size_usd=BUY_SIZE_USD,
-                    entry_price=buy2.get("fill_price") or 0,
-                    chain="solana",
-                    known_token_count=tokens2,
-                )
-                print(f"  executor returned: {json.dumps(sell_result2, default=str)}")
-                if not sell_result2.get("success"):
-                    results.append(("FIX5 buy+sell", False, sell_result2.get("reason") or sell_result2.get("error")))
+                # If only fill price mismatch (tx DID land, tokens DID arrive), warn not fail
+                if "mismatch" in (v.get("err") or "") and v.get("chain_fill", 0) > 0:
+                    print(f"\n  ✓ BUY PASS (fill mismatch is fee overhead, not an error)")
+                    print(f"    meta.err:    null")
+                    print(f"    chain fill:  ${v['chain_fill']:.10f}  executor fill:  ${executor_fill:.10f}")
+                    print(f"    Note: {v['err']}")
+                    results.append(("BUY on-chain verify", True, f"fill match warn: {v['err']}"))
                 else:
-                    sell_sig2 = sell_result2.get("tx_sig", "")
-                    print(f"  Solscan: https://solscan.io/tx/{sell_sig2}")
-                    print("  Waiting 5s for finalization...")
-                    time.sleep(5)
-                    v2 = _verify_sell(sell_sig2, mint, wallet, tokens2, sell_result2.get("fill_price") or 0, sol_price)
-                    if v2["ok"]:
-                        print(f"\n  ✓ FIX5 PASS — buy+sell round-trip ({_tok_prog_label})")
-                        results.append(("FIX5 buy+sell", True, f"path={_tok_prog_label}"))
-                    else:
-                        print(f"\n  ✗ FIX5 FAIL: {v2['err']}")
-                        results.append(("FIX5 buy+sell", False, v2["err"]))
-    else:
-        # Presigned sell didn't run — sell remaining tokens via executor
-        print(f"\n[2] SELL (executor path — {_tok_prog_label})...")
-        tokens_to_sell2 = _token_balance(wallet, mint)
-        print(f"  Balance: {tokens_to_sell2}")
-        if tokens_to_sell2 == 0:
-            print("  SKIP: zero token balance")
-            results.append(("SELL on-chain verify", False, "zero balance"))
+                    print(f"\n  ✗ BUY FAIL: {v['err']}")
+                    results.append(("BUY on-chain verify", False, v["err"]))
+    
+        # ── Step 2a: Fix 4 — Presigned exit (build once, send instantly) ─────────
+        # Simulates what _build_presigned_exit stores: a step-3 sell tx (98% slippage,
+        # 0.005 SOL fee) built immediately after buy, then sent on stop-loss trigger.
+        # Goal: detect→send latency shows build is off critical path.
+        print(f"\n[2a] FIX 4 — Presigned exit test for {mint[:16]}...")
+        tokens_to_sell = _token_balance(wallet, mint)
+        # T22 accounts may lag in RPC index; fall back to executor's reported raw count
+        if tokens_to_sell == 0 and buy_result.get("tokens_received_raw", 0) > 0:
+            tokens_to_sell = buy_result["tokens_received_raw"]
+            print(f"  Token balance: 0 (RPC lag) — using executor reported: {tokens_to_sell}")
         else:
-            sell_result = ex.sell(
-                token_address=mint,
-                size_usd=BUY_SIZE_USD,
-                entry_price=buy_result.get("fill_price") or 0,
-                chain="solana",
-                known_token_count=tokens_to_sell2,
-            )
-            print(f"  executor returned: {json.dumps(sell_result, default=str)}")
-            if not sell_result.get("success"):
-                results.append(("SELL on-chain verify", False, sell_result.get("reason") or sell_result.get("error")))
-            else:
-                sell_sig      = sell_result.get("tx_sig", "")
-                executor_fill = sell_result.get("fill_price") or 0
-                print(f"  Solscan: https://solscan.io/tx/{sell_sig}")
+            print(f"  Token balance: {tokens_to_sell}")
+    
+        _presigned_sell_sig = None
+        if tokens_to_sell == 0:
+            print("  SKIP: zero token balance")
+            results.append(("FIX4 presigned exit", False, "zero balance — buy failed"))
+        else:
+            # Build the presigned tx (simulates _build_presigned_exit)
+            print("  Building presigned sell tx (PP step-3: 98% slippage, 0.005 SOL fee)...")
+            t_build_start = time.time()
+            try:
+                _ps_bytes = _pumpportal_build_tx(
+                    wallet_pubkey=wallet,
+                    action="sell",
+                    token_mint=mint,
+                    amount="100%",
+                    denominated_in_sol=False,
+                    slippage_pct=98,
+                    priority_fee_sol=0.005,
+                )
+                keypair_obj = _get_keypair()
+                _ps_tx      = VersionedTransaction.from_bytes(_ps_bytes)
+                _ps_signed  = VersionedTransaction(_ps_tx.message, [keypair_obj])
+                _ps_signed_bytes = bytes(_ps_signed)
+                t_build_ms  = (time.time() - t_build_start) * 1000
+                print(f"  Build time (presign phase): {t_build_ms:.0f}ms")
+    
+                # Now simulate "stop detected" → send presigned (should be <20ms)
+                t_detect    = time.time()
+                _presigned_sell_sig = _send_transaction(_ps_signed_bytes)
+                t_send_ms   = (time.time() - t_detect) * 1000
+                print(f"  detect→send latency: {t_send_ms:.0f}ms  (target <20ms)")
+                print(f"  Solscan: https://solscan.io/tx/{_presigned_sell_sig}")
+    
                 print("  Waiting 5s for finalization...")
                 time.sleep(5)
-                v = _verify_sell(sell_sig, mint, wallet, tokens_to_sell2, executor_fill, sol_price)
+    
+                v = _verify_sell(_presigned_sell_sig, mint, wallet, tokens_to_sell, 0, sol_price)
                 if v["ok"]:
-                    print(f"\n  ✓ SELL PASS")
-                    print(f"    chain fill: ${v.get('chain_fill', 0):.10f}")
-                    results.append(("SELL on-chain verify", True, None))
+                    print(f"\n  ✓ FIX4 PASS — presigned exit landed, detect→send={t_send_ms:.0f}ms")
+                    results.append(("FIX4 presigned exit", True, f"detect→send={t_send_ms:.0f}ms"))
                 else:
-                    print(f"\n  ✗ SELL FAIL: {v['err']}")
-                    results.append(("SELL on-chain verify", False, v["err"]))
-
+                    print(f"\n  ✗ FIX4 FAIL: {v['err']}")
+                    results.append(("FIX4 presigned exit", False, v["err"]))
+            except Exception as _pe:
+                print(f"\n  ✗ FIX4 FAIL (exception): {_pe}")
+                results.append(("FIX4 presigned exit", False, str(_pe)))
+    
+        # ── Step 2b: Fix 5 — Buy+sell executor path ──────────────────────────────
+        # Fix 5 originally aimed to build local pump.fun instructions, but pump.fun
+        # migrated all new tokens to Token-2022 with a new program (FAdo9NCw...) in
+        # 2025. Local build is kept for historical SPL-Token mints; all current T22
+        # tokens route through PumpPortal (which handles both programs via pool="auto").
+        #
+        # What we verify here:
+        # - buy→sell round-trip succeeds end-to-end via executor (PP or local build)
+        # - meta.err==null, SOL delta > 0, fill match < 1%
+        # - No phantom positions (tokens not stuck in wallet after sell)
+        from memecoin.executor import _mint_token_program_cache, _TOKEN22_PROGRAM_ID, _TOKEN_PROGRAM_ID
+        _tok_prog_label = "T22/PP" if _mint_token_program_cache.get(mint) == _TOKEN22_PROGRAM_ID else "SPL/local"
+        print(f"\n[2b] FIX 5 — Buy+sell end-to-end ({_tok_prog_label} path)")
+    
+        # Buy again if presigned consumed our tokens
+        if _presigned_sell_sig:
+            print(f"\n  Presigned sell consumed tokens. Buying again for sell test...")
+            buy2 = ex.buy(
+                token_address=mint,
+                size_usd=BUY_SIZE_USD,
+                chain="solana",
+                signal_price=0,
+                max_slippage_pct=1.0,
+            )
+            print(f"  Buy2: {json.dumps({k: v for k, v in buy2.items() if k != 'timing'}, default=str)}")
+            if not buy2.get("success"):
+                # Buy2 executor returned failure, but check if tokens arrived anyway
+                tokens2 = _token_balance(wallet, mint)
+                if tokens2 == 0:
+                    results.append(("FIX5 buy+sell", False, f"buy2 failed: {buy2.get('reason')} and zero balance"))
+                else:
+                    print(f"  Note: buy2 reported '{buy2.get('reason')}' but found {tokens2} tokens — tx landed late")
+                    buy2 = {"success": True, "fill_price": 0}  # treat as success
+            if buy2.get("success"):
+                tokens2 = _token_balance(wallet, mint)
+                if tokens2 == 0:
+                    results.append(("FIX5 buy+sell", False, "zero balance after buy2"))
+                else:
+                    # Now sell via executor
+                    print(f"\n  Selling {tokens2} tokens via executor...")
+                    sell_result2 = ex.sell(
+                        token_address=mint,
+                        size_usd=BUY_SIZE_USD,
+                        entry_price=buy2.get("fill_price") or 0,
+                        chain="solana",
+                        known_token_count=tokens2,
+                    )
+                    print(f"  executor returned: {json.dumps(sell_result2, default=str)}")
+                    if not sell_result2.get("success"):
+                        results.append(("FIX5 buy+sell", False, sell_result2.get("reason") or sell_result2.get("error")))
+                    else:
+                        sell_sig2 = sell_result2.get("tx_sig", "")
+                        print(f"  Solscan: https://solscan.io/tx/{sell_sig2}")
+                        print("  Waiting 5s for finalization...")
+                        time.sleep(5)
+                        v2 = _verify_sell(sell_sig2, mint, wallet, tokens2, sell_result2.get("fill_price") or 0, sol_price)
+                        if v2["ok"]:
+                            print(f"\n  ✓ FIX5 PASS — buy+sell round-trip ({_tok_prog_label})")
+                            results.append(("FIX5 buy+sell", True, f"path={_tok_prog_label}"))
+                        else:
+                            print(f"\n  ✗ FIX5 FAIL: {v2['err']}")
+                            results.append(("FIX5 buy+sell", False, v2["err"]))
+        else:
+            # Presigned sell didn't run — sell remaining tokens via executor
+            print(f"\n[2] SELL (executor path — {_tok_prog_label})...")
+            tokens_to_sell2 = _token_balance(wallet, mint)
+            print(f"  Balance: {tokens_to_sell2}")
+            if tokens_to_sell2 == 0:
+                print("  SKIP: zero token balance")
+                results.append(("SELL on-chain verify", False, "zero balance"))
+            else:
+                sell_result = ex.sell(
+                    token_address=mint,
+                    size_usd=BUY_SIZE_USD,
+                    entry_price=buy_result.get("fill_price") or 0,
+                    chain="solana",
+                    known_token_count=tokens_to_sell2,
+                )
+                print(f"  executor returned: {json.dumps(sell_result, default=str)}")
+                if not sell_result.get("success"):
+                    results.append(("SELL on-chain verify", False, sell_result.get("reason") or sell_result.get("error")))
+                else:
+                    sell_sig      = sell_result.get("tx_sig", "")
+                    executor_fill = sell_result.get("fill_price") or 0
+                    print(f"  Solscan: https://solscan.io/tx/{sell_sig}")
+                    print("  Waiting 5s for finalization...")
+                    time.sleep(5)
+                    v = _verify_sell(sell_sig, mint, wallet, tokens_to_sell2, executor_fill, sol_price)
+                    if v["ok"]:
+                        print(f"\n  ✓ SELL PASS")
+                        print(f"    chain fill: ${v.get('chain_fill', 0):.10f}")
+                        results.append(("SELL on-chain verify", True, None))
+                    else:
+                        print(f"\n  ✗ SELL FAIL: {v['err']}")
+                        results.append(("SELL on-chain verify", False, v["err"]))
+    
     # ── Fix6: graduated token sell via pool="pump-amm" ───────────────────────
     # Run only when --graduated-mint is supplied.  Token must already be graduated
     # (bonding curve exhausted, now on PumpSwap).  We buy $1 via PP auto, then
