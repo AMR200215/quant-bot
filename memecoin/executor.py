@@ -1859,12 +1859,82 @@ class MemeExecutor:
                                 step, _step_err)
                     continue
 
-            # All 3 PumpPortal steps reverted — token may have graduated to Raydium.
-            # Graduated tokens (bonding curve complete, now on Raydium AMM) revert
-            # PumpPortal trade-local. Jupiter routes through Raydium directly.
-            # Only fires on the all-reverted path — cannot harm sells that work.
+            # ── Post-ladder routing ──────────────────────────────────────────────
+            # _graduated_detected=True: 6005 at step 1 → token is on PumpSwap.
+            #   Route: pump-amm PRIMARY → Jupiter FALLBACK.
+            #   Skips the remaining bonding-curve ladder steps (already broken out).
+            # _graduated_detected=False: all 3 PP steps failed (non-6005 reverts).
+            #   Route: Jupiter directly (existing behaviour for dead/rugged tokens).
+            if _graduated_detected:
+                log.warning(
+                    "SELL 6005-detected — routing pump-amm (graduated mid-hold)  token=%s",
+                    token_address[:8],
+                )
+                _grad2_fee   = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
+                _pamm2_sig   = None
+                _pamm2_conf  = False
+                _pamm2_err   = None
+                try:
+                    _t_p2        = time.time()
+                    _pamm2_bytes = _pumpportal_build_tx(
+                        wallet_pubkey=wallet, action="sell", token_mint=token_address,
+                        amount=_sell_amount, denominated_in_sol=False,
+                        slippage_pct=98, priority_fee_sol=_grad2_fee,
+                        pool="pump-amm",
+                    )
+                    _pamm2_tx     = VersionedTransaction.from_bytes(_pamm2_bytes)
+                    _pamm2_signed = VersionedTransaction(_pamm2_tx.message, [keypair])
+                    _pamm2_sig    = _send_transaction(bytes(_pamm2_signed))
+                    all_sigs.append(_pamm2_sig)
+                    log.warning("SELL pump-amm (6005 path) sent  sig=%s  token=%s",
+                                _pamm2_sig[:16], token_address[:8])
+                    _pamm2_conf, _pamm2_err = _confirm_tx(_pamm2_sig, t_sent=_t_p2)
+                except Exception as _p2ex:
+                    log.warning("SELL pump-amm (6005 path) build/send failed: %s  token=%s",
+                                _p2ex, token_address[:8])
+                if _pamm2_conf:
+                    fill_price = None
+                    sol_received = 0.0
+                    try:
+                        sol_bal_after = _sol_balance(wallet)
+                        if sol_bal_before is not None:
+                            for _sr in range(5):
+                                if sol_bal_after != sol_bal_before:
+                                    break
+                                time.sleep(1.0)
+                                try:
+                                    sol_bal_after = _sol_balance(wallet)
+                                except RuntimeError:
+                                    break
+                            sol_recv_lam = max(0, sol_bal_after - sol_bal_before)
+                            sol_received = sol_recv_lam / 1e9
+                            sol_price    = _sol_price_usd()
+                            if _fill_token_count is not None:
+                                decimals    = _token_decimals_from_rpc(wallet, token_address)
+                                tokens_sold = _fill_token_count / (10 ** decimals)
+                                fill_price  = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
+                    except RuntimeError as _p2re:
+                        log.warning("SELL pump-amm (6005 path) fill RPC error: %s", _p2re)
+                    log.info("SELL pump-amm (6005 path) confirmed  sig=%s  sol_recv=%.6f  fill=$%.10f",
+                             _pamm2_sig[:16], sol_received, fill_price or 0)
+                    return {
+                        "success":      True,
+                        "fill_price":   fill_price,
+                        "sol_received": sol_received,
+                        "tx_sig":       _pamm2_sig,
+                        "all_sigs":     all_sigs,
+                        "ladder_step":  1,
+                        "pump_amm":     True,
+                    }
+                if _pamm2_sig:
+                    log.warning("SELL pump-amm (6005 path) reverted  sig=%s  err=%s  token=%s",
+                                _pamm2_sig[:16], _pamm2_err, token_address[:8])
+                # pump-amm failed → fall through to Jupiter below
+
+            # Jupiter fallback: fires when ladder exhausted (non-6005) OR pump-amm failed.
             log.warning(
-                "SELL ladder EXHAUSTED — trying Jupiter fallback (graduated token?)  token=%s",
+                "SELL %s — trying Jupiter fallback  token=%s",
+                "pump-amm failed (6005 path)" if _graduated_detected else "ladder EXHAUSTED",
                 token_address[:8],
             )
             try:
