@@ -1067,7 +1067,12 @@ class MemeExecutor:
             # curve graduation jump, which is real price movement but not a reason to block.
             # Signal filters (pc5m, vol_5m, bs) already validated this token; Gate 1
             # (no_quote) ensures it's tradeable. That is sufficient.
-            _gate_baseline = signal_price
+            # Gate 2 baseline priority:
+            # 1. PP live price — same-venue, sub-second fresh (best)
+            # 2. Jupiter quote — real current market price (when PP silent)
+            # 3. DexScreener signal_price — NEVER used as baseline: 10-30s stale minimum,
+            #    makes drift measurement meaningless and blocks valid entries.
+            _gate_baseline = jupiter_quote_price   # floor: always live
             _pp_active     = False
             try:
                 from memecoin.pumpportal_monitor import monitor as _pp_exec
@@ -1078,6 +1083,9 @@ class MemeExecutor:
                     _pp_active     = True
                     log.debug("Gate 2 baseline: PP live $%.10f (same-venue gate %.0f%%)",
                               _pp_now, _quote_gate * 100)
+                else:
+                    log.debug("Gate 2 baseline: Jupiter quote $%.10f (PP silent, DexScreener skipped)",
+                              jupiter_quote_price)
             except Exception:
                 pass
 

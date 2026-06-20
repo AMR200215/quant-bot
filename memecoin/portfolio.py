@@ -936,11 +936,14 @@ class Portfolio:
                             live_pos.token_symbol, _pp_at_gate, _sig_price or 0,
                         )
                     else:
-                        _exec_signal_price = paper_pos.signal_price
+                        # PP silent after 2s wait — DexScreener price is 10-30s stale minimum.
+                        # Pass 0 so executor uses Jupiter quote as baseline (live price).
+                        # DexScreener signal_price is never a valid entry anchor.
+                        _exec_signal_price = 0.0
                         log.info(
                             "LIVE PREFLIGHT DEFERRED %s — PP silent after 2s, "
-                            "using dex baseline $%.10f (%.0f%% cross-venue gate)",
-                            live_pos.token_symbol, _sig_price or 0, SLIPPAGE_GATE_DEX_PCT * 100,
+                            "Jupiter quote will be used as live baseline (dex=$%.10f skipped)",
+                            live_pos.token_symbol, _sig_price or 0,
                         )
 
             except Exception as _pf_err:
