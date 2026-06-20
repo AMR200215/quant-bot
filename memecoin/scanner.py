@@ -1499,6 +1499,9 @@ def _on_pp_price_tick(mint: str, price_usd: float) -> None:
 
         gain = (price_usd - pos.entry_price) / pos.entry_price
 
+        # Update peak price on every PP tick — catches sub-0.5s pumps the poll loop misses
+        pos.peak_price = max(pos.peak_price, price_usd)
+
         # Hard stop — signal-anchored when fill > signal price.
         # If fill slipped above signal, anchor stop level to signal structure so
         # a normal post-signal dip (e.g. -18% from signal = -35% from fill) doesn't

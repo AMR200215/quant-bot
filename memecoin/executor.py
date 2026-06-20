@@ -937,6 +937,7 @@ class MemeExecutor:
         chain: str = "solana",
         signal_price: float = 0.0,
         max_slippage_pct: float = 0.50,
+        dex_id: str = "",
     ) -> dict:
         """
         Swap SOL → token_address worth size_usd USD.
@@ -1088,6 +1089,31 @@ class MemeExecutor:
                               jupiter_quote_price)
             except Exception:
                 pass
+
+            # ── Graduated-entry block ─────────────────────────────────────
+            # A graduated token = PP-silent AND Jupiter-routable (or DexScreener
+            # confirms pumpswap). Fresh bonding-curve tokens have PP-active OR
+            # Jupiter returns no_quote (400/no route). Block graduated tokens:
+            # they are past the pump.fun bonding curve and should not be entered
+            # via PumpPortal (fill risk, stale signal).
+            _is_graduated = False
+            if dex_id.lower() == "pumpswap":
+                _is_graduated = True
+            elif not _pp_active and jupiter_quote_price > 0:
+                _is_graduated = True
+            if _is_graduated:
+                log.warning(
+                    "BUY blocked — graduated token (dex_id=%s PP-active=%s jup=$%.10f)  "
+                    "token=%s",
+                    dex_id or "n/a", _pp_active, jupiter_quote_price, token_address[:8],
+                )
+                return {
+                    "success": False,
+                    "reason":  "blocked_graduated_entry",
+                    "dex_id":  dex_id,
+                    "pp_active": _pp_active,
+                    "jupiter_quote_price": jupiter_quote_price,
+                }
 
             if _pp_active and signal_price > 0 and jupiter_quote_price > 0:
                 # Same-venue gate: PP live vs Jupiter quote (measures real movement only)

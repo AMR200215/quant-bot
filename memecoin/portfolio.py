@@ -35,6 +35,7 @@ from memecoin.config import (
     LIVE_DRY_RUN,
     REALTIME_PRICE_FEED,
     SLIPPAGE_GATE_RT_PCT, SLIPPAGE_GATE_DEX_PCT,
+    SELL_STUCK_RETRY_SEC,
 )
 from memecoin.data_client import dex_get_token
 from memecoin.candidate_log import promote_to_winners
@@ -987,7 +988,8 @@ class Portfolio:
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
                             signal_price=_exec_signal_price,
-                            max_slippage_pct=0.30)
+                            max_slippage_pct=0.30,
+                            dex_id=live_pos.dex_id)
             if result.get("success"):
                 fill_price = result.get("fill_price") or live_pos.entry_price
                 signal_price = live_pos.entry_price
@@ -1000,14 +1002,32 @@ class Portfolio:
                 # Threshold 30%: if fill is >30% above what Jupiter quoted, something
                 # went wrong (price spiked during the 5s confirmation window).
                 _jup_ref = result.get("jupiter_quote_price") or 0
-                _abort_ref = _jup_ref if _jup_ref > 0 else signal_price
-                _abort_label = "jup_quote" if _jup_ref > 0 else "signal"
-                if _abort_ref > 0 and fill_price > _abort_ref * 1.30:
+                # Abort reference priority:
+                # 1. Jupiter quote — live AMM price (best)
+                # 2. PP-fresh signal_price — only if signal came from PP cache (sub-second fresh)
+                # 3. Missing — skip abort entirely, tag note, log warning
+                # Never use DexScreener-derived price (stale 10-30s, makes abort meaningless)
+                if _jup_ref > 0:
+                    _abort_ref = _jup_ref
+                    _abort_ref_label = "jup_quote"
+                elif _pp_at_gate > 0 and signal_price > 0:
+                    _abort_ref = signal_price
+                    _abort_ref_label = "pp_fresh"
+                else:
+                    _abort_ref = 0
+                    _abort_ref_label = "missing"
+                if _abort_ref == 0:
+                    live_pos.notes = (live_pos.notes or "") + "|abort_ref_missing"
+                    log.warning(
+                        "abort_tripwire skipped — no fresh price ref (not DexScreener)  token=%s",
+                        live_pos.token_symbol,
+                    )
+                elif fill_price > _abort_ref * 1.30:
                     _abort_slip = (fill_price / _abort_ref - 1) * 100
                     log.warning(
                         "LIVE BUY ABORTED %s — fill %.1f%% above %s ($%.10f)  "
                         "fill=%.10f  buy_tx=%s",
-                        live_pos.token_symbol, _abort_slip, _abort_label, _abort_ref,
+                        live_pos.token_symbol, _abort_slip, _abort_ref_label, _abort_ref,
                         fill_price, buy_tx_sig,
                     )
                     sell_tx_sig = ""
@@ -1027,7 +1047,7 @@ class Portfolio:
                     live_pos.status = "closed"
                     live_pos.notes = (
                         f"live|tx:{buy_tx_sig}|fill:{fill_price:.10f}"
-                        f"|abort_slip:{_abort_slip:.1f}%vs{_abort_label}"
+                        f"|abort_slip:{_abort_slip:.1f}%vs{_abort_ref_label}"
                         + (f"|sell_tx:{sell_tx_sig}" if sell_tx_sig else "")
                     )
                     _append_journal(live_pos)
@@ -1432,12 +1452,12 @@ class Portfolio:
                             if "|sell_stuck" not in (pos.notes or ""):
                                 pos.notes = (pos.notes or "") + "|sell_stuck"
                             self._positions[pos_id] = pos
-                            self._sell_stuck_until[pos_id] = time.time() + 5
+                            self._sell_stuck_until[pos_id] = time.time() + SELL_STUCK_RETRY_SEC
                             _save_positions(self._positions)
                             log.error(
                                 "SELL STUCK %s — ladder exhausted, position stays open, "
-                                "retry in 60s.  mint=%s",
-                                pos.token_symbol, pos.token_address,
+                                "retry in %ds.  mint=%s",
+                                pos.token_symbol, SELL_STUCK_RETRY_SEC, pos.token_address,
                             )
                             try:
                                 from app.alerts import _send
@@ -1482,10 +1502,10 @@ class Portfolio:
                 if "|sell_stuck" not in (pos.notes or ""):
                     pos.notes = (pos.notes or "") + f"|sell_stuck|err:{e}"
                 self._positions[pos_id] = pos
-                self._sell_stuck_until[pos_id] = time.time() + 5
+                self._sell_stuck_until[pos_id] = time.time() + SELL_STUCK_RETRY_SEC
                 _save_positions(self._positions)
-                log.error("SELL STUCK %s (exception path) — stays open, retry in 60s: %s",
-                          pos.token_symbol, e)
+                log.error("SELL STUCK %s (exception path) — stays open, retry in %ds: %s",
+                          pos.token_symbol, SELL_STUCK_RETRY_SEC, e)
                 try:
                     from app.alerts import _send
                     _send(

@@ -87,6 +87,10 @@ SLIPPAGE_GATE_DEX_PCT = 0.50   # 50% gate vs DexScreener baseline — pump.fun t
 # ---------------------------------------------------------------------------
 EXECUTOR_BACKEND = "pumpportal"
 
+# Sell-stuck retry cooldown: seconds before retrying the full sell ladder
+# on a position that exhausted all sell attempts.
+SELL_STUCK_RETRY_SEC = 60
+
 def _stage(capital: float) -> int:
     if capital < 1_000:  return 1
     if capital < 5_000:  return 2
