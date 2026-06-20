@@ -1081,22 +1081,6 @@ class MemeExecutor:
             except Exception:
                 pass
 
-            # Block PP-silent tokens entirely — no live price = no trade.
-            # dex_id from DexScreener is unreliable for detecting graduation
-            # (still shows "pumpfun" even after bonding curve completes).
-            # _pp_active is the only trustworthy signal we have.
-            # Losses: Derp, AXJ, Cuakssant — all PP-silent at execution.
-            if not _pp_active and chain == "solana":
-                log.warning(
-                    "BUY blocked — PP silent, no live price baseline  token=%s  "
-                    "signal=$%.10f  jup=$%.10f",
-                    token_address[:8], signal_price, jupiter_quote_price,
-                )
-                return {
-                    "success": False,
-                    "reason":  "blocked_pp_silent",
-                }
-
             if _pp_active and signal_price > 0 and jupiter_quote_price > 0:
                 # Same-venue gate: PP live vs Jupiter quote (measures real movement only)
                 slippage = (jupiter_quote_price / _gate_baseline - 1)
