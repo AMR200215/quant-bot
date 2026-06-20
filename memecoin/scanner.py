@@ -1454,6 +1454,14 @@ def _portfolio_thread():
                         except Exception:
                             pass
                         _pp_monitor.increment_blind_exit_count()
+                        # Route via escalate (pump-amm → Jupiter) so we can sell even if
+                        # the token graduated mid-hold and the migration event was missed.
+                        # PumpPortal bonding-curve path returns Custom:6005 for PumpSwap tokens.
+                        # Paper positions are unaffected (close_position skips live sell for paper).
+                        if pos.notes and "|cohort:bonding_curve" in pos.notes:
+                            pos.notes = pos.notes.replace(
+                                "|cohort:bonding_curve", "|cohort:graduated"
+                            )
                         portfolio.close_position(pos.id, "feed_blind", pos.current_price)
 
                 # Check PumpPortal-screened tokens for paper entry conditions
