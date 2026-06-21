@@ -22,6 +22,7 @@ WINNERS_FILE           = LOGS_DIR / "winners_journal.csv"
 REJECTIONS_FILE        = LOGS_DIR / "new_launch_rejections.csv"
 TRAJECTORY_FILE        = LOGS_DIR / "signal_trajectory.csv"   # T+30s / T+60s price snapshots
 NEAR_MISS_FILE         = DATA_DIR / "near_miss_tracking.json"
+PRICE_PATHS_DIR        = LOGS_DIR / "price_paths"     # per-position tick logs (<mint>.csv)
 DEV_WALLETS_FILE       = DATA_DIR / "dev_wallets.json"
 DEV_LAST_SEEN_FILE     = DATA_DIR / "dev_last_seen.json"
 
@@ -173,10 +174,13 @@ TIME_STOP_MINUTES    =  90     # exit if flat >90 min with < +30% gain (was 45)
 TIME_STOP_MIN_GAIN   =  0.30   # if gain > 30% don't apply time stop
 
 # Take-profit ladder (only when no whale exit signal)
+# Fractions are of remaining position at each level.
+# Path: sell 30% at +30%, 25% of remaining at +60%, 20% of remaining at +120%.
+# Trailing stop carries the final ~42% (data: 85% of tokens hit +30%).
 TP_LEVELS = [
-    (1.00, 0.30),   # at +100%, sell 30% of position
-    (3.00, 0.30),   # at +300%, sell 30%
-    # remaining 40% rides with trailing stop
+    (0.30, 0.30),   # at +30%,  sell 30% of remaining
+    (0.60, 0.25),   # at +60%,  sell 25% of remaining
+    (1.20, 0.20),   # at +120%, sell 20% of remaining
 ]
 
 # ---------------------------------------------------------------------------
@@ -230,15 +234,19 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         # Tier selected by peak_gain achieved so far; trail anchors to peak_price.
         # Breakeven floor: peak_gain ≥ 40% → trail_stop ≥ entry * 1.02 (enforced in portfolio).
         # Time stop: only fires while peak_gain < 30% (never interrupts a runner mid-leg).
+        # FIX 2: trail arms at +30% (was never used before TP1 at +100%).
+        # trail_pct=0.25 at tier-0 captures more of the peak vs old 0.35.
+        # Confirm final values via FIX 3 replay before locking in.
         "trail_tiers": [
-            {"activates_at": 0.30, "trail_pct": 0.35},  # early: wide, survives the EKG
-            {"activates_at": 1.00, "trail_pct": 0.25},  # +100%: tighten
+            {"activates_at": 0.30, "trail_pct": 0.25},  # early: -25% from peak (was 0.35)
+            {"activates_at": 1.00, "trail_pct": 0.25},  # +100%: same tightness
             {"activates_at": 3.00, "trail_pct": 0.15},  # +300%: protect the moonshot
         ],
         # profit_lock: exit if gain in [40%, 100%] and peak stalled for N sec
+        # FIX 2: 60s stall (was 300s) — fast tokens dump long before 5 min (e.g. Solax)
         "profit_lock_min_gain":   0.40,
         "profit_lock_max_gain":   1.00,
-        "profit_lock_stall_sec":  300,  # 120 → 300: 5-min stall is dead; 2-min is a pause
+        "profit_lock_stall_sec":  60,   # was 300 — fast tokens dump long before 5 min
     },
     "manual": {
         "trade_size_usd":      _SIZES["manual"],

@@ -29,6 +29,7 @@ from memecoin.config import (
     HARD_STOP_PCT, TRAILING_STOP_PCT, TRAIL_ACTIVATES_PCT,
     TIME_STOP_MINUTES, TIME_STOP_MIN_GAIN,
     TP_LEVELS, TRADE_SIZE_USD,
+    PRICE_PATHS_DIR,
     get_signal_settings,
     LIVE_TRADING,
     DAILY_LOSS_LIMIT,
@@ -281,6 +282,26 @@ def _build_journal_row(pos: Position) -> dict:
         "remaining_fraction": round(pos.remaining_fraction, 4),
         "accounting_epoch": ACCOUNTING_EPOCH,
     }
+
+
+def _append_price_tick(pos: "Position", price: float) -> None:
+    """Append one (epoch, price_usd) tick to logs/price_paths/<mint>.csv.
+
+    Lightweight, append-only. Called on every monitoring loop iteration so
+    the full entry-to-exit price path is available for offline trail/TP replay.
+    Any exception is swallowed — this must never interrupt the hot path.
+    """
+    try:
+        PRICE_PATHS_DIR.mkdir(parents=True, exist_ok=True)
+        path = PRICE_PATHS_DIR / f"{pos.token_address}.csv"
+        write_hdr = not path.exists()
+        with open(path, "a", newline="") as f:
+            w = csv.writer(f)
+            if write_hdr:
+                w.writerow(["epoch", "price_usd"])
+            w.writerow([round(time.time(), 3), price])
+    except Exception:
+        pass
 
 
 def _append_journal(pos: Position):
@@ -1613,6 +1634,13 @@ class Portfolio:
                 # Jupiter-only (or stale) — start/continue the fallback timer
                 if pos.id not in self._jup_fallback_since:
                     self._jup_fallback_since[pos.id] = time.time()
+
+            # FIX 3: per-position tick log — entry-to-exit price path for offline replay.
+            # Appends (epoch, price_usd) every monitoring cycle (~2s) to
+            # logs/price_paths/<mint>.csv. Used to optimize TRAIL_ACTIVATES_PCT /
+            # TRAILING_STOP_PCT from real paths instead of guessing.
+            if pos.current_price > 0:
+                _append_price_tick(pos, pos.current_price)
 
             # T+10 buy-velocity snapshot (8–12 min window, logged once per position)
             age_min = (time.time() - pos.entry_time) / 60
