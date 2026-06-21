@@ -68,6 +68,17 @@ SELL_LADDER = [
     (98,  0.005,  "UnsafeMax"),
 ]
 
+# Urgent sell ladder: stop-losses, rugs, and forced exits (hard_stop, trailing_stop,
+# feed_blind, graduated_exit, dev_dump). Price is already moving adversely, so the
+# 35%/60% rungs will revert — skip straight to 98% slippage on the first attempt.
+# Fee escalation (High→VeryHigh→UnsafeMax) only fires when the previous attempt was
+# unconfirmed (didn't land). Reverts at 98% = genuine no-liquidity, not slippage miss.
+URGENT_SELL_LADDER = [
+    (98, 0.0005, "High"),       # (slippage_pct, fee_floor_sol, helius_level)
+    (98, 0.0015, "VeryHigh"),   # escalates only if previous step was unconfirmed
+    (98, 0.005,  "UnsafeMax"),
+]
+
 # pump.fun program — used as anchor account for priority fee estimation
 _PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 # Estimated compute units per pump.fun buy/sell tx (used to convert microlamports/CU → SOL)
@@ -725,9 +736,29 @@ def _fill_from_transaction(sig: str, wallet: str, token_address: str,
                 pre_amt  = pre_by_idx.get(idx, 0)
                 tokens_received = post_amt - pre_amt
                 if tokens_received > 0:
-                    fill_price = size_usd / (tokens_received / 10 ** decimals)
-                    log.info("fill_from_tx  sig=%s  tokens=%d  decimals=%d  fill=$%.10f",
-                             sig[:16], tokens_received, decimals, fill_price)
+                    tokens_human = tokens_received / 10 ** decimals
+                    # Prefer actual SOL spent (tx preBalances/postBalances) over intended
+                    # size_usd — includes priority fee and pump.fun 0.5% platform fee.
+                    _sol_spent_lam = 0
+                    try:
+                        _pre_b  = meta.get("preBalances") or []
+                        _post_b = meta.get("postBalances") or []
+                        _akeys  = (data.get("transaction", {})
+                                       .get("message", {})
+                                       .get("accountKeys", []))
+                        for _ai, _ak in enumerate(_akeys):
+                            _apub = _ak.get("pubkey") if isinstance(_ak, dict) else str(_ak)
+                            if _apub == wallet and _ai < len(_pre_b) and _ai < len(_post_b):
+                                _sol_spent_lam = max(0, _pre_b[_ai] - _post_b[_ai])
+                                break
+                    except Exception:
+                        pass
+                    if _sol_spent_lam > 0:
+                        fill_price = (_sol_spent_lam / 1e9 * _sol_price_usd()) / tokens_human
+                    else:
+                        fill_price = size_usd / tokens_human   # fallback: intended spend
+                    log.info("fill_from_tx  sig=%s  tokens=%d  decimals=%d  sol_lam=%d  fill=$%.10f",
+                             sig[:16], tokens_received, decimals, _sol_spent_lam, fill_price)
                     return fill_price, False, tokens_received
 
             log.warning("fill_from_tx: no matching token delta for %s in tx %s",
@@ -740,6 +771,45 @@ def _fill_from_transaction(sig: str, wallet: str, token_address: str,
 
     log.warning("fill_from_tx: all %d attempts failed for sig=%s", retries, sig[:16])
     return None, True, 0
+
+
+def _sol_delta_from_tx(sig: str, wallet: str, action: str = "sell") -> int:
+    """
+    Return wallet SOL delta (lamports) from a confirmed tx's preBalances/postBalances.
+
+    action="sell" → SOL received  (postBalance − preBalance, clamped ≥ 0).
+    action="buy"  → SOL spent     (preBalance  − postBalance, clamped ≥ 0).
+
+    Fires a single getTransaction call. Returns 0 on any failure — never raises.
+    Use when getBalance settle-lag gives sol_received=0 after 5 retries.
+    """
+    try:
+        resp = _rpc_post({
+            "jsonrpc": "2.0", "id": 1,
+            "method":  "getTransaction",
+            "params":  [sig, {
+                "encoding":                       "jsonParsed",
+                "commitment":                     "confirmed",
+                "maxSupportedTransactionVersion": 0,
+            }],
+        }, timeout=10)
+        data = resp.json().get("result")
+        if not data:
+            return 0
+        meta      = data.get("meta") or {}
+        pre_bals  = meta.get("preBalances") or []
+        post_bals = meta.get("postBalances") or []
+        acct_keys = (data.get("transaction", {})
+                         .get("message", {})
+                         .get("accountKeys", []))
+        for _i, _k in enumerate(acct_keys):
+            _pub = _k.get("pubkey") if isinstance(_k, dict) else str(_k)
+            if _pub == wallet and _i < len(pre_bals) and _i < len(post_bals):
+                pre, post = pre_bals[_i], post_bals[_i]
+                return max(0, post - pre) if action == "sell" else max(0, pre - post)
+    except Exception:
+        pass
+    return 0
 
 
 _sol_price_cache: dict = {"price": 170.0, "ts": 0.0}
@@ -1280,7 +1350,8 @@ class MemeExecutor:
                 if bal_after > bal_before:
                     tokens_received = bal_after - bal_before
                     decimals        = _token_decimals_from_rpc(wallet, token_address)
-                    fill_price      = size_usd / (tokens_received / 10 ** decimals)
+                    _tx_fill, _, _  = _fill_from_transaction(sig, wallet, token_address, size_usd, retries=1)
+                    fill_price      = _tx_fill if _tx_fill else (size_usd / (tokens_received / 10 ** decimals))
                     log.warning(
                         "BUY confirm-poll timed out but tokens found — treating as success  "
                         "sig=%s  delta=%d  fill=$%.10f",
@@ -1390,14 +1461,15 @@ class MemeExecutor:
         fraction: float = 1.0,
         escalate: bool = False,
         known_token_count: int = 0,
+        urgent: bool = False,
     ) -> dict:
         """
-        Swap all held token_address → SOL using a 3-step escalating sell ladder.
+        Swap all held token_address → SOL.
 
-        Ladder: on revert, immediately escalate slippage + fee (no delay).
-          Step 1: 35% slippage, normal fee  (~$0.085)
-          Step 2: 60% slippage, 3× fee     (~$0.255)
-          Step 3: 98% slippage, max fee    (~$0.85)
+        urgent=False (TP, time-stop): SELL_LADDER      — 35→60→98% slippage, fee escalates.
+        urgent=True  (stops, rugs):   URGENT_SELL_LADDER — 98% slippage from step 1;
+                                       fee escalates (High→VeryHigh→UnsafeMax) only if
+                                       the previous attempt came back unconfirmed.
 
         Returns: {success, fill_price, tx_sig, all_sigs, ladder_step}
                  all_sigs contains every submitted sig for journaling.
@@ -1547,7 +1619,9 @@ class MemeExecutor:
             # burning fees; caller (portfolio) will keep position open for manual exit.
             if escalate:
                 log.warning("SELL escalate (graduated) — pump-amm PRIMARY  token=%s", token_address[:8])
-                _grad_fee = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
+                _grad_fee_level = "High" if urgent else "UnsafeMax"
+                _grad_fee_floor = 0.0005 if urgent else 0.005
+                _grad_fee = max(_helius_priority_fee(token_address, _grad_fee_level), _grad_fee_floor)
 
                 # ── PRIMARY: PumpPortal pool="pump-amm" ──────────────────────────
                 _pamm_sig  = None
@@ -1594,6 +1668,19 @@ class MemeExecutor:
                                 fill_price = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
                     except RuntimeError as _rpc_err:
                         log.warning("SELL pump-amm fill price RPC error: %s", _rpc_err)
+                    if not fill_price and _pamm_sig:
+                        _lam = _sol_delta_from_tx(_pamm_sig, wallet, action="sell")
+                        if _lam > 0 and _fill_token_count:
+                            try:
+                                _dec  = _token_decimals_from_rpc(wallet, token_address)
+                                _tsld = _fill_token_count / (10 ** _dec)
+                                if _tsld > 0:
+                                    sol_received = _lam / 1e9
+                                    fill_price   = (sol_received * _sol_price_usd()) / _tsld
+                                    log.info("SELL fill from tx meta (pump-amm)  sig=%s  fill=$%.10f",
+                                             _pamm_sig[:16], fill_price)
+                            except Exception:
+                                pass
                     log.info("SELL pump-amm confirmed  sig=%s  sol_recv=%.6f  fill=$%.10f",
                              _pamm_sig[:16], sol_received, fill_price or 0)
                     return {
@@ -1613,8 +1700,10 @@ class MemeExecutor:
                 if _jup_sell_tokens is not None and _jup_sell_tokens > 0:
                     log.warning("SELL pump-amm failed — trying Jupiter fallback  token=%s", token_address[:8])
                     try:
-                        _jup_quote = _jup_get_quote(token_address, SOL_MINT, _jup_sell_tokens)
-                        _jup_fee   = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
+                        _jup_quote    = _jup_get_quote(token_address, SOL_MINT, _jup_sell_tokens)
+                        _jup_fee_lvl  = "High" if urgent else "UnsafeMax"
+                        _jup_fee_flr  = 0.0005 if urgent else 0.005
+                        _jup_fee      = max(_helius_priority_fee(token_address, _jup_fee_lvl), _jup_fee_flr)
                         _jup_tx    = _jup_build_swap_tx(
                             _jup_quote, wallet,
                             slippage_bps=9900,
@@ -1648,7 +1737,17 @@ class MemeExecutor:
                             sol_price    = _sol_price_usd()
                             decimals     = _token_decimals_from_rpc(wallet, token_address) if _jup_sell_tokens else 6
                             tokens_sold  = _jup_sell_tokens / (10 ** decimals) if _jup_sell_tokens else 0
-                            fill_price   = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else entry_price
+                            if sol_received > 0 and tokens_sold > 0:
+                                fill_price = (sol_received * sol_price) / tokens_sold
+                            else:
+                                _jlam = _sol_delta_from_tx(_jup_sig, wallet, action="sell")
+                                if _jlam > 0 and tokens_sold > 0:
+                                    sol_received = _jlam / 1e9
+                                    fill_price   = (sol_received * sol_price) / tokens_sold
+                                    log.info("SELL Jupiter fill from tx meta (escalate)  sig=%s  fill=$%.10f",
+                                             _jup_sig[:16], fill_price)
+                                else:
+                                    fill_price = entry_price
                             log.info("SELL Jupiter fallback confirmed  sig=%s  fill=$%.10f", _jup_sig[:16], fill_price)
                             return {
                                 "success":       True,
@@ -1689,7 +1788,8 @@ class MemeExecutor:
             # _graduated_detected → first 6005 seen mid-ladder, skip remaining PP steps
             _graduated_detected = False
 
-            for step, (slip_pct, fee_floor_sol, fee_level) in enumerate(SELL_LADDER, 1):
+            _active_ladder = URGENT_SELL_LADDER if urgent else SELL_LADDER
+            for step, (slip_pct, fee_floor_sol, fee_level) in enumerate(_active_ladder, 1):
                 try:
                     # If first PumpPortal step reverted with 6005, this token has graduated
                     # (bonding curve exhausted → now on Raydium). Skip remaining PumpPortal
@@ -1759,7 +1859,7 @@ class MemeExecutor:
 
                     log.info(
                         "SELL ladder step %d/%d  sig=%s  slip=%d%%  fee=%.4f  token=%s",
-                        step, len(SELL_LADDER), sig[:16], slip_pct, fee_sol, token_address[:8],
+                        step, len(_active_ladder), sig[:16], slip_pct, fee_sol, token_address[:8],
                     )
 
                     confirmed, err = _confirm_tx(sig, t_sent=_t_sig_sent)
@@ -1796,6 +1896,22 @@ class MemeExecutor:
                                     fill_price    = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
                         except RuntimeError as _rpc_err:
                             log.warning("SELL fill price RPC error — using entry_price fallback: %s", _rpc_err)
+
+                        # Tx-meta fallback: getBalance settle-lag (sol_bal unchanged after retries).
+                        # Read SOL received directly from the confirmed tx preBalances/postBalances.
+                        if not fill_price and sig:
+                            _lam = _sol_delta_from_tx(sig, wallet, action="sell")
+                            if _lam > 0 and _fill_token_count:
+                                try:
+                                    _dec  = _token_decimals_from_rpc(wallet, token_address)
+                                    _tsld = _fill_token_count / (10 ** _dec)
+                                    if _tsld > 0:
+                                        sol_received = _lam / 1e9
+                                        fill_price   = (sol_received * _sol_price_usd()) / _tsld
+                                        log.info("SELL fill from tx meta (ladder)  sig=%s  fill=$%.10f",
+                                                 sig[:16], fill_price)
+                                except Exception:
+                                    pass
 
                         if not fill_price:
                             # Catches both None (balance query failed) and 0.0 (sol_recv=0).
@@ -1835,7 +1951,7 @@ class MemeExecutor:
                             )
                         log.warning(
                             "SELL reverted step %d/%d  sig=%s  err=%s — escalating",
-                            step, len(SELL_LADDER), sig[:16], err,
+                            step, len(_active_ladder), sig[:16], err,
                         )
                         continue   # next ladder rung
 
@@ -1843,7 +1959,7 @@ class MemeExecutor:
                         # Unconfirmed (timeout) — tx may be in-flight; don't double-sell
                         log.warning(
                             "SELL unconfirmed step %d/%d  sig=%s — stopping ladder",
-                            step, len(SELL_LADDER), sig[:16],
+                            step, len(_active_ladder), sig[:16],
                         )
                         return {
                             "success":     False,
@@ -1870,7 +1986,9 @@ class MemeExecutor:
                     "SELL 6005-detected — routing pump-amm (graduated mid-hold)  token=%s",
                     token_address[:8],
                 )
-                _grad2_fee   = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
+                _grad2_fee_level = "High" if urgent else "UnsafeMax"
+                _grad2_fee_floor = 0.0005 if urgent else 0.005
+                _grad2_fee   = max(_helius_priority_fee(token_address, _grad2_fee_level), _grad2_fee_floor)
                 _pamm2_sig   = None
                 _pamm2_conf  = False
                 _pamm2_err   = None
@@ -1915,6 +2033,19 @@ class MemeExecutor:
                                 fill_price  = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else None
                     except RuntimeError as _p2re:
                         log.warning("SELL pump-amm (6005 path) fill RPC error: %s", _p2re)
+                    if not fill_price and _pamm2_sig:
+                        _lam2 = _sol_delta_from_tx(_pamm2_sig, wallet, action="sell")
+                        if _lam2 > 0 and _fill_token_count:
+                            try:
+                                _dec2  = _token_decimals_from_rpc(wallet, token_address)
+                                _tsld2 = _fill_token_count / (10 ** _dec2)
+                                if _tsld2 > 0:
+                                    sol_received = _lam2 / 1e9
+                                    fill_price   = (sol_received * _sol_price_usd()) / _tsld2
+                                    log.info("SELL fill from tx meta (6005 path)  sig=%s  fill=$%.10f",
+                                             _pamm2_sig[:16], fill_price)
+                            except Exception:
+                                pass
                     log.info("SELL pump-amm (6005 path) confirmed  sig=%s  sol_recv=%.6f  fill=$%.10f",
                              _pamm2_sig[:16], sol_received, fill_price or 0)
                     return {
@@ -1939,8 +2070,10 @@ class MemeExecutor:
             )
             try:
                 if _jup_sell_tokens is not None and _jup_sell_tokens > 0:
-                    _jup_quote = _jup_get_quote(token_address, SOL_MINT, _jup_sell_tokens)
-                    _jup_fee   = max(_helius_priority_fee(token_address, "UnsafeMax"), 0.005)
+                    _jup_quote    = _jup_get_quote(token_address, SOL_MINT, _jup_sell_tokens)
+                    _jup2_fee_lvl = "High" if urgent else "UnsafeMax"
+                    _jup2_fee_flr = 0.0005 if urgent else 0.005
+                    _jup_fee      = max(_helius_priority_fee(token_address, _jup2_fee_lvl), _jup2_fee_flr)
                     _jup_tx    = _jup_build_swap_tx(
                         _jup_quote, wallet,
                         slippage_bps=9900,          # 99% — last resort, get anything out
@@ -1975,7 +2108,17 @@ class MemeExecutor:
                         sol_price    = _sol_price_usd()
                         decimals     = _token_decimals_from_rpc(wallet, token_address) if _jup_sell_tokens else 6
                         tokens_sold  = _jup_sell_tokens / (10 ** decimals) if _jup_sell_tokens else 0
-                        fill_price   = (sol_received * sol_price) / tokens_sold if tokens_sold > 0 else entry_price
+                        if sol_received > 0 and tokens_sold > 0:
+                            fill_price = (sol_received * sol_price) / tokens_sold
+                        else:
+                            _jlam2 = _sol_delta_from_tx(_jup_sig, wallet, action="sell")
+                            if _jlam2 > 0 and tokens_sold > 0:
+                                sol_received = _jlam2 / 1e9
+                                fill_price   = (sol_received * sol_price) / tokens_sold
+                                log.info("SELL Jupiter fill from tx meta (ladder)  sig=%s  fill=$%.10f",
+                                         _jup_sig[:16], fill_price)
+                            else:
+                                fill_price = entry_price
                         log.info("SELL Jupiter fallback confirmed  sig=%s  fill=$%.10f",
                                  _jup_sig[:16], fill_price)
                         return {
@@ -1983,7 +2126,7 @@ class MemeExecutor:
                             "fill_price":    fill_price,
                             "tx_sig":        _jup_sig,
                             "all_sigs":      all_sigs,
-                            "ladder_step":   len(SELL_LADDER) + 1,
+                            "ladder_step":   len(_active_ladder) + 1,
                             "jup_fallback":  True,
                         }
                     log.warning("SELL Jupiter fallback unconfirmed  sig=%s  err=%s",
@@ -1999,7 +2142,7 @@ class MemeExecutor:
                 "success":     False,
                 "reason":      "all_steps_reverted",
                 "all_sigs":    all_sigs,
-                "ladder_step": len(SELL_LADDER),
+                "ladder_step": len(_active_ladder),
             }
 
         except Exception as e:

@@ -1033,7 +1033,7 @@ class Portfolio:
                     sell_tx_sig = ""
                     try:
                         ex2 = MemeExecutor()
-                        abort_sell = ex2.sell(live_pos.token_address, _live_size, fill_price, live_pos.chain)
+                        abort_sell = ex2.sell(live_pos.token_address, _live_size, fill_price, live_pos.chain, urgent=True)
                         sell_tx_sig = abort_sell.get("tx_sig", "") if abort_sell else ""
                     except Exception as _e:
                         log.error("Abort-sell failed %s: %s", live_pos.token_symbol, _e)
@@ -1366,9 +1366,15 @@ class Portfolio:
                     if _is_graduated and not _is_retry:
                         log.info("SELL graduated token — pump-amm PRIMARY, Jupiter FALLBACK  token=%s",
                                  pos.token_address[:8])
+                    _URGENT_REASONS = frozenset({
+                        "hard_stop", "hard_stop_pp", "trailing_stop", "trailing_stop_pp",
+                        "feed_blind", "graduated_exit", "dev_dump", "rug_lp", "velocity",
+                        "abort_tripwire",
+                    })
                     result = ex.sell(
                         pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
                         escalate=_is_retry or _is_graduated,
+                        urgent=(reason in _URGENT_REASONS),
                         # Pass tokens_held so local build can use exact count without RPC.
                         # Only valid for full exits (fraction=1.0 default); partial TPs
                         # pass known_token_count separately in _run_tp_sell_bg.
