@@ -1,0 +1,16 @@
+[Unit]
+Description=Memecoin Research Pipeline
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/quant-bot
+EnvironmentFile=/root/quant-bot/.env
+ExecStart=/root/quant-bot/.venv/bin/python -m research.main
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
