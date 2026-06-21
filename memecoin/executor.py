@@ -467,14 +467,17 @@ def _get_keypair():
 # Shared RPC helpers
 # ---------------------------------------------------------------------------
 def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
-    """POST to SOLANA_RPC; on 429 or quota error fall back to publicnode."""
+    """POST to SOLANA_RPC; on 429 retry once after 1.5s (burst rate limit),
+    then fall back to publicnode only if still failing."""
     resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
-    _should_fallback = (
-        SOLANA_RPC != SOLANA_RPC_FALLBACK
-        and (resp.status_code == 429 or "result" not in resp.json())
-    )
-    if _should_fallback:
-        log.warning("Primary RPC unavailable (%s) — falling back to publicnode", resp.status_code)
+    if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
+        # Helius $49 plan: 429 = burst spike, not monthly exhaustion.
+        # Wait 1.5s and retry primary before falling back to unreliable publicnode.
+        log.warning("Primary RPC 429 — retrying Helius in 1.5s")
+        time.sleep(1.5)
+        resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
+    if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
+        log.warning("Primary RPC still 429 after retry — falling back to publicnode")
         resp = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
     return resp
 
