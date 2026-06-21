@@ -1161,15 +1161,16 @@ class MemeExecutor:
                 pass
 
             # ── Graduated-entry block ─────────────────────────────────────
-            # A graduated token = PP-silent AND Jupiter-routable (or DexScreener
-            # confirms pumpswap). Fresh bonding-curve tokens have PP-active OR
-            # Jupiter returns no_quote (400/no route). Block graduated tokens:
-            # they are past the pump.fun bonding curve and should not be entered
-            # via PumpPortal (fill risk, stale signal).
+            # A graduated token = DexScreener dex_id=pumpswap (definitive), OR
+            # PP-silent + Jupiter-routable + dex_id NOT "pumpfun".
+            # Key guard: if dex_id="pumpfun" DexScreener confirms it's still on
+            # the bonding curve — never block even if PP is momentarily silent
+            # (reconnect gap, quiet bonding-curve period). Without this guard Fix A
+            # blocks every social_alert signal that arrives during a PP quiet window.
             _is_graduated = False
             if dex_id.lower() == "pumpswap":
                 _is_graduated = True
-            elif not _pp_active and jupiter_quote_price > 0:
+            elif not _pp_active and jupiter_quote_price > 0 and (dex_id or "").lower() != "pumpfun":
                 _is_graduated = True
             if _is_graduated:
                 log.warning(
