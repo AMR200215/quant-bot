@@ -224,14 +224,9 @@ class PumpListener:
                 threading.Thread(
                     target=self._handle_create, args=(sig,), daemon=True
                 ).start()
-            elif is_buy:
-                # Only spawn a fetch thread if early-buy window has any tokens
-                with self._recent_lock:
-                    has_recent = bool(self._recent_tokens)
-                if has_recent:
-                    threading.Thread(
-                        target=self._handle_buy, args=(sig,), daemon=True
-                    ).start()
+            # early_buy path disabled — each buy fired a getTransaction call and
+            # pump.fun has hundreds of buys/min, draining Helius credits.
+            # Whale early-buy detection is already covered by the wallet tracker.
 
             # Periodic cleanup every 60s
             if time.time() - last_clean > 60:
