@@ -142,8 +142,8 @@ MIN_COMPOSITE_NEW_LAUNCH   = 0.50     # skip the bottom-tier signals
 # Stress-tested: 81% WR, avg $2.83, ex-top $28.33 across 32 trades
 MIN_BUY_SELL_RATIO_SOCIAL  = 0.55    # buy pressure gate (user chose 0.55 over 0.65)
 MIN_VOL_5M_SOCIAL          = 2_000   # low vol = not enough interest
-MAX_VOL_5M_SOCIAL          = 15_000  # high vol = already pumped, late entry
-MAX_VOL_H1_SOCIAL          = 20_000  # hourly volume ceiling
+MAX_VOL_5M_SOCIAL          = 50_000  # raised from 15K: research shows winners avg ~$22K; wide zone to capture data
+MAX_VOL_H1_SOCIAL          = 100_000  # raised from 20K: match wider 5m ceiling
 MAX_PRICE_CHANGE_5M_SOCIAL = 500     # >500% in 5m = blow-off top risk
 
 # ---------------------------------------------------------------------------
