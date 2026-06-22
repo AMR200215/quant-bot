@@ -87,11 +87,15 @@ class Tracker:
         if not self._sb:
             return False
         try:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(hours=DEDUP_WINDOW_HOURS)
+            ).isoformat()
             resp = (
                 self._sb.table("research_tokens")
                 .select("id")
                 .eq("token_address", token_address)
-                .gte("created_at", f"now() - interval '{DEDUP_WINDOW_HOURS} hours'")
+                .gte("created_at", cutoff)
                 .limit(1)
                 .execute()
             )

@@ -29,20 +29,21 @@ from research.snapshot import fetch_price
 log = logging.getLogger(__name__)
 
 # Interval label → Supabase column name
+# NOTE: Postgres lowercases all unquoted identifiers, so price_T3m → price_t3m.
 _INTERVAL_COL = {
-    "T3m":  "price_T3m",
-    "T5m":  "price_T5m",
-    "T10m": "price_T10m",
-    "T15m": "price_T15m",
-    "T20m": "price_T20m",
-    "T30m": "price_T30m",
+    "T3m":  "price_t3m",
+    "T5m":  "price_t5m",
+    "T10m": "price_t10m",
+    "T15m": "price_t15m",
+    "T20m": "price_t20m",
+    "T30m": "price_t30m",
 }
 
 # All intervals for a category → their columns that hold prices
 _CATEGORY_PRICE_COLS = {
-    "social_alert_bc":   ["price_T3m", "price_T5m", "price_T10m", "price_T20m"],
-    "social_alert_grad": ["price_T15m", "price_T30m"],
-    "unknown":           ["price_T5m", "price_T10m", "price_T20m", "price_T30m"],
+    "social_alert_bc":   ["price_t3m", "price_t5m", "price_t10m", "price_t20m"],
+    "social_alert_grad": ["price_t15m", "price_t30m"],
+    "unknown":           ["price_t5m", "price_t10m", "price_t20m", "price_t30m"],
 }
 
 
@@ -188,7 +189,7 @@ class OutcomePoller:
         try:
             resp = (
                 self._sb.table("research_tokens")
-                .select("category, price_usd, price_T3m, price_T5m, price_T10m, price_T15m, price_T20m, price_T30m")
+                .select("category, price_usd, price_t3m, price_t5m, price_t10m, price_t15m, price_t20m, price_t30m")
                 .eq("token_address", token_address)
                 .eq("outcome_complete", False)
                 .limit(1)
@@ -213,10 +214,11 @@ class OutcomePoller:
                 return
 
             # Compute pct changes
+            # NOTE: Postgres lowercases columns → price_t3m not price_T3m
             label_to_col = {
-                "T3m": "price_T3m", "T5m": "price_T5m",
-                "T10m": "price_T10m", "T15m": "price_T15m",
-                "T20m": "price_T20m", "T30m": "price_T30m",
+                "T3m": "price_t3m", "T5m": "price_t5m",
+                "T10m": "price_t10m", "T15m": "price_t15m",
+                "T20m": "price_t20m", "T30m": "price_t30m",
             }
             pct_updates = {}
             peak_pct    = None
@@ -226,14 +228,13 @@ class OutcomePoller:
                 px = row.get(pcol)
                 if px and px > 0:
                     pct = (px / p0 - 1) * 100
-                    pct_col = f"pct_change_{label[1:]}"   # 'T5m' → 'pct_change_5m' etc
-                    # Map to actual column names
+                    # Map to actual schema column names (lowercase)
                     pct_col_map = {
-                        "T3m": "pct_change_T5m",   # no separate T3m pct col, reuse T5m
-                        "T5m": "pct_change_T5m",
-                        "T10m": "pct_change_T10m",
-                        "T20m": "pct_change_T20m",
-                        "T30m": "pct_change_T30m",
+                        "T3m":  "pct_change_t5m",   # no separate T3m col, reuse T5m
+                        "T5m":  "pct_change_t5m",
+                        "T10m": "pct_change_t10m",
+                        "T20m": "pct_change_t20m",
+                        "T30m": "pct_change_t30m",
                     }
                     col_name = pct_col_map.get(label)
                     if col_name:
