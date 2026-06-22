@@ -39,6 +39,11 @@ CREATE TABLE IF NOT EXISTS research_tokens (
 
     -- screener fields (raw values — decisions computed at analysis time)
     -- thresholds at time of capture stored in config_snapshot column
+    -- context captured at alert time (can't reconstruct later)
+    symbol                  TEXT,                 -- token symbol from DexScreener (NULL if snap_ok=False)
+    tg_message_text         TEXT,                 -- raw TG message text (first 500 chars)
+    channel_velocity_5m     INT,                  -- # of tokens logged in last 5 min at alert time
+
     snapshot_ok             BOOL DEFAULT FALSE,   -- TRUE once DexScreener returned data
     snapshot_attempts       INT DEFAULT 0,        -- how many DexScreener retries before data
 

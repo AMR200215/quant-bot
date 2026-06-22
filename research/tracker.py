@@ -47,7 +47,9 @@ def _assign_category(snap: dict) -> str:
 
 class Tracker:
     """
-    Consumes TGAlert queue, snapshots tokens, writes to Supabase,
+    Consumes TGAlert queue, snapshots tokens, writes to Supabase.
+    Tracks channel_velocity_5m: count of tokens logged in the last 5 minutes.
+    Used as a market-activity signal — burst of alerts = hot market.
     notifies outcome_poller via callback.
     """
 
@@ -65,6 +67,8 @@ class Tracker:
         self._cb   = poll_schedule_cb
         self._sb   = None   # Supabase client, initialised in thread
         self._thread: Optional[threading.Thread] = None
+        # Rolling 5-min window for channel velocity — stores insert timestamps
+        self._recent_inserts: list[float] = []
 
     def start(self):
         self._thread = threading.Thread(
@@ -104,6 +108,15 @@ class Tracker:
             log.debug("Dedup check error for %s: %s", token_address[:8], e)
             return False
 
+    def _get_velocity(self) -> int:
+        """Count tokens inserted in the last 5 minutes (before this one)."""
+        now = time.time()
+        cutoff = now - 300
+        self._recent_inserts = [t for t in self._recent_inserts if t > cutoff]
+        count = len(self._recent_inserts)
+        self._recent_inserts.append(now)
+        return count
+
     def _insert(self, alert: TGAlert, snap: dict, attempts: int) -> Optional[str]:
         """
         INSERT row to research_tokens.
@@ -113,12 +126,17 @@ class Tracker:
             return None
 
         category = _assign_category(snap)
+        velocity = self._get_velocity()
 
         row = {
             "token_address":      alert.token_address,
             "chain":              alert.chain,
             "alert_time":         alert.alert_time.isoformat(),
             "category":           category,
+            # context fields — point-in-time, can't reconstruct later
+            "symbol":             snap.get("symbol"),
+            "tg_message_text":    alert.raw_text[:500] if alert.raw_text else None,
+            "channel_velocity_5m": velocity,
             "snapshot_ok":        snap.get("snapshot_ok", False),
             "snapshot_attempts":  attempts,
             # market fields (None if snapshot_ok=False)

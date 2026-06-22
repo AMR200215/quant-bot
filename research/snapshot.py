@@ -68,6 +68,7 @@ def fetch_snapshot(token_address: str, chain: str = "solana") -> dict:
     """
     result: dict = {
         "snapshot_ok": False,
+        "symbol": None,
         "price_usd": None,
         "mcap_usd": None,
         "liquidity_usd": None,
@@ -105,6 +106,7 @@ def fetch_snapshot(token_address: str, chain: str = "solana") -> dict:
         return result   # pair exists but no price yet
 
     result["snapshot_ok"] = True
+    result["symbol"]      = (pair.get("baseToken") or {}).get("symbol") or None
     result["price_usd"]   = price
 
     pc = pair.get("priceChange") or {}
