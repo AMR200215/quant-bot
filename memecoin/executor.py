@@ -129,7 +129,7 @@ JITO_TIP_LAMPORTS = 1_000_000   # 0.001 SOL (~$0.17) — only applied when Jito 
 JITO_RPC_URL      = "https://mainnet.block-engine.jito.wtf/api/v1/transactions"
 
 SOLANA_RPC          = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-SOLANA_RPC_FALLBACK = "https://solana-rpc.publicnode.com"
+SOLANA_RPC_FALLBACK = "https://api.mainnet-beta.solana.com"
 
 # Which execution backend to use.  "pumpportal" is the default; set to
 # "jupiter" to fall back to the old path (useful for A/B testing).
