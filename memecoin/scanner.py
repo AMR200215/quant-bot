@@ -28,7 +28,7 @@ from memecoin.config import (
     MIN_LIQUIDITY_USD, MAX_AGE_MINUTES_NEW,
     MIN_BUY_SELL_RATIO_SOCIAL, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL,
     MAX_VOL_H1_SOCIAL, MAX_PRICE_CHANGE_5M_SOCIAL,
-    REALTIME_PRICE_FEED,
+    REALTIME_PRICE_FEED, SOCIAL_ALERT_ONLY,
 )
 from memecoin.data_client import (
     dex_get_new_pairs, dex_get_boosted, gmgn_new_sol, gmgn_trending_sol,
@@ -1687,15 +1687,25 @@ def start(daemon: bool = True):
     _pp_monitor.add_new_token_callback(_on_pp_new_token)
     log.info("PP subscribeNewToken wired — fresh mint tracker + dev-check enabled")
 
-    for target, kwargs in [
-        (_wallet_thread,       {"wallets": wallets, "ranks": ranks}),
-        (_market_thread,       {}),
+    _always_on = [
         (_portfolio_thread,    {}),
-        (_pumpfun_thread,      {}),
-        (_near_miss_poller_thread, {}),
         (_pp_exit_thread,      {}),
         (_reconciler_thread,   {}),
-    ]:
+    ]
+    _social_only_off = [
+        (_wallet_thread,       {"wallets": wallets, "ranks": ranks}),
+        (_market_thread,       {}),
+        (_pumpfun_thread,      {}),
+        (_near_miss_poller_thread, {}),
+    ]
+    if SOCIAL_ALERT_ONLY:
+        log.info("SOCIAL_ALERT_ONLY=True — wallet tracker, market scanner, "
+                 "pumpfun listener, near-miss poller NOT started (zero Helius credits)")
+        threads_to_start = _always_on
+    else:
+        threads_to_start = _always_on + _social_only_off
+
+    for target, kwargs in threads_to_start:
         t = threading.Thread(target=target, kwargs=kwargs, daemon=daemon)
         t.start()
 

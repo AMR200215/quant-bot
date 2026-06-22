@@ -48,6 +48,12 @@ CAPITAL_USD = 8     # ← actual wallet balance (update as it grows)
 # ---------------------------------------------------------------------------
 LIVE_TRADING = True
 
+# Focus mode: when True, only the social_alert (TG) path runs.
+# Disables wallet tracker, market scanner, pumpfun_listener, near-miss poller.
+# Zero Helius credits consumed by those subsystems.
+# Only active threads: portfolio monitor, PP monitor, TG monitor, reconciler.
+SOCIAL_ALERT_ONLY = True
+
 # Daily live loss limit — circuit breaker stops all live trades for the day
 DAILY_LOSS_LIMIT = -5.0   # was -$15; tighter to limit exposure while validating executor
 
