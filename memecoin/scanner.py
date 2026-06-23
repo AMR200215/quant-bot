@@ -1466,6 +1466,23 @@ def _portfolio_thread():
                 except Exception as e:
                     log.debug("screening checks error: %s", e)
 
+                # ── Retry sell_stuck positions with expired timers ────────────
+                # sell_stuck positions are excluded from open_positions() and
+                # update_prices() — nothing else retries them. Check here every
+                # 2s slow-tick and call close_position when the timer expires.
+                for _sp in list(portfolio._positions.values()):
+                    if _sp.status != "sell_stuck":
+                        continue
+                    _retry_at = portfolio._sell_stuck_until.get(_sp.id, 0)
+                    if time.time() >= _retry_at:
+                        log.info("SELL STUCK retry triggered for %s  pos=%s",
+                                 _sp.token_symbol, _sp.id)
+                        portfolio.close_position(
+                            _sp.id,
+                            _sp.exit_reason or "sell_stuck_retry",
+                            _sp.current_price or _sp.entry_price,
+                        )
+
         except Exception as e:
             log.warning("Portfolio monitor error: %s", e)
         time.sleep(0.5)
@@ -1603,7 +1620,16 @@ def _reconciler_thread() -> None:
             keypair = _get_keypair()
             wallet  = str(keypair.pubkey())
 
-            for pos in list(portfolio.open_positions()):
+            # Check open + sell_stuck live positions for balance=0
+            # sell_stuck positions are NOT in open_positions() — but their sell tx
+            # may have confirmed late (outside our 42s timeout). If balance is 0
+            # the tx succeeded and we must journal it as reconciled_gone.
+            _all_live = [
+                p for p in portfolio._positions.values()
+                if p.status in ("open", "sell_stuck")
+                and p.notes and "live|tx:" in p.notes
+            ]
+            for pos in _all_live:
                 if not (pos.notes and "live|tx:" in pos.notes):
                     continue   # paper position — no on-chain balance to check
                 if "|sell_pending" in (pos.notes or ""):
