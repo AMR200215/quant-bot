@@ -379,6 +379,9 @@ class Portfolio:
         # sell_stuck throttle: pos_id → earliest time to retry sell
         # In-memory only — resets on restart (which itself gives a fresh attempt).
         self._sell_stuck_until: dict[str, float] = {}
+        # graduated_unsellable retry counter: pos_id → attempts
+        # After MAX_GRADUATED_RETRIES the position is written off as a total loss.
+        self._graduated_retry_count: dict[str, int] = {}
         # dex_pair_loss tracking: pos_id → timestamp when Jupiter fallback started
         self._jup_fallback_since: dict[str, float] = {}
         # how many positions had PP or DexScreener data last cycle (>0 = feeds healthy)
@@ -1431,9 +1434,29 @@ class Portfolio:
                                     pos.token_symbol)
                         pos.notes = (pos.notes or "") + "|sell_already_gone"
                     elif result.get("reason") == "graduated_unsellable":
-                        # pump-amm + Jupiter both failed — executor already sent alert.
-                        # Go directly to sell_stuck (no retry loop — retrying would just
-                        # burn fees again on the same unsellable token).
+                        # pump-amm + Jupiter both failed — token is mid-migration or pool is empty.
+                        MAX_GRADUATED_RETRIES = 10  # ~10 min of retrying; after this, write off
+                        _grad_attempts = self._graduated_retry_count.get(pos_id, 0) + 1
+                        self._graduated_retry_count[pos_id] = _grad_attempts
+                        if _grad_attempts >= MAX_GRADUATED_RETRIES:
+                            # Migration never settled or pool is permanently empty.
+                            # Write off as total loss — no more Helius/RPC burn.
+                            self._graduated_retry_count.pop(pos_id, None)
+                            self._sell_stuck_until.pop(pos_id, None)
+                            pos.status     = "closed"
+                            pos.exit_price = 0.0
+                            pos.exit_time  = time.time()
+                            pos.exit_reason = "graduated_loss"
+                            pos.notes = (pos.notes or "") + f"|graduated_loss_after_{_grad_attempts}_retries"
+                            self._positions[pos_id] = pos
+                            _save_positions(self._positions)
+                            _write_journal(pos)
+                            log.error(
+                                "GRADUATED LOSS %s — %d retries exhausted, writing off as $0.  mint=%s",
+                                pos.token_symbol, _grad_attempts, pos.token_address,
+                            )
+                            return pos
+                        # Not yet at limit — schedule another retry in 60s
                         pos.status = "sell_stuck"
                         pos.exit_price  = 0.0
                         pos.exit_time   = 0.0
@@ -1444,8 +1467,11 @@ class Portfolio:
                         self._positions[pos_id] = pos
                         self._sell_stuck_until[pos_id] = time.time() + 60
                         _save_positions(self._positions)
-                        log.error("SELL STUCK (graduated_unsellable) %s — pump-amm + Jupiter failed, "
-                                  "retry in 60s.  mint=%s", pos.token_symbol, pos.token_address)
+                        log.error(
+                            "SELL STUCK (graduated_unsellable) %s — pump-amm + Jupiter failed, "
+                            "retry %d/%d in 60s.  mint=%s",
+                            pos.token_symbol, _grad_attempts, MAX_GRADUATED_RETRIES, pos.token_address,
+                        )
                         return pos
                     else:
                         # Sell failed or unconfirmed — retry up to MAX_SELL_RETRIES
@@ -1547,6 +1573,7 @@ class Portfolio:
         promote_to_winners(pos)
         del self._positions[pos_id]
         _save_positions(self._positions)
+        self._graduated_retry_count.pop(pos_id, None)  # clean up retry counter
         # Clean up creator mapping in PP monitor
         try:
             from memecoin.pumpportal_monitor import monitor as _ppmon

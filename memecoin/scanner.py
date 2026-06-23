@@ -27,7 +27,7 @@ from memecoin.config import (
     SOL_WALLET_POLL_SEC, BNB_WALLET_POLL_SEC, DEXSCREENER_POLL_SEC,
     MIN_LIQUIDITY_USD, MAX_AGE_MINUTES_NEW,
     MIN_BUY_SELL_RATIO_SOCIAL, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL,
-    MAX_VOL_H1_SOCIAL, MAX_PRICE_CHANGE_5M_SOCIAL,
+    MAX_VOL_H1_SOCIAL, MAX_PRICE_CHANGE_5M_SOCIAL, MAX_MCAP_SOCIAL,
     REALTIME_PRICE_FEED, SOCIAL_ALERT_ONLY,
 )
 from memecoin.data_client import (
@@ -1087,6 +1087,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         v5m  = screen.get("volume_5m") or 0
         vh1  = screen.get("volume_h1") or 0
         pc5m = screen.get("price_change_5m") or 0
+        mcap = screen.get("mcap_usd") or 0
 
         def _reject_filter(msg: str) -> None:
             log.info("TG REJECT %s — %s", address[:8], msg)
@@ -1108,6 +1109,9 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             return
         if 0 < pc5m >= MAX_PRICE_CHANGE_5M_SOCIAL:
             _reject_filter(f"pc5m={pc5m:.0f} >= {MAX_PRICE_CHANGE_5M_SOCIAL}% (blow-off top)")
+            return
+        if 0 < mcap > MAX_MCAP_SOCIAL:
+            _reject_filter(f"mcap={mcap:.0f} > ${MAX_MCAP_SOCIAL} (near pump.fun graduation)")
             return
 
         screen["passed"] = True

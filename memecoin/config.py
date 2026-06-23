@@ -151,6 +151,7 @@ MIN_VOL_5M_SOCIAL          = 2_000   # low vol = not enough interest
 MAX_VOL_5M_SOCIAL          = 50_000  # raised from 15K: research shows winners avg ~$22K; wide zone to capture data
 MAX_VOL_H1_SOCIAL          = 100_000  # raised from 20K: match wider 5m ceiling
 MAX_PRICE_CHANGE_5M_SOCIAL = 500     # >500% in 5m = blow-off top risk
+MAX_MCAP_SOCIAL            = 60_000  # pump.fun graduates at ~$69K — skip near-graduation tokens
 
 # ---------------------------------------------------------------------------
 # Signal thresholds
