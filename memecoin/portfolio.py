@@ -1443,18 +1443,32 @@ class Portfolio:
                             # Write off as total loss — no more Helius/RPC burn.
                             self._graduated_retry_count.pop(pos_id, None)
                             self._sell_stuck_until.pop(pos_id, None)
-                            pos.status     = "closed"
-                            pos.exit_price = 0.0
-                            pos.exit_time  = time.time()
+                            pos.status      = "closed"
+                            pos.exit_price  = 0.0
+                            pos.exit_time   = time.time()
                             pos.exit_reason = "graduated_loss"
                             pos.notes = (pos.notes or "") + f"|graduated_loss_after_{_grad_attempts}_retries"
                             self._positions[pos_id] = pos
+                            _append_journal(pos)          # write CSV before removing from dict
+                            del self._positions[pos_id]   # remove from live tracking
                             _save_positions(self._positions)
-                            _write_journal(pos)
+                            with self._presigned_lock:    # clean up presigned exit
+                                self._presigned_exits.pop(pos.token_address, None)
+                                self._presigned_ts.pop(pos.token_address, None)
+                                self._graduated_mints.discard(pos.token_address)
                             log.error(
                                 "GRADUATED LOSS %s — %d retries exhausted, writing off as $0.  mint=%s",
                                 pos.token_symbol, _grad_attempts, pos.token_address,
                             )
+                            try:
+                                from app.alerts import _send
+                                _send(
+                                    f"\U0001f480 GRADUATED LOSS {pos.token_symbol} — "
+                                    f"pump-amm unsellable after {_grad_attempts} retries. "
+                                    f"Wrote off as $0. mint={pos.token_address[:8]}"
+                                )
+                            except Exception:
+                                pass
                             return pos
                         # Not yet at limit — schedule another retry in 60s
                         pos.status = "sell_stuck"
