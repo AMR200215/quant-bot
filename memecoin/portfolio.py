@@ -961,15 +961,47 @@ class Portfolio:
                             live_pos.token_symbol, _pp_at_gate, _sig_price or 0,
                         )
                     else:
-                        # PP silent after 2s wait — DexScreener price is 10-30s stale minimum.
-                        # Pass 0 so executor uses Jupiter quote as baseline (live price).
-                        # DexScreener signal_price is never a valid entry anchor.
-                        _exec_signal_price = 0.0
-                        log.info(
-                            "LIVE PREFLIGHT DEFERRED %s — PP silent after 2s, "
-                            "Jupiter quote will be used as live baseline (dex=$%.10f skipped)",
-                            live_pos.token_symbol, _sig_price or 0,
-                        )
+                        # PP silent after 2s of subscription for this token.
+                        # If PP is globally connected and receiving WS frames, token
+                        # is OFF the bonding curve (graduated). Active bonding-curve
+                        # tokens with vol>$2K always emit PP events within 2s of subscribe.
+                        # Only allow if PP itself is in a reconnect gap (globally dark).
+                        _pp_globally_ok = False
+                        try:
+                            _pp_globally_ok = (
+                                _pp.is_connected()
+                                and _pp.pp_last_frame_age() < 30.0
+                            )
+                        except Exception:
+                            pass
+                        if _pp_globally_ok:
+                            # PP active globally, silent specifically → graduated
+                            log.warning(
+                                "LIVE PREFLIGHT BLOCKED %s — PP globally active but "
+                                "token-silent after 2s sub → graduated from bonding curve. "
+                                "No SOL spent.",
+                                live_pos.token_symbol,
+                            )
+                            try:
+                                from app.alerts import _send
+                                _send(
+                                    f"\U0001f6ab PREFLIGHT GRADUATED {live_pos.token_symbol} — "
+                                    f"PP active but no price after 2s subscribe. "
+                                    f"Token already on pump-amm. No SOL spent."
+                                )
+                            except Exception:
+                                pass
+                            _pf_blocked = True
+                        else:
+                            # PP in reconnect gap (globally dark) — allow with Jupiter baseline
+                            _exec_signal_price = 0.0
+                            log.info(
+                                "LIVE PREFLIGHT DEFERRED %s — PP silent after 2s "
+                                "(reconnect gap, frame_age=%.0fs), "
+                                "Jupiter quote will be used as live baseline",
+                                live_pos.token_symbol,
+                                _pp.pp_last_frame_age() if hasattr(_pp, "pp_last_frame_age") else -1,
+                            )
 
             except Exception as _pf_err:
                 log.warning(
