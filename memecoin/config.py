@@ -172,6 +172,30 @@ CONFLUENCE_MEDIUM = 1   # 1 tier-1 OR 2+ tier-2
 CONFLUENCE_STRONG = 2   # 2+ tier-1 OR 5+ any tier
 
 # ---------------------------------------------------------------------------
+# pump.fun bonding curve graduation threshold (pre-graduation exit)
+#
+# Calibration (Jun 2026):
+#   pump.fun virtual initial SOL: 30 SOL
+#   Real SOL to fill bonding curve: 85 SOL
+#   vSolInBondingCurve at graduation: 30 + 85 = 115 SOL
+#
+# Verified by back-solving price formula at known graduation mcap ~$69K:
+#   price = (vSol^2 * 1e6 / k) * sol_price, k = 30 * 1.073e15
+#   At vSol=115: price = $0.0000678 → mcap = 1e9 × $0.0000678 = $67,800 ≈ $69K ✓
+#
+# Entry prices for recent graduated tokens back-solved to vSol:
+#   WHEN  ($0.0000172900) → vSol ≈ 58.1 SOL (50.5% of graduation)
+#   Diego ($0.0000173000) → vSol ≈ 58.1 SOL (50.5% of graduation)
+#   3PGWpRRh ($0.0000165500) → vSol ≈ 56.8 SOL (49.4% of graduation)
+#
+# Trigger at 85% = 97.75 SOL fires 17.25 SOL BEFORE graduation (15% buffer).
+# At trigger price ≈ $0.0000490 → +183% vs typical entry price — captures the
+# runner leg while still on the bonding curve (PP trade-local sells cleanly).
+# ---------------------------------------------------------------------------
+GRAD_SOL_UI        = 115.0   # vSolInBondingCurve (SOL) at bonding curve completion
+PREGRAD_TRIGGER_PCT = 0.85   # exit when vSol/GRAD_SOL_UI >= this (default 85%)
+
+# ---------------------------------------------------------------------------
 # Exit logic
 # ---------------------------------------------------------------------------
 HARD_STOP_PCT        = -0.35   # -35% from entry → immediate exit

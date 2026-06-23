@@ -186,6 +186,10 @@ class PumpPortalMonitor:
         # mint → (price_usd, timestamp)
         self._price_cache: dict[str, tuple[float, float]] = {}
         self._cache_lock             = threading.Lock()
+        # mint → latest vSolInBondingCurve (SOL) for held positions only.
+        # Updated alongside _price_cache; used by pre-graduation exit logic.
+        self._vsol_cache: dict[str, float] = {}
+        self._vsol_lock                    = threading.Lock()
 
         # ── Screening accumulator (LRU-ordered) ──────────────────────────
         self._screening: OrderedDict[str, ScreeningState] = OrderedDict()
@@ -325,6 +329,9 @@ class PumpPortalMonitor:
         with self._cache_lock:
             for m in gone:
                 self._price_cache.pop(m, None)
+        with self._vsol_lock:
+            for m in gone:
+                self._vsol_cache.pop(m, None)
         log.info("PumpPortal unsubscribed from %d token(s)", len(gone))
 
     def get_prices(self, max_age: float = PRICE_STALE_SEC) -> dict[str, float]:
@@ -364,6 +371,16 @@ class PumpPortalMonitor:
             return float("inf")
         _, ts = entry
         return time.time() - ts
+
+    def get_vsol(self, mint: str) -> float:
+        """
+        Return the latest vSolInBondingCurve (SOL) received from PumpPortal for
+        a held position.  Returns 0.0 if no value has been received yet.
+        Only populated for tokens in _subscribed (position-monitored); screening
+        tokens are never stored here.
+        """
+        with self._vsol_lock:
+            return self._vsol_cache.get(mint, 0.0)
 
     def add_price_callback(self, fn) -> None:
         """
@@ -985,6 +1002,16 @@ class PumpPortalMonitor:
         if price_usd > 0:
             with self._cache_lock:
                 self._price_cache[mint] = (price_usd, time.time())
+            # ── vSolInBondingCurve tracking (pre-graduation exit) ─────────
+            # Store latest vSol for held positions only (not screening tokens).
+            # Scanner reads this every 0.5s to detect approach to graduation.
+            _v_sol = msg.get("vSolInBondingCurve")
+            if _v_sol is not None:
+                with self._sub_lock:
+                    _is_held = mint in self._subscribed
+                if _is_held:
+                    with self._vsol_lock:
+                        self._vsol_cache[mint] = float(_v_sol)
             log.debug("PumpPortal price update %s: $%.10f  (vSol=%s vTok=%s)",
                       mint[:8], price_usd,
                       msg.get("vSolInBondingCurve"), msg.get("vTokensInBondingCurve"))

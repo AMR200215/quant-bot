@@ -1425,7 +1425,7 @@ class Portfolio:
                     _URGENT_REASONS = frozenset({
                         "hard_stop", "hard_stop_pp", "trailing_stop", "trailing_stop_pp",
                         "feed_blind", "graduated_exit", "dev_dump", "rug_lp", "velocity",
-                        "abort_tripwire",
+                        "abort_tripwire", "pre_graduation_exit",
                     })
                     result = ex.sell(
                         pos.token_address, pos.size_usd, pos.entry_price, pos.chain,

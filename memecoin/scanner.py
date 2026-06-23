@@ -1277,6 +1277,10 @@ _FEED_BLIND_SEC = 20.0   # both feeds silent for this long → market-sell live 
 # when the DexScreener dex_id stays "pumpswap" across poll cycles.
 _graduated_exit_fired: set[str] = set()
 
+# Dedup set: position IDs that already had pre_graduation_exit fired.
+# Checked in the fast (0.5s) path so we never double-fire.
+_pregrad_exit_fired: set[str] = set()
+
 
 def _portfolio_thread():
     """
@@ -1369,6 +1373,59 @@ def _portfolio_thread():
                 for e in exits:
                     log.info("EXIT %s  reason=%s  pnl=%.1f%%",
                              e["token_symbol"], e["reason"], e["pnl_pct"])
+
+            # ── Pre-graduation exit (fast path, every 0.5s) ───────────────────
+            # When vSolInBondingCurve reaches 85% of the graduation threshold
+            # (97.75 SOL), the token is close to migrating to PumpSwap.  Sell
+            # now on the bonding curve via PumpPortal trade-local (always works
+            # while still on the curve) rather than risk holding into the
+            # unsellable migration window.
+            #
+            # Calibration: pump.fun graduates at vSol = 30 (virtual) + 85 (real)
+            # = 115 SOL.  Confirmed by graduation mcap ~$69K matching formula at
+            # 115 SOL.  85% trigger = 97.75 SOL leaves 17.25 SOL buffer before
+            # graduation — absorbs the typical ≤10 SOL single-tx jump.
+            #
+            # Only applies to cohort:bonding_curve positions (PP feed active,
+            # vSol updating).  cohort:graduated positions (PP silent at entry)
+            # are blocked at entry by Fix 4 (PREFLIGHT GRADUATED).
+            from memecoin.config import GRAD_SOL_UI as _GRAD_SOL, PREGRAD_TRIGGER_PCT as _PREGRAD_PCT
+            for _pg_pos in list(portfolio.open_positions()):
+                if _pg_pos.id in _pregrad_exit_fired:
+                    continue
+                if _pg_pos.chain != "solana":
+                    continue
+                if not (_pg_pos.notes and "live|tx:" in _pg_pos.notes):
+                    continue
+                if _pg_pos.token_address not in open_pumpfun:
+                    continue
+                _vsol = _pp_monitor.get_vsol(_pg_pos.token_address)
+                if _vsol <= 0:
+                    continue
+                _progress = _vsol / _GRAD_SOL
+                if _progress >= _PREGRAD_PCT:
+                    _pregrad_exit_fired.add(_pg_pos.id)
+                    log.warning(
+                        "PRE-GRADUATION EXIT %s (%s) — vSol=%.2f SOL (%.0f%% of "
+                        "graduation threshold %.0f SOL). Selling on bonding curve "
+                        "before migration.",
+                        _pg_pos.token_symbol, _pg_pos.id,
+                        _vsol, _progress * 100, _GRAD_SOL,
+                    )
+                    try:
+                        from app.alerts import _send as _pg_alert
+                        _pg_alert(
+                            f"📈 PRE-GRADUATION EXIT {_pg_pos.token_symbol} — "
+                            f"bonding curve {_progress*100:.0f}% full "
+                            f"({_vsol:.1f}/{_GRAD_SOL:.0f} SOL). "
+                            f"Selling before migration window."
+                        )
+                    except Exception:
+                        pass
+                    portfolio.close_position(
+                        _pg_pos.id, "pre_graduation_exit",
+                        _pg_pos.current_price,
+                    )
 
             if _slow_tick:
                 # ── Graduated exit: token migrated to PumpSwap mid-hold ──────────
