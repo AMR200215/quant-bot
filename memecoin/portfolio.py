@@ -979,15 +979,25 @@ class Portfolio:
                             live_pos.token_symbol, _pp_at_gate, _sig_price or 0,
                         )
                     else:
-                        # PP silent after 2s — proceed with Jupiter quote baseline.
-                        # Migration (graduation) is detected during sell via Custom:6005
-                        # → executor escalates to pump-amm → Jupiter fallback.
-                        _exec_signal_price = 0.0
-                        log.info(
-                            "LIVE PREFLIGHT DEFERRED %s — PP silent 2s, "
-                            "Jupiter quote will be used as live baseline",
-                            live_pos.token_symbol,
-                        )
+                        # PP silent after 2s. Use DexScreener signal price as anchor
+                        # so size normalisation and signal-anchored hard stop both work.
+                        # Never enter with signal_price=0: stop_level=0*0.65=0 fires
+                        # on any retracement and size norm is skipped entirely.
+                        _exec_signal_price = _sig_price or paper_pos.signal_price
+                        if not _exec_signal_price:
+                            log.warning(
+                                "LIVE PREFLIGHT NO PRICE %s — PP silent 2s and no "
+                                "DexScreener price available; blocking (fail-closed)",
+                                live_pos.token_symbol,
+                            )
+                            _pf_blocked = True
+                        else:
+                            log.info(
+                                "LIVE PREFLIGHT DEFERRED %s — PP silent 2s, "
+                                "using dex signal price $%.10f as stop/size anchor; "
+                                "Jupiter quote will be live baseline",
+                                live_pos.token_symbol, _exec_signal_price,
+                            )
 
             except Exception as _pf_err:
                 log.warning(
