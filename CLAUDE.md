@@ -1,14 +1,25 @@
 # quant-bot — Project Context
 
+## Behavior Rules
+
+- **Never ask "should I do X?" after the user already asked for it.** Execute directly. Only confirm once if the action is destructive (drop DB, force push main, delete files).
+- **Stress test before suggesting.** Think through failure modes and whether a feature actually adds value before proposing it. Never ask "should I build it?" without running the stress test first.
+- **Think like management before building.** (1) Does this solve a real gap? (2) Is there a simpler way? (3) What does success look like? (4) What's the cost if it fails? (5) Does this compound with what already exists?
+- **After any new signal/integration, verify it's architecturally independent** — not seeing another signal's output before forming its own view.
+- **Server changes via git only.** Write files locally, push, server pulls. Never ask user to paste multiline code into terminal.
+- **Before any go-live step, curl every external API from the VPS** — mocked unit tests don't catch Cloudflare blocks or IP restrictions.
+- **Validate filters with clean data.** Remove outliers and null values before concluding a filter doesn't work. One outlier trade can invert aggregate PnL conclusions.
+- **Trace the full execution flow before every fix or feature** — signal→buy→monitor→TP→stop→sell→journal→wallet. Flag every blocking call and lag failure mode before writing code.
+- **Responses should be short and concise.**
+
 ## What This Is
 A research bot with two independent modules:
 1. **Prediction markets** (`app/`) — scans Polymarket/Kalshi-style markets, uses Bayesian probability + Kelly sizing. Runs via GitHub Actions twice daily (9AM + 6PM UTC). Commits scan results to `logs/market_journal.csv`.
 2. **Memecoin trading** (`memecoin/`) — copy trades whale wallets on Solana and BSC, with safety screening, trailing stops, and paper trade tracking. Runs as a persistent web server (`python -m app.web`).
 
 ## Infrastructure
-- Currently hosted on **Oracle Cloud free tier** (4 vCPU ARM, 16GB RAM) — but processes get OOM-killed under load, making it unreliable for 24/7 operation.
-- **Plan: migrate to Hetzner CX23** (2 vCPU Intel/AMD, 4GB RAM, €3.99/month). More than enough for this workload. Use Primary IPv4 (not IPv6 only).
-- The memecoin scanner is **currently not running** — last journal entry was April 29 2026. Needs to be started with `nohup python -m app.web > logs/web.log 2>&1 &`.
+- Hosted on **Hetzner CX23** (2 vCPU, 4GB RAM, €3.99/month) — IP 178.105.94.113, Ubuntu 22.04.
+- Bot runs as systemd service `quantbot`. Deploy: git push locally → git pull on server → systemctl restart quantbot.
 
 ## Memecoin Module — Key Files
 ```
