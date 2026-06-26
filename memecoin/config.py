@@ -46,7 +46,7 @@ CAPITAL_USD = 8     # ← actual wallet balance (update as it grows)
 # Flip to True when wallet is funded and SOLANA_PRIVATE_KEY env var is set.
 # False = pure paper trade, nothing changes in existing behaviour.
 # ---------------------------------------------------------------------------
-LIVE_TRADING = True
+LIVE_TRADING = False   # paused 2026-06-27 — unsellable position recurrence
 
 # Focus mode: when True, only the social_alert (TG) path runs.
 # Disables wallet tracker, market scanner, pumpfun_listener, near-miss poller.
