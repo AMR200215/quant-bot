@@ -186,16 +186,45 @@ def fetch_snapshot_with_retry(
     return fetch_snapshot(token_address, chain), retries
 
 
-def fetch_price(token_address: str) -> Optional[float]:
+def _jupiter_price(token_address: str) -> Optional[float]:
+    """
+    Jupiter Price API v2 — fast fallback for tokens not yet indexed by DexScreener.
+    Solana only.  Returns price_usd or None.
+    """
+    try:
+        r = requests.get(
+            f"https://api.jup.ag/price/v2?ids={token_address}",
+            timeout=5,
+        )
+        if r.status_code == 200:
+            entry = (r.json().get("data") or {}).get(token_address)
+            if entry:
+                price = float(entry.get("price") or 0)
+                return price if price > 0 else None
+    except Exception as e:
+        log.debug("Jupiter price fallback failed for %s: %s", token_address[:8], e)
+    return None
+
+
+def fetch_price(token_address: str) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """
     Lightweight price-only fetch for outcome polling.
     Returns (price_usd, mcap_usd, liquidity_usd) or (None, None, None).
+    Tries DexScreener first; falls back to Jupiter for Solana tokens that
+    DexScreener hasn't indexed yet.
     """
     data = _dex_request(f"/latest/dex/tokens/{token_address}")
     pair = _best_pair(data) if data else None
-    if not pair:
-        return None, None, None
-    price = float(pair.get("priceUsd") or 0) or None
-    mcap  = float(pair.get("marketCap") or 0) or None
-    liq   = float((pair.get("liquidity") or {}).get("usd") or 0) or None
-    return price, mcap, liq
+    if pair:
+        price = float(pair.get("priceUsd") or 0) or None
+        mcap  = float(pair.get("marketCap") or 0) or None
+        liq   = float((pair.get("liquidity") or {}).get("usd") or 0) or None
+        if price:
+            return price, mcap, liq
+
+    # Jupiter fallback — no mcap/liq available but better than returning None
+    jup_price = _jupiter_price(token_address)
+    if jup_price:
+        return jup_price, None, None
+
+    return None, None, None

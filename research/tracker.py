@@ -33,16 +33,23 @@ from research.tg_listener import TGAlert
 log = logging.getLogger(__name__)
 
 
-def _assign_category(snap: dict) -> str:
-    """Assign token category from snapshot fields."""
+def _assign_category(snap: dict, chain: str = "solana") -> str:
+    """Assign token category from snapshot fields.
+
+    DexScreener takes 30-90s to index pump.fun tokens, so most alerts arrive
+    before indexing completes (snapshot_ok=False).  All Solana social alerts
+    are pump.fun bonding-curve launches, so default to social_alert_bc rather
+    than the unhelpful "unknown" bucket.
+    """
     if not snap.get("snapshot_ok"):
-        return "unknown"
+        return "social_alert_bc" if chain == "solana" else "unknown"
     dex_id = (snap.get("dex_id") or "").lower()
     if dex_id == "pumpfun":
         return "social_alert_bc"
     elif dex_id in ("pumpswap", "raydium", "orca"):
         return "social_alert_grad"
-    return "unknown"
+    # DexScreener returned data but dex_id is unrecognised — still a Solana launch
+    return "social_alert_bc" if chain == "solana" else "unknown"
 
 
 class Tracker:
@@ -125,7 +132,7 @@ class Tracker:
         if not self._sb:
             return None
 
-        category = _assign_category(snap)
+        category = _assign_category(snap, alert.chain)
         velocity = self._get_velocity()
 
         row = {
@@ -203,7 +210,7 @@ class Tracker:
             return
 
         # 5. Notify poller — must happen AFTER successful INSERT
-        category = _assign_category(snap)
+        category = _assign_category(snap, alert.chain)
         self._cb(alert.token_address, category, alert.alert_time, alert.chain)
 
     def _run(self):

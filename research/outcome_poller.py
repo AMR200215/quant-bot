@@ -165,9 +165,11 @@ class OutcomePoller:
         if not col:
             return
 
-        # Update the price column on research_tokens
+        # Update the price column on research_tokens.
+        # Write 0.0 for dead tokens (price=None) so _maybe_finalise can complete
+        # the row — NULL means "not polled yet"; 0.0 means "polled, token dead".
         try:
-            update = {col: price}
+            update = {col: price if price is not None else 0.0}
             self._sb.table("research_tokens") \
                 .update(update) \
                 .eq("token_address", token_address) \
@@ -261,9 +263,48 @@ class OutcomePoller:
         except Exception as e:
             log.error("Finalise error for %s: %s", token_address[:8], e)
 
+    def _backfill_old_tokens(self):
+        """
+        One-time backfill on startup: find tokens with outcome_complete=False
+        whose entire poll window has elapsed (alert_time older than 35 min).
+        The heap rebuild only covers POLLER_LOOKBACK_HOURS — tokens outside that
+        window are stranded forever unless we close them here.
+
+        Strategy: mark outcome_complete=True directly.  Most of these tokens have
+        price_usd=None (DexScreener never indexed them) so pct computation is
+        meaningless.  For the rare ones with real entry + poll prices, pct_change
+        columns will remain NULL — acceptable; analysis scripts filter on
+        outcome_complete anyway.
+        """
+        if not self._sb:
+            return
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=35)).isoformat()
+            resp = (
+                self._sb.table("research_tokens")
+                .select("token_address", count="exact")
+                .eq("outcome_complete", False)
+                .lt("alert_time", cutoff)
+                .execute()
+            )
+            n = resp.count or 0
+            if not n:
+                log.info("Backfill: no stuck tokens found")
+                return
+            log.info("Backfill: marking %d past-window tokens outcome_complete=True", n)
+            self._sb.table("research_tokens") \
+                .update({"outcome_complete": True}) \
+                .eq("outcome_complete", False) \
+                .lt("alert_time", cutoff) \
+                .execute()
+            log.info("Backfill complete")
+        except Exception as e:
+            log.error("Backfill error: %s", e)
+
     def _run(self):
         self._init_supabase()
         self._rebuild_from_db()
+        self._backfill_old_tokens()   # one-time: close tokens past their poll window
 
         while True:
             self._wake.clear()
