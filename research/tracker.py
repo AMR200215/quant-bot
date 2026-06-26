@@ -133,7 +133,6 @@ class Tracker:
             return None
 
         category = _assign_category(snap, alert.chain)
-        velocity = self._get_velocity()
 
         row = {
             "token_address":      alert.token_address,
@@ -143,7 +142,6 @@ class Tracker:
             # context fields — point-in-time, can't reconstruct later
             "symbol":             snap.get("symbol"),
             "tg_message_text":    alert.raw_text[:500] if alert.raw_text else None,
-            "channel_velocity_5m": velocity,
             "snapshot_ok":        snap.get("snapshot_ok", False),
             "snapshot_attempts":  attempts,
             # market fields (None if snapshot_ok=False)
