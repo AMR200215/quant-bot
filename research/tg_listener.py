@@ -15,6 +15,7 @@ import logging
 import queue
 import re
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -55,12 +56,21 @@ class TGListener:
         log.info("TG listener thread started — channel: %s", TG_CHANNEL)
 
     def _run(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(self._monitor())
-        except Exception as e:
-            log.error("TG listener crashed: %s", e, exc_info=True)
+        """Restart loop — reconnects on disconnect or crash."""
+        while True:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._monitor())
+                log.warning("TG listener disconnected cleanly — reconnecting in 5s")
+            except Exception as e:
+                log.error("TG listener crashed: %s — reconnecting in 5s", e, exc_info=True)
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+            time.sleep(5)
 
     def _is_fresh(self, address: str, now: float) -> bool:
         last = self._seen.get(address, 0)

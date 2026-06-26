@@ -55,8 +55,8 @@ RUGCHECK_BASE = "https://api.rugcheck.xyz/v1"
 # Derived from 708-trade analysis of actual hold-time-to-win data.
 # ---------------------------------------------------------------------------
 CATEGORY_INTERVALS = {
-    # bonding curve: 88% of wins within 20 min, zero wins in 30-60 min
-    "social_alert_bc":   ["T3m", "T5m", "T10m", "T20m"],
+    # bonding curve: T1m added to catch early pumps that peak before T3m
+    "social_alert_bc":   ["T1m", "T3m", "T5m", "T10m", "T20m"],
     # graduated (pumpswap): almost all resolve at 30 min time_stop
     "social_alert_grad": ["T15m", "T30m"],
     # unknown (DexScreener not indexed at alert time): cover both windows
@@ -65,6 +65,7 @@ CATEGORY_INTERVALS = {
 
 # Interval label → minutes offset from alert_time
 INTERVAL_MINUTES = {
+    "T1m":  1,
     "T3m":  3,
     "T5m":  5,
     "T10m": 10,

@@ -76,6 +76,11 @@ def main():
             qsize = alert_queue.qsize()
             if qsize > 50:
                 log.warning("Alert queue backing up: %d items", qsize)
+            # Watchdog: TG listener has its own restart loop, but if the thread
+            # itself dies (unrecoverable), exit so systemd restarts the service.
+            if not listener._thread.is_alive():
+                log.error("TG listener thread died unexpectedly — exiting for systemd restart")
+                sys.exit(1)
     except KeyboardInterrupt:
         log.info("Stopped by user")
 

@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 # Interval label → Supabase column name
 # NOTE: Postgres lowercases all unquoted identifiers, so price_T3m → price_t3m.
 _INTERVAL_COL = {
+    "T1m":  "price_t1m",
     "T3m":  "price_t3m",
     "T5m":  "price_t5m",
     "T10m": "price_t10m",
@@ -41,7 +42,7 @@ _INTERVAL_COL = {
 
 # All intervals for a category → their columns that hold prices
 _CATEGORY_PRICE_COLS = {
-    "social_alert_bc":   ["price_t3m", "price_t5m", "price_t10m", "price_t20m"],
+    "social_alert_bc":   ["price_t1m", "price_t3m", "price_t5m", "price_t10m", "price_t20m"],
     "social_alert_grad": ["price_t15m", "price_t30m"],
     "unknown":           ["price_t5m", "price_t10m", "price_t20m", "price_t30m"],
 }
@@ -108,14 +109,24 @@ class OutcomePoller:
             return
         try:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=POLLER_LOOKBACK_HOURS)).isoformat()
-            resp = (
-                self._sb.table("research_tokens")
-                .select("token_address, category, alert_time, chain")
-                .eq("outcome_complete", False)
-                .gte("created_at", cutoff)
-                .execute()
-            )
-            rows = resp.data or []
+            # Paginate: Supabase caps SELECT at 1000 rows by default
+            rows = []
+            offset = 0
+            batch  = 1000
+            while True:
+                resp = (
+                    self._sb.table("research_tokens")
+                    .select("token_address, category, alert_time, chain")
+                    .eq("outcome_complete", False)
+                    .gte("created_at", cutoff)
+                    .range(offset, offset + batch - 1)
+                    .execute()
+                )
+                chunk = resp.data or []
+                rows.extend(chunk)
+                if len(chunk) < batch:
+                    break
+                offset += batch
             log.info("Outcome poller: rebuilding heap from %d incomplete tokens", len(rows))
             now = time.time()
             with self._lock:
@@ -191,7 +202,7 @@ class OutcomePoller:
         try:
             resp = (
                 self._sb.table("research_tokens")
-                .select("category, price_usd, price_t3m, price_t5m, price_t10m, price_t15m, price_t20m, price_t30m")
+                .select("category, price_usd, price_t1m, price_t3m, price_t5m, price_t10m, price_t15m, price_t20m, price_t30m")
                 .eq("token_address", token_address)
                 .eq("outcome_complete", False)
                 .limit(1)
@@ -219,11 +230,13 @@ class OutcomePoller:
             # T3m → pct_change_t3m (separate column, not pct_change_t5m).
             # If Supabase column doesn't exist yet, we retry without T3m below.
             label_to_col = {
+                "T1m": "price_t1m",
                 "T3m": "price_t3m", "T5m": "price_t5m",
                 "T10m": "price_t10m", "T15m": "price_t15m",
                 "T20m": "price_t20m", "T30m": "price_t30m",
             }
             pct_col_map = {
+                "T1m":  "pct_change_t1m",
                 "T3m":  "pct_change_t3m",
                 "T5m":  "pct_change_t5m",
                 "T10m": "pct_change_t10m",
@@ -261,9 +274,9 @@ class OutcomePoller:
                 _upd_s = str(_upd_e).lower()
                 # pct_change_t3m or pct_change_t15m column not in Supabase yet — retry without
                 if "pgrst204" in _upd_s or "column" in _upd_s:
-                    log.debug("pct_change column missing — retrying finalise without T3m/T15m")
+                    log.debug("pct_change column missing — retrying finalise without new pct cols")
                     _safe_update = {k: v for k, v in update.items()
-                                    if k not in ("pct_change_t3m", "pct_change_t15m")}
+                                    if k not in ("pct_change_t1m", "pct_change_t3m", "pct_change_t15m")}
                     self._sb.table("research_tokens") \
                         .update(_safe_update) \
                         .eq("token_address", token_address) \
@@ -314,10 +327,71 @@ class OutcomePoller:
         except Exception as e:
             log.error("Backfill error: %s", e)
 
+    def _sync_v7_traded(self):
+        """
+        Cross-reference research_tokens with the memecoin journal to flag
+        tokens that v7 actually traded (v7_traded=True).
+        Reads logs/memecoin_journal.csv and logs/memecoin_social_journal.csv.
+        Safe to call repeatedly — only updates rows where v7_traded is still False.
+        """
+        if not self._sb:
+            return
+        import csv
+        from pathlib import Path
+
+        journal_paths = [
+            Path(__file__).parent.parent / "logs" / "memecoin_journal.csv",
+            Path(__file__).parent.parent / "logs" / "memecoin_social_journal.csv",
+        ]
+        addresses: set = set()
+        for path in journal_paths:
+            if not path.exists():
+                continue
+            try:
+                with open(path, newline="") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        # Try common column names for the token address
+                        addr = (
+                            row.get("token_address")
+                            or row.get("address")
+                            or row.get("mint")
+                            or row.get("token")
+                            or ""
+                        ).strip()
+                        if addr:
+                            addresses.add(addr)
+            except Exception as e:
+                log.debug("v7_traded sync: could not read %s: %s", path.name, e)
+
+        if not addresses:
+            log.debug("v7_traded sync: no journal addresses found")
+            return
+
+        log.info("v7_traded sync: flagging up to %d traded tokens in research_tokens", len(addresses))
+        updated = 0
+        # Supabase .in_() filter — send in batches of 200 to stay within URL length limits
+        addr_list = list(addresses)
+        for i in range(0, len(addr_list), 200):
+            batch = addr_list[i:i + 200]
+            try:
+                self._sb.table("research_tokens") \
+                    .update({"v7_traded": True}) \
+                    .in_("token_address", batch) \
+                    .eq("v7_traded", False) \
+                    .execute()
+                updated += len(batch)
+            except Exception as e:
+                log.debug("v7_traded sync batch error: %s", e)
+        log.info("v7_traded sync: done (%d addresses processed)", updated)
+
     def _run(self):
         self._init_supabase()
         self._rebuild_from_db()
         self._backfill_old_tokens()   # one-time: close tokens past their poll window
+        self._sync_v7_traded()        # cross-reference with memecoin journal
+
+        _last_v7_sync = time.time()
 
         while True:
             self._wake.clear()
@@ -327,12 +401,20 @@ class OutcomePoller:
             if next_fire is None:
                 # Nothing scheduled — wait up to 60s for new items
                 self._wake.wait(timeout=60)
+                # Hourly v7_traded sync
+                if time.time() - _last_v7_sync > 3600:
+                    self._sync_v7_traded()
+                    _last_v7_sync = time.time()
                 continue
 
             sleep_s = next_fire - time.time()
             if sleep_s > 0:
                 # Wake early if new item scheduled before next_fire
                 self._wake.wait(timeout=sleep_s)
+                # Hourly v7_traded sync (check while sleeping too)
+                if time.time() - _last_v7_sync > 3600:
+                    self._sync_v7_traded()
+                    _last_v7_sync = time.time()
                 continue
 
             # Fire due polls
