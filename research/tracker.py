@@ -28,6 +28,7 @@ from typing import Callable, Optional
 from research.config import (
     SUPABASE_URL, SUPABASE_KEY,
     CATEGORY_INTERVALS, DEDUP_WINDOW_HOURS,
+    GRAD_VSOL_THRESHOLD,
 )
 from research.snapshot import fetch_snapshot_with_retry
 from research.tg_listener import TGAlert
@@ -123,48 +124,53 @@ def _enrich_with_pp(snap: dict, pp: dict) -> dict:
 
 
 def _assign_category(snap: dict, chain: str = "solana") -> str:
-    """Assign token category from snapshot fields.
-
-    DexScreener takes 30-90s to index pump.fun tokens, so most alerts arrive
-    before indexing completes (snapshot_ok=False).  All Solana social alerts
-    are pump.fun bonding-curve launches, so default to social_alert_bc rather
-    than the unhelpful "unknown" bucket.
     """
+    Assign token category from snapshot fields.
+
+    Priority order:
+    1. pp_vsol near graduation threshold → social_alert_grad
+       (PP is real-time; more reliable than stale DexScreener dex_id)
+    2. DexScreener dex_id (pumpswap/raydium/orca → grad; pumpfun → bc)
+    3. snapshot_ok=False + Solana → social_alert_bc (safe default)
+    """
+    # FIX 3c: use bonding-curve SOL to detect near-graduation tokens
+    # Pump.fun accumulates ~85 SOL before graduation; >=79 SOL = graduating
+    pp_vsol = snap.get("pp_vsol") or 0.0
+    if chain == "solana" and pp_vsol >= GRAD_VSOL_THRESHOLD:
+        return "social_alert_grad"
+
     if not snap.get("snapshot_ok"):
         return "social_alert_bc" if chain == "solana" else "unknown"
+
     dex_id = (snap.get("dex_id") or "").lower()
-    if dex_id == "pumpfun":
-        return "social_alert_bc"
-    elif dex_id in ("pumpswap", "raydium", "orca"):
+    if dex_id in ("pumpswap", "raydium", "orca"):
         return "social_alert_grad"
-    # DexScreener returned data but dex_id is unrecognised — still a Solana launch
+    # pumpfun or unrecognised on Solana → bonding curve
     return "social_alert_bc" if chain == "solana" else "unknown"
 
 
 class Tracker:
     """
     Consumes TGAlert queue, snapshots tokens, writes to Supabase.
-    Tracks channel_velocity_5m: count of tokens logged in the last 5 minutes.
-    Used as a market-activity signal — burst of alerts = hot market.
-    notifies outcome_poller via callback.
+    Notifies outcome_poller and peak_tracker after each successful INSERT.
     """
 
     def __init__(
         self,
         in_queue: queue.Queue,
         poll_schedule_cb: Callable[[str, str, datetime, str], None],
+        peak_schedule_cb: Optional[Callable] = None,
     ):
         """
-        in_queue:         TGAlert objects from TGListener
-        poll_schedule_cb: called as cb(token_address, category, alert_time, chain)
-                          after a successful INSERT so poller can schedule intervals
+        in_queue:          TGAlert objects from TGListener
+        poll_schedule_cb:  cb(token_address, category, alert_time, chain)
+        peak_schedule_cb:  cb(token_address, alert_time, entry_price) — optional
         """
-        self._q    = in_queue
-        self._cb   = poll_schedule_cb
-        self._sb   = None   # Supabase client, initialised in thread
+        self._q        = in_queue
+        self._cb       = poll_schedule_cb
+        self._peak_cb  = peak_schedule_cb
+        self._sb       = None
         self._thread: Optional[threading.Thread] = None
-        # Rolling 5-min window for channel velocity — stores insert timestamps
-        self._recent_inserts: list[float] = []
 
     def start(self):
         self._thread = threading.Thread(
@@ -259,13 +265,18 @@ class Tracker:
             "freeze_disabled":    snap.get("freeze_disabled"),
         }
 
-        # PP-only fields — only include if Supabase has these columns.
-        # If the columns don't exist yet, the retry loop strips them and retries.
+        # Optional fields — added to extras so the retry loop strips them on PGRST204
+        # rather than failing the whole INSERT.  Add new columns here as they're added
+        # to Supabase; the retry loop handles missing ones automatically.
         _pp_extras: dict = {}
         if snap.get("pp_snapshot_ok"):
             _pp_extras["pp_snapshot_ok"] = True
         if snap.get("pp_vsol"):
             _pp_extras["pp_vsol"] = snap["pp_vsol"]
+        if snap.get("top10_holder_pct") is not None:
+            _pp_extras["top10_holder_pct"] = snap["top10_holder_pct"]
+        if snap.get("creator_holds_pct") is not None:
+            _pp_extras["creator_holds_pct"] = snap["creator_holds_pct"]
 
         def _do_insert(base: dict, extra: dict) -> Optional[str]:
             resp = (
@@ -337,9 +348,18 @@ class Tracker:
         if not row_id:
             return
 
-        # 5. Notify poller — must happen AFTER successful INSERT
+        # 5. Notify poller + peak_tracker — must happen AFTER successful INSERT
         category = _assign_category(snap, alert.chain)
         self._cb(alert.token_address, category, alert.alert_time, alert.chain)
+        if self._peak_cb:
+            try:
+                self._peak_cb(
+                    alert.token_address,
+                    alert.alert_time,
+                    snap.get("price_usd"),
+                )
+            except Exception as _pe:
+                log.debug("PeakTracker schedule error: %s", _pe)
 
     def _run(self):
         self._init_supabase()

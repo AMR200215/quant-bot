@@ -50,6 +50,44 @@ def _rugcheck_request(token_address: str, timeout: int = 8) -> Optional[dict]:
     return None
 
 
+def _rugcheck_holders(token_address: str, timeout: int = 8) -> dict:
+    """
+    Fetch full rugcheck report for holder concentration data.
+    Returns dict with top10_holder_pct and creator_holds_pct (both may be None).
+    Uses /report (not /report/summary) which includes topHolders array.
+    """
+    result: dict = {"top10_holder_pct": None, "creator_holds_pct": None}
+    try:
+        url = f"{RUGCHECK_BASE}/tokens/{token_address}/report"
+        r = requests.get(url, timeout=timeout)
+        if r.status_code != 200:
+            return result
+        data = r.json()
+
+        # topHolders: [{address, pct, insider, owner, ...}, ...]
+        holders = data.get("topHolders") or []
+        if holders:
+            pcts = [float(h.get("pct") or 0) for h in holders[:10]]
+            result["top10_holder_pct"] = round(sum(pcts), 2) if pcts else None
+
+        # Creator / dev wallet — look in multiple possible locations
+        creator_pct = None
+        for key in ("creator", "creatorInfo", "dev"):
+            c = data.get(key) or {}
+            if isinstance(c, dict) and c.get("pct") is not None:
+                creator_pct = float(c["pct"])
+                break
+        # Also check if any topHolder is flagged as insider (creator)
+        if creator_pct is None:
+            insider = next((h for h in holders if h.get("insider")), None)
+            if insider:
+                creator_pct = float(insider.get("pct") or 0)
+        result["creator_holds_pct"] = round(creator_pct, 2) if creator_pct is not None else None
+    except Exception as e:
+        log.debug("Rugcheck holders failed for %s: %s", token_address[:8], e)
+    return result
+
+
 def _best_pair(data: dict) -> Optional[dict]:
     """Pick the pair with highest liquidity from DexScreener response."""
     pairs = data.get("pairs") or []
@@ -166,6 +204,10 @@ def fetch_snapshot(token_address: str, chain: str = "solana") -> dict:
             result["rugcheck_score"]  = rc.get("score")
             result["mint_disabled"]   = rc.get("mint_disabled")
             result["freeze_disabled"] = rc.get("freeze_disabled")
+        # Full report for holder concentration (separate endpoint, best-effort)
+        holder_data = _rugcheck_holders(token_address)
+        result["top10_holder_pct"]  = holder_data.get("top10_holder_pct")
+        result["creator_holds_pct"] = holder_data.get("creator_holds_pct")
 
     return result
 

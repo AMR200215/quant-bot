@@ -98,3 +98,13 @@ DEDUP_WINDOW_HOURS = 24
 # logged in the last N hours that have incomplete outcomes.
 # ---------------------------------------------------------------------------
 POLLER_LOOKBACK_HOURS = 2
+
+# ---------------------------------------------------------------------------
+# Tick-level peak tracker (PeakTracker)
+# ---------------------------------------------------------------------------
+TICK_PEAK_WINDOW_S  = 180                          # 3 min window per token
+PP_WS_URL           = "wss://pumpportal.fun/api/data"
+
+# Graduation detection: pump.fun bonding curve holds ~85 SOL at graduation.
+# If pp_vsol >= this, the token is near/past graduation → social_alert_grad.
+GRAD_VSOL_THRESHOLD = 79.0

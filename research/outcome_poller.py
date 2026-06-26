@@ -161,7 +161,7 @@ class OutcomePoller:
             poll_row = {
                 "token_address":  token_address,
                 "interval_label": label,
-                "scheduled_at":   None,   # we don't track exact scheduled_at here
+                "scheduled_at":   None,
                 "polled_at":      polled_at,
                 "price_usd":      price,
                 "mcap_usd":       mcap,
@@ -176,45 +176,54 @@ class OutcomePoller:
         if not col:
             return
 
-        # Update the price column on research_tokens.
-        # Write 0.0 for dead tokens (price=None) so _maybe_finalise can complete
-        # the row — NULL means "not polled yet"; 0.0 means "polled, token dead".
-        try:
-            update = {col: price if price is not None else 0.0}
-            self._sb.table("research_tokens") \
-                .update(update) \
-                .eq("token_address", token_address) \
-                .execute()
-        except Exception as e:
-            log.debug("research_tokens update error for %s/%s: %s", token_address[:8], label, e)
+        # FIX: only write if price was found — leave column NULL if fetch failed.
+        # NULL = "polled, no price".  0.0 was a bug that produced fake -100% pct.
+        if price is not None:
+            try:
+                self._sb.table("research_tokens") \
+                    .update({col: price}) \
+                    .eq("token_address", token_address) \
+                    .execute()
+            except Exception as e:
+                log.debug("research_tokens update error for %s/%s: %s", token_address[:8], label, e)
 
-        log.info("Poll %s %s → $%.10f%s",
-                 token_address[:12], label, price or 0, " [LATE]" if late else "")
+        log.info("Poll %s %s → %s%s",
+                 token_address[:12], label,
+                 f"${price:.10f}" if price else "NULL",
+                 " [LATE]" if late else "")
 
-        # Check if all intervals for this token are now complete
+        # Check if this token is ready to finalise
         self._maybe_finalise(token_address)
 
     def _maybe_finalise(self, token_address: str):
         """
-        If all expected price columns are filled for this token,
-        compute pct_change_* and pct_change_peak, mark outcome_complete=True.
+        Finalise a token when either:
+          (a) all expected price columns are non-NULL, OR
+          (b) enough time has elapsed that all polls should have fired.
+
+        FIX: NULL means "polled, no price found" — compute pct only for
+        non-NULL intervals.  Set data_partial=True if any interval is NULL
+        at finalisation time so analysis queries can exclude incomplete rows.
         """
         try:
             try:
                 resp = (
                     self._sb.table("research_tokens")
-                    .select("category, price_usd, price_t1m, price_t3m, price_t5m, price_t10m, price_t15m, price_t20m, price_t30m")
+                    .select("category, price_usd, alert_time, "
+                            "price_t1m, price_t3m, price_t5m, price_t10m, "
+                            "price_t15m, price_t20m, price_t30m")
                     .eq("token_address", token_address)
                     .eq("outcome_complete", False)
                     .limit(1)
                     .execute()
                 )
             except Exception as _sel_e:
-                # price_t1m not yet added to Supabase — fall back without it
                 if "price_t1m" in str(_sel_e):
                     resp = (
                         self._sb.table("research_tokens")
-                        .select("category, price_usd, price_t3m, price_t5m, price_t10m, price_t15m, price_t20m, price_t30m")
+                        .select("category, price_usd, alert_time, "
+                                "price_t3m, price_t5m, price_t10m, "
+                                "price_t15m, price_t20m, price_t30m")
                         .eq("token_address", token_address)
                         .eq("outcome_complete", False)
                         .limit(1)
@@ -222,30 +231,49 @@ class OutcomePoller:
                     )
                 else:
                     raise
+
             if not resp.data:
                 return
-            row   = resp.data[0]
-            cat   = row.get("category") or "unknown"
-            p0    = row.get("price_usd")
-            cols  = _CATEGORY_PRICE_COLS.get(cat, _CATEGORY_PRICE_COLS["unknown"])
-            # Check all expected cols have a value
-            if any(row.get(c) is None for c in cols):
-                return   # not all polls done yet
+            row = resp.data[0]
+            cat = row.get("category") or "unknown"
+            p0  = row.get("price_usd")
+
+            intervals = CATEGORY_INTERVALS.get(cat, CATEGORY_INTERVALS["unknown"])
+            cols      = _CATEGORY_PRICE_COLS.get(cat, _CATEGORY_PRICE_COLS["unknown"])
+
+            # Timer: have all polls had time to fire? (max interval + 2 min grace)
+            all_polls_due = False
+            alert_time_str = row.get("alert_time")
+            if alert_time_str:
+                try:
+                    alert_ts  = datetime.fromisoformat(alert_time_str)
+                    max_min   = max(INTERVAL_MINUTES[l] for l in intervals if l in INTERVAL_MINUTES)
+                    elapsed   = (datetime.now(timezone.utc) - alert_ts).total_seconds() / 60
+                    all_polls_due = elapsed >= (max_min + 2)
+                except Exception:
+                    pass
+
+            null_cols = [c for c in cols if row.get(c) is None]
+
+            if null_cols and not all_polls_due:
+                return  # still waiting for polls to fire
+
+            data_partial = bool(null_cols)
 
             if not p0 or p0 <= 0:
-                # No entry price — mark complete but skip pct calcs
-                self._sb.table("research_tokens") \
-                    .update({"outcome_complete": True}) \
-                    .eq("token_address", token_address) \
-                    .execute()
+                update = {"outcome_complete": True, "data_partial": data_partial}
+                try:
+                    self._sb.table("research_tokens").update(update) \
+                        .eq("token_address", token_address).execute()
+                except Exception:
+                    self._sb.table("research_tokens") \
+                        .update({"outcome_complete": True}) \
+                        .eq("token_address", token_address).execute()
                 return
 
-            # Compute pct changes.
-            # T3m → pct_change_t3m (separate column, not pct_change_t5m).
-            # If Supabase column doesn't exist yet, we retry without T3m below.
             label_to_col = {
                 "T1m": "price_t1m",
-                "T3m": "price_t3m", "T5m": "price_t5m",
+                "T3m": "price_t3m",  "T5m":  "price_t5m",
                 "T10m": "price_t10m", "T15m": "price_t15m",
                 "T20m": "price_t20m", "T30m": "price_t30m",
             }
@@ -264,20 +292,22 @@ class OutcomePoller:
 
             for label, pcol in label_to_col.items():
                 px = row.get(pcol)
-                if px and px > 0:
+                # Skip NULL (failed/unpolled) — never compute -100% on missing data
+                if px is not None and px > 0:
                     pct = (px / p0 - 1) * 100
                     col_name = pct_col_map.get(label)
                     if col_name:
                         pct_updates[col_name] = round(pct, 2)
                     if peak_pct is None or pct > peak_pct:
-                        peak_pct   = pct
+                        peak_pct  = pct
                         peak_label = label
 
             update = {
                 **pct_updates,
-                "pct_change_peak": round(peak_pct, 2) if peak_pct is not None else None,
-                "peak_interval":   peak_label,
+                "pct_change_peak":  round(peak_pct, 2) if peak_pct is not None else None,
+                "peak_interval":    peak_label,
                 "outcome_complete": True,
+                "data_partial":     data_partial,
             }
             try:
                 self._sb.table("research_tokens") \
@@ -286,19 +316,19 @@ class OutcomePoller:
                     .execute()
             except Exception as _upd_e:
                 _upd_s = str(_upd_e).lower()
-                # pct_change_t3m or pct_change_t15m column not in Supabase yet — retry without
                 if "pgrst204" in _upd_s or "column" in _upd_s:
-                    log.debug("pct_change column missing — retrying finalise without new pct cols")
-                    _safe_update = {k: v for k, v in update.items()
-                                    if k not in ("pct_change_t1m", "pct_change_t3m", "pct_change_t15m")}
+                    _safe = {k: v for k, v in update.items()
+                             if k not in ("pct_change_t1m", "pct_change_t3m",
+                                          "pct_change_t15m", "data_partial")}
                     self._sb.table("research_tokens") \
-                        .update(_safe_update) \
+                        .update(_safe) \
                         .eq("token_address", token_address) \
                         .execute()
                 else:
                     raise
-            log.info("Finalised %s | peak=%.1f%% at %s",
-                     token_address[:12], peak_pct or 0, peak_label)
+
+            log.info("Finalised %s | peak=%.1f%% at %s | partial=%s",
+                     token_address[:12], peak_pct or 0, peak_label, data_partial)
 
         except Exception as e:
             log.error("Finalise error for %s: %s", token_address[:8], e)

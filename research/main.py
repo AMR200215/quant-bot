@@ -32,6 +32,7 @@ def main():
     from research.tg_listener   import TGListener
     from research.tracker        import Tracker
     from research.outcome_poller import OutcomePoller
+    from research.peak_tracker   import PeakTracker
     import os
 
     # Config checks
@@ -49,15 +50,18 @@ def main():
         )
         sys.exit(1)
 
-    alert_queue = queue.Queue(maxsize=500)
-    poller      = OutcomePoller()
-    tracker     = Tracker(
+    alert_queue  = queue.Queue(maxsize=500)
+    poller       = OutcomePoller()
+    peak_tracker = PeakTracker()
+    tracker      = Tracker(
         in_queue=alert_queue,
         poll_schedule_cb=poller.schedule_token,
+        peak_schedule_cb=peak_tracker.schedule_token,
     )
-    listener    = TGListener(out_queue=alert_queue)
+    listener = TGListener(out_queue=alert_queue)
 
     poller.start()
+    peak_tracker.start()
     tracker.start()
     listener.start()
 
