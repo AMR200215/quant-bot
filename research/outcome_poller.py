@@ -200,14 +200,28 @@ class OutcomePoller:
         compute pct_change_* and pct_change_peak, mark outcome_complete=True.
         """
         try:
-            resp = (
-                self._sb.table("research_tokens")
-                .select("category, price_usd, price_t1m, price_t3m, price_t5m, price_t10m, price_t15m, price_t20m, price_t30m")
-                .eq("token_address", token_address)
-                .eq("outcome_complete", False)
-                .limit(1)
-                .execute()
-            )
+            try:
+                resp = (
+                    self._sb.table("research_tokens")
+                    .select("category, price_usd, price_t1m, price_t3m, price_t5m, price_t10m, price_t15m, price_t20m, price_t30m")
+                    .eq("token_address", token_address)
+                    .eq("outcome_complete", False)
+                    .limit(1)
+                    .execute()
+                )
+            except Exception as _sel_e:
+                # price_t1m not yet added to Supabase — fall back without it
+                if "price_t1m" in str(_sel_e):
+                    resp = (
+                        self._sb.table("research_tokens")
+                        .select("category, price_usd, price_t3m, price_t5m, price_t10m, price_t15m, price_t20m, price_t30m")
+                        .eq("token_address", token_address)
+                        .eq("outcome_complete", False)
+                        .limit(1)
+                        .execute()
+                    )
+                else:
+                    raise
             if not resp.data:
                 return
             row   = resp.data[0]
