@@ -260,8 +260,10 @@ class Tracker:
         }
 
         # PP-only fields — only include if Supabase has these columns.
-        # If the columns don't exist yet, we catch PGRST204 below and retry without them.
+        # If the columns don't exist yet, the retry loop strips them and retries.
         _pp_extras: dict = {}
+        if snap.get("pp_snapshot_ok"):
+            _pp_extras["pp_snapshot_ok"] = True
         if snap.get("pp_vsol"):
             _pp_extras["pp_vsol"] = snap["pp_vsol"]
 
