@@ -265,48 +265,52 @@ class Tracker:
         if snap.get("pp_vsol"):
             _pp_extras["pp_vsol"] = snap["pp_vsol"]
 
-        def _do_insert(extra: dict) -> Optional[str]:
-            try:
-                resp = (
-                    self._sb.table("research_tokens")
-                    .insert({**row, **extra}, returning="representation")
-                    .execute()
+        def _do_insert(base: dict, extra: dict) -> Optional[str]:
+            resp = (
+                self._sb.table("research_tokens")
+                .insert({**base, **extra}, returning="representation")
+                .execute()
+            )
+            if resp.data:
+                log.info(
+                    "Logged %s | cat=%s | price=$%.8f | pp=%s | snap_ok=%s",
+                    alert.token_address[:12], category,
+                    snap.get("price_usd") or 0,
+                    "yes" if snap.get("pp_snapshot_ok") else "no",
+                    snap.get("snapshot_ok"),
                 )
-                if resp.data:
-                    row_id = resp.data[0]["id"]
-                    log.info(
-                        "Logged %s | cat=%s | price=$%.8f | pp=%s | snap_ok=%s",
-                        alert.token_address[:12], category,
-                        snap.get("price_usd") or 0,
-                        "yes" if snap.get("pp_snapshot_ok") else "no",
-                        snap.get("snapshot_ok"),
-                    )
-                    return row_id
-            except Exception as exc:
-                raise exc
+                return resp.data[0]["id"]
             return None
 
-        try:
-            return _do_insert(_pp_extras)
-        except Exception as e:
-            e_str = str(e).lower()
-            if "unique" in e_str or "duplicate" in e_str:
-                log.debug("Dedup race for %s — already in DB", alert.token_address[:8])
-                return None
-            # Column not found in Supabase schema (pp_vsol not added yet) — retry without it
-            if _pp_extras and ("pgrst204" in e_str or "column" in e_str):
-                log.debug("pp_extras column missing — retrying without: %s", list(_pp_extras.keys()))
-                try:
-                    return _do_insert({})
-                except Exception as e2:
-                    e2_str = str(e2).lower()
-                    if "unique" in e2_str or "duplicate" in e2_str:
-                        log.debug("Dedup race for %s — already in DB", alert.token_address[:8])
-                        return None
-                    log.error("Supabase INSERT failed for %s: %s", alert.token_address[:8], e2)
+        import re as _re
+        _base = dict(row)
+        _extra = dict(_pp_extras)
+        # Retry loop: on PGRST204, strip the offending column and retry (up to 5 times)
+        for _attempt in range(6):
+            try:
+                return _do_insert(_base, _extra)
+            except Exception as e:
+                e_str = str(e).lower()
+                if "unique" in e_str or "duplicate" in e_str:
+                    log.debug("Dedup race for %s — already in DB", alert.token_address[:8])
                     return None
-            else:
-                log.error("Supabase INSERT failed for %s: %s", alert.token_address[:8], e)
+                if "pgrst204" in e_str or "schema cache" in e_str:
+                    # Parse: "Could not find the 'col_name' column of 'research_tokens'"
+                    m = _re.search(r"'(\w+)'\s+column", str(e))
+                    missing = m.group(1) if m else None
+                    if missing and missing in _extra:
+                        log.debug("Extra column '%s' missing — dropping from retry", missing)
+                        _extra = {k: v for k, v in _extra.items() if k != missing}
+                    elif missing and missing in _base:
+                        log.debug("Base column '%s' missing in Supabase — dropping from retry", missing)
+                        _base = {k: v for k, v in _base.items() if k != missing}
+                    else:
+                        log.error("Supabase INSERT failed for %s: %s", alert.token_address[:8], e)
+                        return None
+                else:
+                    log.error("Supabase INSERT failed for %s: %s", alert.token_address[:8], e)
+                    return None
+        log.error("Supabase INSERT gave up after retries for %s", alert.token_address[:8])
         return None
 
     def _process(self, alert: TGAlert):
