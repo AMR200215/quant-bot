@@ -215,12 +215,21 @@ class OutcomePoller:
                     .execute()
                 return
 
-            # Compute pct changes
-            # NOTE: Postgres lowercases columns → price_t3m not price_T3m
+            # Compute pct changes.
+            # T3m → pct_change_t3m (separate column, not pct_change_t5m).
+            # If Supabase column doesn't exist yet, we retry without T3m below.
             label_to_col = {
                 "T3m": "price_t3m", "T5m": "price_t5m",
                 "T10m": "price_t10m", "T15m": "price_t15m",
                 "T20m": "price_t20m", "T30m": "price_t30m",
+            }
+            pct_col_map = {
+                "T3m":  "pct_change_t3m",
+                "T5m":  "pct_change_t5m",
+                "T10m": "pct_change_t10m",
+                "T15m": "pct_change_t15m",
+                "T20m": "pct_change_t20m",
+                "T30m": "pct_change_t30m",
             }
             pct_updates = {}
             peak_pct    = None
@@ -230,19 +239,9 @@ class OutcomePoller:
                 px = row.get(pcol)
                 if px and px > 0:
                     pct = (px / p0 - 1) * 100
-                    # Map to actual schema column names (lowercase)
-                    pct_col_map = {
-                        "T3m":  "pct_change_t5m",   # no separate T3m col, reuse T5m
-                        "T5m":  "pct_change_t5m",
-                        "T10m": "pct_change_t10m",
-                        "T20m": "pct_change_t20m",
-                        "T30m": "pct_change_t30m",
-                    }
                     col_name = pct_col_map.get(label)
                     if col_name:
-                        # Don't overwrite with a worse value (T3m shouldn't overwrite T5m)
-                        if col_name not in pct_updates or pct > pct_updates[col_name]:
-                            pct_updates[col_name] = round(pct, 2)
+                        pct_updates[col_name] = round(pct, 2)
                     if peak_pct is None or pct > peak_pct:
                         peak_pct   = pct
                         peak_label = label
@@ -253,10 +252,24 @@ class OutcomePoller:
                 "peak_interval":   peak_label,
                 "outcome_complete": True,
             }
-            self._sb.table("research_tokens") \
-                .update(update) \
-                .eq("token_address", token_address) \
-                .execute()
+            try:
+                self._sb.table("research_tokens") \
+                    .update(update) \
+                    .eq("token_address", token_address) \
+                    .execute()
+            except Exception as _upd_e:
+                _upd_s = str(_upd_e).lower()
+                # pct_change_t3m or pct_change_t15m column not in Supabase yet — retry without
+                if "pgrst204" in _upd_s or "column" in _upd_s:
+                    log.debug("pct_change column missing — retrying finalise without T3m/T15m")
+                    _safe_update = {k: v for k, v in update.items()
+                                    if k not in ("pct_change_t3m", "pct_change_t15m")}
+                    self._sb.table("research_tokens") \
+                        .update(_safe_update) \
+                        .eq("token_address", token_address) \
+                        .execute()
+                else:
+                    raise
             log.info("Finalised %s | peak=%.1f%% at %s",
                      token_address[:12], peak_pct or 0, peak_label)
 

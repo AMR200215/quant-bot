@@ -99,7 +99,15 @@ def fetch_snapshot(token_address: str, chain: str = "solana") -> dict:
     pair = _best_pair(data) if data else None
 
     if not pair:
-        return result   # snapshot_ok stays False
+        # DexScreener hasn't indexed this token yet (30-90s lag for pump.fun).
+        # Try Jupiter for at least a price_usd — covers ~60% more tokens.
+        # snapshot_ok stays False (partial data: no volume/liquidity/BSR).
+        jup = _jupiter_price(token_address)
+        if jup:
+            result["price_usd"] = jup
+            # Pump.fun supply = 1e9 tokens; gives approximate mcap
+            result["mcap_usd"] = jup * 1_000_000_000
+        return result
 
     price = float(pair.get("priceUsd") or 0)
     if price <= 0:

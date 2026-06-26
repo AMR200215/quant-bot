@@ -16,11 +16,13 @@ Design decisions:
   still schedule outcome polls — token may index in time for T+5m poll.
 """
 
+import json
 import logging
 import queue
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable, Optional
 
 from research.config import (
@@ -31,6 +33,93 @@ from research.snapshot import fetch_snapshot_with_retry
 from research.tg_listener import TGAlert
 
 log = logging.getLogger(__name__)
+
+# Shared file written by scanner when it processes a TG alert.
+# Contains PP price/vsol/buy-pressure at exact alert time — bypasses DexScreener lag.
+_PP_SNAPSHOTS_PATH = Path(__file__).parent / "data" / "pp_snapshots.jsonl"
+
+
+def _read_pp_snapshot(token_address: str, alert_ts: float) -> dict:
+    """
+    Return PP snapshot written by scanner for this token, or {} if not found.
+    Matches within 120s of alert_ts (scanner and research process both see the
+    TG alert nearly simultaneously, scanner is usually faster).
+    """
+    if not _PP_SNAPSHOTS_PATH.exists():
+        return {}
+    try:
+        best: dict = {}
+        with open(_PP_SNAPSHOTS_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                    if e.get("mint") == token_address:
+                        if abs(e.get("ts", 0) - alert_ts) < 120:
+                            best = e   # take last match (most recent)
+                except Exception:
+                    pass
+        return best
+    except Exception:
+        return {}
+
+
+def _enrich_with_pp(snap: dict, pp: dict) -> dict:
+    """
+    Merge PP snapshot data into a DexScreener snapshot.
+    PP data fills gaps when DexScreener hasn't indexed the token yet (90% of cases).
+
+    Priority: DexScreener wins if it returned a value; PP fills missing fields.
+    Exception: price_usd — PP price at alert time is more accurate than
+    DexScreener's 30-90s-stale price, so always prefer PP price when available.
+
+    PP fields:
+      pp_price    — USD price derived from vSol/vTokens (exact alert time)
+      pp_vsol     — vSolInBondingCurve (SOL) at alert time (→ market cap)
+      pp_buys     — buy tx count since token creation (proxy for buys_5m)
+      pp_sells    — sell tx count since token creation
+      pp_sol_in   — total SOL bought since creation (proxy for volume)
+      sol_price   — SOL/USD rate at alert time (for USD volume conversion)
+    """
+    pp_price = pp.get("pp_price") or 0.0
+    pp_vsol  = pp.get("pp_vsol")  or 0.0
+    pp_buys  = pp.get("pp_buys")  or 0
+    pp_sells = pp.get("pp_sells") or 0
+    pp_sol   = pp.get("pp_sol_in") or 0.0
+    sol_px   = pp.get("sol_price") or 0.0
+
+    # PP price is always more accurate at alert time — prefer over DexScreener
+    if pp_price > 0:
+        snap["price_usd"] = pp_price
+        # Pump.fun supply = 1e9 tokens; give mcap even if DexScreener missed it
+        if not snap.get("mcap_usd"):
+            snap["mcap_usd"] = pp_price * 1_000_000_000
+
+    # vSol → write to pp_vsol field (new column, stored separately from DexScreener data)
+    if pp_vsol > 0:
+        snap["pp_vsol"] = pp_vsol
+
+    # Buy/sell counts — only fill if DexScreener didn't provide them
+    if pp_buys > 0 and not snap.get("buys_5m"):
+        snap["buys_5m"] = pp_buys
+    if pp_sells > 0 and not snap.get("sells_5m"):
+        snap["sells_5m"] = pp_sells
+
+    # BSR from PP counts
+    total_txns = pp_buys + pp_sells
+    if total_txns > 0 and not snap.get("buy_sell_ratio_5m"):
+        snap["buy_sell_ratio_5m"] = round(pp_buys / total_txns, 3)
+
+    # Volume in USD from SOL in × SOL price
+    if pp_sol > 0 and sol_px > 0 and not snap.get("volume_5m"):
+        snap["volume_5m"] = round(pp_sol * sol_px, 2)
+
+    # Mark that PP data was used — helps analysis distinguish data sources
+    snap["pp_snapshot_ok"] = True
+
+    return snap
 
 
 def _assign_category(snap: dict, chain: str = "solana") -> str:
@@ -144,7 +233,7 @@ class Tracker:
             "tg_message_text":    alert.raw_text[:500] if alert.raw_text else None,
             "snapshot_ok":        snap.get("snapshot_ok", False),
             "snapshot_attempts":  attempts,
-            # market fields (None if snapshot_ok=False)
+            # market fields (None if snapshot_ok=False; PP-enriched when DexScreener misses)
             "price_usd":          snap.get("price_usd"),
             "mcap_usd":           snap.get("mcap_usd"),
             "liquidity_usd":      snap.get("liquidity_usd"),
@@ -170,25 +259,52 @@ class Tracker:
             "freeze_disabled":    snap.get("freeze_disabled"),
         }
 
-        try:
-            resp = (
-                self._sb.table("research_tokens")
-                .insert(row, returning="representation")
-                .execute()
-            )
-            if resp.data:
-                row_id = resp.data[0]["id"]
-                log.info(
-                    "Logged %s | cat=%s | liq=$%.0f | snap_ok=%s",
-                    alert.token_address[:12], category,
-                    snap.get("liquidity_usd") or 0,
-                    snap.get("snapshot_ok"),
+        # PP-only fields — only include if Supabase has these columns.
+        # If the columns don't exist yet, we catch PGRST204 below and retry without them.
+        _pp_extras: dict = {}
+        if snap.get("pp_vsol"):
+            _pp_extras["pp_vsol"] = snap["pp_vsol"]
+
+        def _do_insert(extra: dict) -> Optional[str]:
+            try:
+                resp = (
+                    self._sb.table("research_tokens")
+                    .insert({**row, **extra}, returning="representation")
+                    .execute()
                 )
-                return row_id
+                if resp.data:
+                    row_id = resp.data[0]["id"]
+                    log.info(
+                        "Logged %s | cat=%s | price=$%.8f | pp=%s | snap_ok=%s",
+                        alert.token_address[:12], category,
+                        snap.get("price_usd") or 0,
+                        "yes" if snap.get("pp_snapshot_ok") else "no",
+                        snap.get("snapshot_ok"),
+                    )
+                    return row_id
+            except Exception as exc:
+                raise exc
+            return None
+
+        try:
+            return _do_insert(_pp_extras)
         except Exception as e:
-            # Unique constraint violation = already logged today (race condition)
-            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            e_str = str(e).lower()
+            if "unique" in e_str or "duplicate" in e_str:
                 log.debug("Dedup race for %s — already in DB", alert.token_address[:8])
+                return None
+            # Column not found in Supabase schema (pp_vsol not added yet) — retry without it
+            if _pp_extras and ("pgrst204" in e_str or "column" in e_str):
+                log.debug("pp_extras column missing — retrying without: %s", list(_pp_extras.keys()))
+                try:
+                    return _do_insert({})
+                except Exception as e2:
+                    e2_str = str(e2).lower()
+                    if "unique" in e2_str or "duplicate" in e2_str:
+                        log.debug("Dedup race for %s — already in DB", alert.token_address[:8])
+                        return None
+                    log.error("Supabase INSERT failed for %s: %s", alert.token_address[:8], e2)
+                    return None
             else:
                 log.error("Supabase INSERT failed for %s: %s", alert.token_address[:8], e)
         return None
@@ -199,8 +315,16 @@ class Tracker:
             log.debug("Dedup skip %s", alert.token_address[:8])
             return
 
-        # 2. Fetch snapshot with retry
+        # 2. Fetch snapshot with retry (DexScreener + rugcheck + Jupiter fallback)
         snap, attempts = fetch_snapshot_with_retry(alert.token_address, alert.chain)
+
+        # 2b. Enrich with PP data written by scanner at TG alert time.
+        # PP data is available for all Solana tokens regardless of DexScreener lag.
+        # Fields: pp_price, pp_vsol, pp_buys, pp_sells, pp_sol_in, sol_price.
+        if alert.chain == "solana":
+            pp = _read_pp_snapshot(alert.token_address, alert.alert_time.timestamp())
+            if pp:
+                snap = _enrich_with_pp(snap, pp)
 
         # 3 + 4. Insert (category assigned inside _insert)
         row_id = self._insert(alert, snap, attempts)

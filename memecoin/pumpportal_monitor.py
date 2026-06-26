@@ -101,6 +101,7 @@ class ScreeningState:
     creator_pubkey:   Optional[str] = None
     first_seen_price: float         = 0.0
     latest_price:     float         = 0.0
+    latest_vsol:      float         = 0.0   # vSolInBondingCurve at most recent trade
     unique_buyers:    set           = field(default_factory=set)
     buy_count:        int           = 0
     sell_count:       int           = 0
@@ -371,6 +372,11 @@ class PumpPortalMonitor:
             return float("inf")
         _, ts = entry
         return time.time() - ts
+
+    def get_sol_price(self) -> float:
+        """Return current SOL/USD price (refreshed every ~60s)."""
+        with self._sol_price_lock:
+            return self._sol_price
 
     def get_vsol(self, mint: str) -> float:
         """
@@ -1104,6 +1110,10 @@ class PumpPortalMonitor:
             if state.first_seen_price <= 0:
                 state.first_seen_price = price_usd
             state.latest_price = price_usd
+
+        vsol = msg.get("vSolInBondingCurve")
+        if vsol is not None:
+            state.latest_vsol = float(vsol)
 
         state.lru_ts = now
 

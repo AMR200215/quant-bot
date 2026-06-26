@@ -937,6 +937,51 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         except Exception as _sub_err:
             log.debug("Early PP subscribe failed %s: %s", address[:8], _sub_err)
 
+    # ── Write PP snapshot to shared file for research pipeline ───────────────
+    # Research tracker reads this to get entry data (price, vsol, buy pressure)
+    # at TG alert time, bypassing DexScreener's 30-90s indexing lag.
+    # Best-effort — never blocks the signal path.
+    if chain == "solana":
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            _st = _pp_monitor.get_screening_state(address)
+            _sol_px = _pp_monitor.get_sol_price()
+            _pp_entry = {
+                "mint":             address,
+                "ts":               _t0,
+                "sol_price":        _sol_px,
+                "pp_price":         _st.latest_price      if _st else 0.0,
+                "pp_first_price":   _st.first_seen_price  if _st else 0.0,
+                "pp_vsol":          _st.latest_vsol       if _st else 0.0,
+                "pp_buys":          _st.buy_count         if _st else 0,
+                "pp_sells":         _st.sell_count        if _st else 0,
+                "pp_unique_buyers": _st.unique_buyer_count if _st else 0,
+                "pp_sol_in":        _st.sol_in            if _st else 0.0,
+                "pp_net_sol":       _st.net_sol_inflow    if _st else 0.0,
+            }
+            _snap_path = _Path(__file__).parent.parent / "research" / "data" / "pp_snapshots.jsonl"
+            _snap_path.parent.mkdir(parents=True, exist_ok=True)
+            # Keep only entries from last 5 min to bound file size
+            _now_ts = _t0
+            _kept = []
+            try:
+                with open(_snap_path) as _sf:
+                    for _ln in _sf:
+                        try:
+                            _e = _json.loads(_ln)
+                            if _now_ts - _e.get("ts", 0) < 300:
+                                _kept.append(_ln.strip())
+                        except Exception:
+                            pass
+            except FileNotFoundError:
+                pass
+            _kept.append(_json.dumps(_pp_entry))
+            with open(_snap_path, "w") as _sf:
+                _sf.write("\n".join(_kept) + "\n")
+        except Exception as _snap_err:
+            log.debug("PP research snapshot write failed %s: %s", address[:8], _snap_err)
+
     # ── Lever 2: instant PP cache check ─────────────────────────────────────
     # If this token was already subscribed from the pump.fun stream before Telegram
     # mentioned it, we have accumulated trade data. Skip DexScreener entirely and
