@@ -874,33 +874,46 @@ class Portfolio:
                         pass
 
                     if _pp_price == 0:
-                        try:
-                            from memecoin.health_monitor import bump_preflight_no_price as _bpnp
-                            _bpnp()
-                        except Exception:
-                            pass
-                        log.warning(
-                            "LIVE PREFLIGHT NO PRICE %s — PP returned no price in 2s, "
-                            "blocking trade (fail-closed, type-1)",
-                            live_pos.token_symbol,
-                        )
-                        try:
-                            from app.alerts import _send
-                            _send(
-                                f"🚫 PREFLIGHT NO PRICE {live_pos.token_symbol} — "
-                                f"PP silent 2s. Trade blocked, no SOL spent."
+                        # Before fail-closing, check if signal carries a PP screening
+                        # price (set by _fire_screening_entry for tokens confirmed on
+                        # bonding curve).  A 1-3 min old token can have a 2-20s quiet
+                        # period between the screening accumulation and the TG alert.
+                        _sig_pp_fallback = getattr(signal, "_price_pp", 0.0) or 0.0
+                        if _sig_pp_fallback > 0:
+                            _pp_price = _sig_pp_fallback
+                            log.info(
+                                "LIVE PREFLIGHT PP-QUIET %s — using screening price "
+                                "$%.10f (PP silent in 2s, bonding-curve confirmed)",
+                                live_pos.token_symbol, _pp_price,
                             )
-                        except Exception:
-                            pass
-                        try:
-                            from memecoin.gate_logger import log_gate_block as _lgb
-                            _lgb("preflight_no_price", live_pos.chain, live_pos.token_address,
-                                 live_pos.token_symbol, pp_price=0.0,
-                                 signal_price=_sig_price or 0,
-                                 size_usd=_live_size)
-                        except Exception:
-                            pass
-                        _pf_blocked = True
+                        else:
+                            try:
+                                from memecoin.health_monitor import bump_preflight_no_price as _bpnp
+                                _bpnp()
+                            except Exception:
+                                pass
+                            log.warning(
+                                "LIVE PREFLIGHT NO PRICE %s — PP returned no price in 2s, "
+                                "blocking trade (fail-closed, type-1)",
+                                live_pos.token_symbol,
+                            )
+                            try:
+                                from app.alerts import _send
+                                _send(
+                                    f"🚫 PREFLIGHT NO PRICE {live_pos.token_symbol} — "
+                                    f"PP silent 2s. Trade blocked, no SOL spent."
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                from memecoin.gate_logger import log_gate_block as _lgb
+                                _lgb("preflight_no_price", live_pos.chain, live_pos.token_address,
+                                     live_pos.token_symbol, pp_price=0.0,
+                                     signal_price=_sig_price or 0,
+                                     size_usd=_live_size)
+                            except Exception:
+                                pass
+                            _pf_blocked = True
 
                     else:
                         # PP-to-PP drift gate (20% — measures genuine movement only)
@@ -940,6 +953,11 @@ class Portfolio:
                     # one, upgrade to same-venue comparison (PP_at_gate ÷ Jupiter)
                     # which measures only real movement, not DexScreener indexer lag.
                     # If PP stays silent, fall back to cross-venue dex baseline.
+                    # Type-2 path: no PP-based block. Original intent (see comment above).
+                    # Try 2s for a PP tick to get same-venue slippage baseline.
+                    # If PP silent, use Jupiter quote as baseline in executor.
+                    # Graduated tokens (bought accidentally) are handled by the
+                    # executor's 6005-detection → pump-amm escalation path.
                     try:
                         from memecoin.health_monitor import bump_preflight_attempt as _bpa
                         _bpa()
@@ -961,47 +979,15 @@ class Portfolio:
                             live_pos.token_symbol, _pp_at_gate, _sig_price or 0,
                         )
                     else:
-                        # PP silent after 2s of subscription for this token.
-                        # If PP is globally connected and receiving WS frames, token
-                        # is OFF the bonding curve (graduated). Active bonding-curve
-                        # tokens with vol>$2K always emit PP events within 2s of subscribe.
-                        # Only allow if PP itself is in a reconnect gap (globally dark).
-                        _pp_globally_ok = False
-                        try:
-                            _pp_globally_ok = (
-                                _pp.is_connected()
-                                and _pp.pp_last_frame_age() < 30.0
-                            )
-                        except Exception:
-                            pass
-                        if _pp_globally_ok:
-                            # PP active globally, silent specifically → graduated
-                            log.warning(
-                                "LIVE PREFLIGHT BLOCKED %s — PP globally active but "
-                                "token-silent after 2s sub → graduated from bonding curve. "
-                                "No SOL spent.",
-                                live_pos.token_symbol,
-                            )
-                            try:
-                                from app.alerts import _send
-                                _send(
-                                    f"\U0001f6ab PREFLIGHT GRADUATED {live_pos.token_symbol} — "
-                                    f"PP active but no price after 2s subscribe. "
-                                    f"Token already on pump-amm. No SOL spent."
-                                )
-                            except Exception:
-                                pass
-                            _pf_blocked = True
-                        else:
-                            # PP in reconnect gap (globally dark) — allow with Jupiter baseline
-                            _exec_signal_price = 0.0
-                            log.info(
-                                "LIVE PREFLIGHT DEFERRED %s — PP silent after 2s "
-                                "(reconnect gap, frame_age=%.0fs), "
-                                "Jupiter quote will be used as live baseline",
-                                live_pos.token_symbol,
-                                _pp.pp_last_frame_age() if hasattr(_pp, "pp_last_frame_age") else -1,
-                            )
+                        # PP silent after 2s — proceed with Jupiter quote baseline.
+                        # Migration (graduation) is detected during sell via Custom:6005
+                        # → executor escalates to pump-amm → Jupiter fallback.
+                        _exec_signal_price = 0.0
+                        log.info(
+                            "LIVE PREFLIGHT DEFERRED %s — PP silent 2s, "
+                            "Jupiter quote will be used as live baseline",
+                            live_pos.token_symbol,
+                        )
 
             except Exception as _pf_err:
                 log.warning(

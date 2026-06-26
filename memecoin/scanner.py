@@ -380,6 +380,14 @@ def _fire_screening_entry(chain: str, mint: str, state, *, is_telegram: bool = F
         sig.signal_type  = "pumpportal_screen"
         sig.token_cohort = "pumpfun_stream"
 
+    # Tag as PP-sourced: portfolio.py uses Type-1 preflight (pp-to-pp drift gate)
+    # not the Type-2 graduated check.  These signals come from bonding-curve
+    # trade events — the token is definitively on pump.fun BC at accumulation time.
+    # _price_pp is the screening accumulator's latest price, used as fallback if
+    # PP is momentarily quiet during the 2s preflight window (common at 1-3 min age).
+    sig._price_source = "pp"
+    sig._price_pp     = price
+
     sig.notes += (f" | screen: buyers={state.unique_buyer_count}"
                   f" net_sol={state.net_sol_inflow:.3f}")
     sig.creator_wallet = state.creator_pubkey or ""
