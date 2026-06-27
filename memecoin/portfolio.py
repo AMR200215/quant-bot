@@ -1439,6 +1439,10 @@ class Portfolio:
                     # PUMPSWAP_LOCAL_SIM_ONLY=True (default): simulate only, then fall through
                     # to executor.  PUMPSWAP_LOCAL_SELL_ENABLED=True: simulate then send if ok.
                     _pumpswap_local_succeeded = False
+                    # Tracks whether ExitRouter identified this token as graduated/uncertain so
+                    # the executor escalation below doesn't miss it (pos.dex_id may still be
+                    # "pumpfun" for Cat-2 tokens that graduated during the hold period).
+                    _er_classified_graduated  = False
                     try:
                         from memecoin.config import EXIT_ROUTER_ENABLED as _er_enabled
                     except ImportError:
@@ -1449,6 +1453,14 @@ class Portfolio:
                             from memecoin import pumpportal_monitor as _ppm_mod
                             _exit_state = _er.classify(pos, _ppm_mod.monitor)
                             pos.notes = (pos.notes or "") + f"|exit_state:{_exit_state.value}"
+                            # Flag graduated/uncertain so executor uses escalate=True on first attempt.
+                            # Without this, Cat-2 tokens that graduated during the hold would hit the
+                            # BC path → 6005 → graduated_unsellable → waste a full 60s retry cycle.
+                            if _exit_state in (
+                                _er.TokenExitState.GRADUATED_PUMPSWAP,
+                                _er.TokenExitState.MIGRATION_UNCERTAIN,
+                            ):
+                                _er_classified_graduated = True
                             if _exit_state == _er.TokenExitState.GRADUATED_PUMPSWAP:
                                 from memecoin.config import CHAINS as _CHAINS_er
                                 _chain_cfg_er = _CHAINS_er.get(pos.chain, {})
@@ -1478,12 +1490,16 @@ class Portfolio:
                         ex     = MemeExecutor()
                         # escalate=True when:
                         #   (a) this is a retry — previous full ladder failed
-                        #   (b) token is graduated (cohort:graduated in notes) — pool="auto" returns
-                        #       Custom:6005; executor escalate path uses pump-amm → Jupiter fallback
+                        #   (b) token is graduated — pool="auto" returns Custom:6005;
+                        #       escalate path uses pump-amm → Jupiter fallback.
+                        #       Sources: cohort:graduated note (set at entry for Cat-3),
+                        #       "graduated_exit" reason, OR ExitRouter classification
+                        #       (catches Cat-2 tokens that graduated during hold).
                         _is_retry     = getattr(pos, "sell_attempts", 0) > 0
                         _is_graduated = (
                             "|cohort:graduated" in (pos.notes or "")
                             or reason == "graduated_exit"
+                            or _er_classified_graduated
                         )
                     result = {}  # default: no executor result (set below if executor runs)
                     if not _pumpswap_local_succeeded:

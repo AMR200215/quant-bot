@@ -158,10 +158,11 @@ def fetch_pool(token_mint: str, rpc_url: str) -> dict:
 
     log.debug("fetch_pool RPC lookup  mint=%s", token_mint[:8])
 
-    # Build base58 bytes for memcmp filter
+    # Validate mint address before the RPC call.
+    # memcmp filter uses token_mint directly (base58 — correct format for Solana RPC).
     from solders.pubkey import Pubkey
     try:
-        mint_bytes_b64 = base64.b64encode(bytes(Pubkey.from_string(token_mint))).decode()
+        Pubkey.from_string(token_mint)
     except Exception as e:
         raise PumpSwapPoolError("pumpswap_bad_pool_layout", f"Invalid mint pubkey: {e}")
 
