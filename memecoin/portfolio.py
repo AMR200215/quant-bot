@@ -1434,34 +1434,77 @@ class Portfolio:
                                     self._presigned_exits[pos.token_address] = _ps_bytes
 
                 if not _presigned_used:
-                    ex     = MemeExecutor()
-                    # escalate=True when:
-                    #   (a) this is a retry — previous full ladder failed
-                    #   (b) token is graduated (cohort:graduated in notes) — pool="auto" returns
-                    #       Custom:6005; executor escalate path uses pump-amm → Jupiter fallback
-                    _is_retry     = getattr(pos, "sell_attempts", 0) > 0
-                    _is_graduated = (
-                        "|cohort:graduated" in (pos.notes or "")
-                        or reason == "graduated_exit"
-                    )
-                    if _is_graduated and not _is_retry:
-                        log.info("SELL graduated token — pump-amm PRIMARY, Jupiter FALLBACK  token=%s",
-                                 pos.token_address[:8])
-                    _URGENT_REASONS = frozenset({
-                        "hard_stop", "hard_stop_pp", "trailing_stop", "trailing_stop_pp",
-                        "feed_blind", "graduated_exit", "dev_dump", "rug_lp", "velocity",
-                        "abort_tripwire", "pre_graduation_exit",
-                    })
-                    result = ex.sell(
-                        pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
-                        escalate=_is_retry or _is_graduated,
-                        urgent=(reason in _URGENT_REASONS),
-                        # Pass tokens_held so local build can use exact count without RPC.
-                        # Only valid for full exits (fraction=1.0 default); partial TPs
-                        # pass known_token_count separately in _run_tp_sell_bg.
-                        known_token_count=int(pos.tokens_held or 0),
-                    )
-                    if result.get("success"):
+                    # ── ExitRouter: classify token state + run PumpSwap local path ──────
+                    # Additive layer — does NOT replace the executor path below.
+                    # PUMPSWAP_LOCAL_SIM_ONLY=True (default): simulate only, then fall through
+                    # to executor.  PUMPSWAP_LOCAL_SELL_ENABLED=True: simulate then send if ok.
+                    _pumpswap_local_succeeded = False
+                    try:
+                        from memecoin.config import EXIT_ROUTER_ENABLED as _er_enabled
+                    except ImportError:
+                        _er_enabled = False
+                    if _er_enabled:
+                        try:
+                            from memecoin import exit_router as _er
+                            from memecoin import pumpportal_monitor as _ppm_mod
+                            _exit_state = _er.classify(pos, _ppm_mod.monitor)
+                            pos.notes = (pos.notes or "") + f"|exit_state:{_exit_state.value}"
+                            if _exit_state == _er.TokenExitState.GRADUATED_PUMPSWAP:
+                                from memecoin.config import CHAINS as _CHAINS_er
+                                _chain_cfg_er = _CHAINS_er.get(pos.chain, {})
+                                _rpc_url_er   = _chain_cfg_er.get(
+                                    "rpc", "https://api.mainnet-beta.solana.com"
+                                )
+                                _ps_result = _er.run_pumpswap_local_path(pos, reason, _rpc_url_er)
+                                pos.notes  = (pos.notes or "") + f"|exit_route:{_ps_result.get('route', '?')}"
+                                if _ps_result.get("sim_error"):
+                                    pos.notes = (pos.notes or "") + f"|sim_err:{_ps_result['sim_error']}"
+                                # Only skip executor when local sell was truly sent + confirmed.
+                                # SIM_ONLY mode returns success=False → executor runs as normal.
+                                if _ps_result.get("success"):
+                                    pos.notes = (
+                                        (pos.notes or "")
+                                        + f"|sell_tx:{_ps_result.get('tx_sig', '')}|pumpswap_local_ok"
+                                    )
+                                    log.info(
+                                        "ExitRouter: PumpSwap local sell succeeded  mint=%s  sig=%s",
+                                        pos.token_address[:8], _ps_result.get("tx_sig", "")[:16],
+                                    )
+                                    _pumpswap_local_succeeded = True
+                        except Exception as _er_exc:
+                            log.warning("ExitRouter error (non-fatal, falling through): %s", _er_exc)
+
+                    if not _pumpswap_local_succeeded:
+                        ex     = MemeExecutor()
+                        # escalate=True when:
+                        #   (a) this is a retry — previous full ladder failed
+                        #   (b) token is graduated (cohort:graduated in notes) — pool="auto" returns
+                        #       Custom:6005; executor escalate path uses pump-amm → Jupiter fallback
+                        _is_retry     = getattr(pos, "sell_attempts", 0) > 0
+                        _is_graduated = (
+                            "|cohort:graduated" in (pos.notes or "")
+                            or reason == "graduated_exit"
+                        )
+                    result = {}  # default: no executor result (set below if executor runs)
+                    if not _pumpswap_local_succeeded:
+                        if _is_graduated and not _is_retry:
+                            log.info("SELL graduated token — pump-amm PRIMARY, Jupiter FALLBACK  token=%s",
+                                     pos.token_address[:8])
+                        _URGENT_REASONS = frozenset({
+                            "hard_stop", "hard_stop_pp", "trailing_stop", "trailing_stop_pp",
+                            "feed_blind", "graduated_exit", "dev_dump", "rug_lp", "velocity",
+                            "abort_tripwire", "pre_graduation_exit",
+                        })
+                        result = ex.sell(
+                            pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
+                            escalate=_is_retry or _is_graduated,
+                            urgent=(reason in _URGENT_REASONS),
+                            # Pass tokens_held so local build can use exact count without RPC.
+                            # Only valid for full exits (fraction=1.0 default); partial TPs
+                            # pass known_token_count separately in _run_tp_sell_bg.
+                            known_token_count=int(pos.tokens_held or 0),
+                        )
+                    if not _pumpswap_local_succeeded and result.get("success"):
                         _exec_fill = result.get("fill_price")
                         # Only overwrite trigger price if executor measured a real fill.
                         # fill_price=None means sol_recv=0 (balance lag) — keep pos.exit_price
@@ -1486,11 +1529,11 @@ class Portfolio:
                             alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
                         except Exception:
                             pass
-                    elif result.get("reason") == "zero_balance":
+                    elif not _pumpswap_local_succeeded and result.get("reason") == "zero_balance":
                         log.warning("Live sell %s — zero balance, tokens already sold. Closing.",
                                     pos.token_symbol)
                         pos.notes = (pos.notes or "") + "|sell_already_gone"
-                    elif result.get("reason") == "graduated_unsellable":
+                    elif not _pumpswap_local_succeeded and result.get("reason") == "graduated_unsellable":
                         # pump-amm + Jupiter both failed — token is mid-migration or pool is empty.
                         # 3 retries covers genuine migration lag (~2-3 min to settle).
                         # Honeypots will fail all 3 immediately — write off fast, stop burning fees.
@@ -1547,7 +1590,7 @@ class Portfolio:
                             pos.token_symbol, _grad_attempts, MAX_GRADUATED_RETRIES, pos.token_address,
                         )
                         return pos
-                    else:
+                    elif not _pumpswap_local_succeeded:
                         # Sell failed or unconfirmed — retry up to MAX_SELL_RETRIES
                         pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
                         reason_tag = "sell_unconf" if result.get("unconfirmed") else "sell_failed"

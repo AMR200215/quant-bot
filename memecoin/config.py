@@ -330,3 +330,11 @@ DEXSCREENER_BASE = "https://api.dexscreener.com"
 GMGN_BASE        = "https://gmgn.ai/defi/quotation/v1"
 RUGCHECK_BASE    = "https://api.rugcheck.xyz/v1"
 HONEYPOT_BASE    = "https://api.honeypot.is/v2"
+
+# ---------------------------------------------------------------------------
+# PumpSwap local exit layer (Level 3)
+# ---------------------------------------------------------------------------
+EXIT_ROUTER_ENABLED          = True    # master switch for exit state classification
+PUMPSWAP_LOCAL_SELL_ENABLED  = False   # flip True only after sim validation passes
+PUMPSWAP_LOCAL_SIM_ONLY      = True    # simulate, log result, then fall through to executor
+PUMPSWAP_LOCAL_REQUIRE_SIM_OK = True   # if sim fails, do not send (always respected)
