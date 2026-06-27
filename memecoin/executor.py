@@ -960,6 +960,52 @@ def _pumpportal_build_tx(
 # Jupiter execution path (fallback)
 # ---------------------------------------------------------------------------
 
+
+def check_sell_route(token_address: str) -> bool | None:
+    """
+    Ask Jupiter if a sell route exists for this token before buying.
+
+    Returns:
+      True  — route exists and outAmount > 0 (sellable)
+      False — Jupiter returned explicit no-route (honeypot indicator — block entry)
+      None  — uncertain (timeout / 429 / network error) — caller should allow through
+
+    Uses a 1-token amount (1_000_000 raw units at 6 decimals).
+    Timeout: 4s — fits within the 2s PP preflight poll with parallel execution.
+    Jupiter 400 with "COULD_NOT_FIND_ANY_ROUTE" = definitive no-route.
+    Any other error (rate limit, network) = uncertain, pass through.
+    """
+    try:
+        resp = requests.get(
+            JUPITER_QUOTE_URL,
+            params={
+                "inputMint":   token_address,
+                "outputMint":  SOL_MINT,
+                "amount":      1_000_000,   # 1 token at 6 decimals — enough to find routes
+                "slippageBps": 9900,
+            },
+            timeout=4,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return int(data.get("outAmount") or 0) > 0
+        if resp.status_code == 400:
+            # Jupiter sends 400 when it explicitly finds no routes
+            err_msg = ""
+            try:
+                err_msg = resp.json().get("error", "") or resp.text[:120]
+            except Exception:
+                err_msg = resp.text[:120]
+            log.debug("Jupiter sell check 400 for %s: %s", token_address[:8], err_msg)
+            return False
+        # 429, 5xx — uncertain; don't block on transient infra issues
+        log.debug("Jupiter sell check %d for %s — uncertain", resp.status_code, token_address[:8])
+        return None
+    except Exception as _e:
+        log.debug("Jupiter sell check exception for %s: %s", token_address[:8], _e)
+        return None
+
+
 def _jup_get_quote(input_mint: str, output_mint: str, amount: int) -> dict:
     resp = requests.get(
         JUPITER_QUOTE_URL,

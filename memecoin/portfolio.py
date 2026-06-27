@@ -856,6 +856,27 @@ class Portfolio:
                 # Always subscribe so monitoring ticks start arriving immediately
                 _pp.subscribe({_mint})
 
+                # ── Sellability check (parallel with PP poll) ─────────────────
+                # Ask Jupiter if a sell route exists before we spend any SOL.
+                # Honeypot contracts disable sells — Jupiter returns explicit 400
+                # (no routes) in that case. Runs in background so it adds 0
+                # latency to the happy path (PP price arrives in <500ms; Jupiter
+                # check takes 200-400ms and completes within the 2s window).
+                # On any transient error (429, timeout, network) returns None →
+                # we allow through and let rugcheck/screener carry that risk.
+                _sell_route_result: list = [None]   # [True|False|None]
+                def _run_sell_check():
+                    try:
+                        from memecoin.executor import check_sell_route as _csr
+                        _sell_route_result[0] = _csr(_mint)
+                    except Exception:
+                        pass
+                import threading as _threading_pf
+                _sell_check_thread = _threading_pf.Thread(
+                    target=_run_sell_check, daemon=True, name="sell-route-check"
+                )
+                _sell_check_thread.start()
+
                 if _price_source == "pp":
                     # ── Type-1 path: poll for live PP price, fail-closed if silent ──
                     _pp_price = 0.0
@@ -1004,6 +1025,29 @@ class Portfolio:
                     "PumpPortal pre-flight error for %s: %s — blocking (fail-closed)",
                     live_pos.token_symbol, _pf_err,
                 )
+                _pf_blocked = True
+
+            # Wait for sell-route check (should be done; cap at 1s extra)
+            try:
+                _sell_check_thread.join(timeout=1.0)
+            except Exception:
+                pass
+            if _sell_route_result[0] is False and not _pf_blocked:
+                # Jupiter returned explicit no-route — token is likely a honeypot.
+                # Block entry: we can't buy what we can't sell.
+                log.warning(
+                    "LIVE PREFLIGHT HONEYPOT %s %s — Jupiter has no sell route; "
+                    "blocking entry (contract likely disables sells)",
+                    live_pos.token_symbol, _mint[:8],
+                )
+                try:
+                    from app.alerts import _send
+                    _send(
+                        f"\U0001f6ab PREFLIGHT HONEYPOT {live_pos.token_symbol} — "
+                        f"Jupiter has no sell route. Entry blocked, no SOL spent."
+                    )
+                except Exception:
+                    pass
                 _pf_blocked = True
 
             if _pf_blocked:
@@ -1463,7 +1507,9 @@ class Portfolio:
                         pos.notes = (pos.notes or "") + "|sell_already_gone"
                     elif result.get("reason") == "graduated_unsellable":
                         # pump-amm + Jupiter both failed — token is mid-migration or pool is empty.
-                        MAX_GRADUATED_RETRIES = 10  # ~10 min of retrying; after this, write off
+                        # 3 retries covers genuine migration lag (~2-3 min to settle).
+                        # Honeypots will fail all 3 immediately — write off fast, stop burning fees.
+                        MAX_GRADUATED_RETRIES = 3
                         _grad_attempts = self._graduated_retry_count.get(pos_id, 0) + 1
                         self._graduated_retry_count[pos_id] = _grad_attempts
                         if _grad_attempts >= MAX_GRADUATED_RETRIES:
@@ -1491,16 +1537,15 @@ class Portfolio:
                             try:
                                 from app.alerts import _send
                                 _send(
-                                    f"\U0001f480 GRADUATED LOSS {pos.token_symbol} — "
-                                    f"pump-amm unsellable after {_grad_attempts} retries. "
-                                    f"Wrote off as $0. mint={pos.token_address[:8]}"
+                                    f"\U0001f480 SELL FAILED {pos.token_symbol} — "
+                                    f"pump-amm + Jupiter failed {_grad_attempts}x. "
+                                    f"Possible honeypot. Try selling manually in Phantom:\n"
+                                    f"mint: {pos.token_address}"
                                 )
                             except Exception:
                                 pass
                             return pos
-                        # Not yet at limit — schedule another retry in 120s
-                        # (60s was too tight: Jupiter 429 on rapid retries for Token-2022 tokens
-                        # where pump-amm fails immediately and Jupiter is the only path)
+                        # Not yet at limit — schedule another retry in 60s
                         pos.status = "sell_stuck"
                         pos.exit_price  = 0.0
                         pos.exit_time   = 0.0
@@ -1509,11 +1554,11 @@ class Portfolio:
                         if "|graduated_unsellable" not in (pos.notes or ""):
                             pos.notes = (pos.notes or "") + "|graduated_unsellable"
                         self._positions[pos_id] = pos
-                        self._sell_stuck_until[pos_id] = time.time() + 120
+                        self._sell_stuck_until[pos_id] = time.time() + 60
                         _save_positions(self._positions)
                         log.error(
                             "SELL STUCK (graduated_unsellable) %s — pump-amm + Jupiter failed, "
-                            "retry %d/%d in 120s.  mint=%s",
+                            "retry %d/%d in 60s.  mint=%s",
                             pos.token_symbol, _grad_attempts, MAX_GRADUATED_RETRIES, pos.token_address,
                         )
                         return pos
