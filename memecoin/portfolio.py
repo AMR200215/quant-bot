@@ -1498,7 +1498,9 @@ class Portfolio:
                             except Exception:
                                 pass
                             return pos
-                        # Not yet at limit — schedule another retry in 60s
+                        # Not yet at limit — schedule another retry in 120s
+                        # (60s was too tight: Jupiter 429 on rapid retries for Token-2022 tokens
+                        # where pump-amm fails immediately and Jupiter is the only path)
                         pos.status = "sell_stuck"
                         pos.exit_price  = 0.0
                         pos.exit_time   = 0.0
@@ -1507,11 +1509,11 @@ class Portfolio:
                         if "|graduated_unsellable" not in (pos.notes or ""):
                             pos.notes = (pos.notes or "") + "|graduated_unsellable"
                         self._positions[pos_id] = pos
-                        self._sell_stuck_until[pos_id] = time.time() + 60
+                        self._sell_stuck_until[pos_id] = time.time() + 120
                         _save_positions(self._positions)
                         log.error(
                             "SELL STUCK (graduated_unsellable) %s — pump-amm + Jupiter failed, "
-                            "retry %d/%d in 60s.  mint=%s",
+                            "retry %d/%d in 120s.  mint=%s",
                             pos.token_symbol, _grad_attempts, MAX_GRADUATED_RETRIES, pos.token_address,
                         )
                         return pos
