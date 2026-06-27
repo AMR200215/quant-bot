@@ -1461,7 +1461,16 @@ class Portfolio:
                                 _er.TokenExitState.MIGRATION_UNCERTAIN,
                             ):
                                 _er_classified_graduated = True
-                            if _exit_state == _er.TokenExitState.GRADUATED_PUMPSWAP:
+                            # Run pumpswap_local for GRADUATED_PUMPSWAP and MIGRATION_UNCERTAIN.
+                            # MIGRATION_UNCERTAIN = Cat-2 token that graduated during hold but PP
+                            # migration event was missed. Pool RPC lookup at sell time is the
+                            # source of truth — if the pool exists, local sell can succeed.
+                            # pumpswap_no_pool error class means token is still on BC → executor
+                            # handles it normally.
+                            if _exit_state in (
+                                _er.TokenExitState.GRADUATED_PUMPSWAP,
+                                _er.TokenExitState.MIGRATION_UNCERTAIN,
+                            ):
                                 from memecoin.config import CHAINS as _CHAINS_er
                                 _chain_cfg_er = _CHAINS_er.get(pos.chain, {})
                                 _rpc_url_er   = _chain_cfg_er.get(
