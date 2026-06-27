@@ -853,29 +853,37 @@ class Portfolio:
                 _mint      = signal.token_address
                 _sig_price = paper_pos.signal_price
 
+                # ── Category gate (before subscribing / spending any SOL) ────
+                # Three categories of social-alert tokens; each has a different fix:
+                #   Cat-1 (new launch, pre-screened, PP source): PP live price baseline ✓
+                #   Cat-2 (bonding curve, TG-alerted, 5-30 min): age gate — stale = skip
+                #   Cat-3 (graduated / PumpSwap): skip entirely — no real-time PumpSwap
+                #          price source yet; pump-amm sell path unreliable for Token-2022
+                _token_dex    = (paper_pos.dex_id or "").lower()
+                _token_age    = paper_pos.age_minutes or 0.0
+                _is_graduated = _token_dex in ("pumpswap", "raydium", "orca")
+                if _is_graduated:
+                    log.info(
+                        "LIVE PREFLIGHT CAT-3 SKIP %s — graduated (%s); no PumpSwap "
+                        "price feed yet. Skipping live, paper continues.",
+                        live_pos.token_symbol, _token_dex,
+                    )
+                    return
+
+                # Cat-2 age gate: TG-alerted bonding-curve tokens signal at 5-30 min age.
+                # Beyond MAX_AGE_SOCIAL_LIVE the signal is stale (pump likely resolved).
+                # Cat-1 (PP source) is exempt — pre-screened at creation, always fresh.
+                from memecoin.config import MAX_AGE_SOCIAL_LIVE as _MAX_AGE
+                if _price_source != "pp" and _token_age > _MAX_AGE:
+                    log.info(
+                        "LIVE PREFLIGHT CAT-2 STALE %s — age=%.1f min > %d min gate; "
+                        "skipping live, paper continues.",
+                        live_pos.token_symbol, _token_age, _MAX_AGE,
+                    )
+                    return
+
                 # Always subscribe so monitoring ticks start arriving immediately
                 _pp.subscribe({_mint})
-
-                # ── Sellability check (parallel with PP poll) ─────────────────
-                # Ask Jupiter if a sell route exists before we spend any SOL.
-                # Honeypot contracts disable sells — Jupiter returns explicit 400
-                # (no routes) in that case. Runs in background so it adds 0
-                # latency to the happy path (PP price arrives in <500ms; Jupiter
-                # check takes 200-400ms and completes within the 2s window).
-                # On any transient error (429, timeout, network) returns None →
-                # we allow through and let rugcheck/screener carry that risk.
-                _sell_route_result: list = [None]   # [True|False|None]
-                def _run_sell_check():
-                    try:
-                        from memecoin.executor import check_sell_route as _csr
-                        _sell_route_result[0] = _csr(_mint)
-                    except Exception:
-                        pass
-                import threading as _threading_pf
-                _sell_check_thread = _threading_pf.Thread(
-                    target=_run_sell_check, daemon=True, name="sell-route-check"
-                )
-                _sell_check_thread.start()
 
                 if _price_source == "pp":
                     # ── Type-1 path: poll for live PP price, fail-closed if silent ──
@@ -1025,29 +1033,6 @@ class Portfolio:
                     "PumpPortal pre-flight error for %s: %s — blocking (fail-closed)",
                     live_pos.token_symbol, _pf_err,
                 )
-                _pf_blocked = True
-
-            # Wait for sell-route check (should be done; cap at 1s extra)
-            try:
-                _sell_check_thread.join(timeout=1.0)
-            except Exception:
-                pass
-            if _sell_route_result[0] is False and not _pf_blocked:
-                # Jupiter returned explicit no-route — token is likely a honeypot.
-                # Block entry: we can't buy what we can't sell.
-                log.warning(
-                    "LIVE PREFLIGHT HONEYPOT %s %s — Jupiter has no sell route; "
-                    "blocking entry (contract likely disables sells)",
-                    live_pos.token_symbol, _mint[:8],
-                )
-                try:
-                    from app.alerts import _send
-                    _send(
-                        f"\U0001f6ab PREFLIGHT HONEYPOT {live_pos.token_symbol} — "
-                        f"Jupiter has no sell route. Entry blocked, no SOL spent."
-                    )
-                except Exception:
-                    pass
                 _pf_blocked = True
 
             if _pf_blocked:
