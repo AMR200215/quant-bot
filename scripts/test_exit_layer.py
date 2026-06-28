@@ -194,76 +194,57 @@ except Exception as e:
 
 
 # ── Test 4: build_pumpswap_sell_tx() ──────────────────────────────────────
-section("TEST 4 — build_pumpswap_sell_tx() using a real WSOLP holder as seller")
+section("TEST 4 — build_pumpswap_sell_tx() using bot wallet + WSOLP T22 ATA check")
 
 tx_bytes = None
-real_holder = None
+ata_exists_for_sim = False
 if pool is not None:
     try:
+        import base58 as _b58
         from solders.keypair import Keypair
-        from solders.pubkey import Pubkey
-        from memecoin.pumpswap_local import build_pumpswap_sell_tx, TOKEN_PROGRAM_T22
+        from memecoin.pumpswap_local import build_pumpswap_sell_tx, TOKEN_PROGRAM_T22, _derive_ata
 
-        # Find a real token holder via getTokenLargestAccounts on the pool_base_token_account.
-        # We need a wallet that actually has a T22 ATA for WSOLP so the account exists on-chain.
-        # With sigVerify=False the signer constraint is bypassed at the runtime level.
-        print("  Looking up token holders for WSOLP...")
-        _time.sleep(2)  # space out from Test 2 to avoid public RPC burst limit
-        holders_resp = _rpc_with_retry(RPC_URL, {
+        # Load bot wallet to check if its WSOLP T22 ATA exists on-chain.
+        raw_key = _os.getenv("SOLANA_PRIVATE_KEY", "")
+        if not raw_key:
+            raise RuntimeError("SOLANA_PRIVATE_KEY not set")
+
+        bot_kp     = Keypair.from_bytes(_b58.b58decode(raw_key))
+        bot_wallet = str(bot_kp.pubkey())
+        wsolp_ata  = _derive_ata(bot_wallet, T22_MINT, TOKEN_PROGRAM_T22)
+        print(f"  Bot wallet: {bot_wallet[:20]}...")
+        print(f"  WSOLP T22 ATA: {wsolp_ata[:20]}...")
+
+        _time.sleep(2)
+        ata_info = _rpc_with_retry(RPC_URL, {
             "jsonrpc": "2.0", "id": 1,
-            "method": "getTokenLargestAccounts",
-            "params": [T22_MINT, {"commitment": "confirmed"}],
+            "method": "getAccountInfo",
+            "params": [wsolp_ata, {"encoding": "base64", "commitment": "confirmed"}],
         })
-        accounts = holders_resp.get("result", {}).get("value", [])
-        if accounts:
-            # getTokenLargestAccounts returns token account addresses, not owner wallets.
-            # Fetch the owner of the largest account.
-            top_ta = accounts[0]["address"]
-            _time.sleep(1)
-            ai = _rpc_with_retry(RPC_URL, {
-                "jsonrpc": "2.0", "id": 2,
-                "method": "getAccountInfo",
-                "params": [top_ta, {"encoding": "jsonParsed", "commitment": "confirmed"}],
-            })
-            owner = (
-                ai.get("result", {})
-                  .get("value", {})
-                  .get("data", {})
-                  .get("parsed", {})
-                  .get("info", {})
-                  .get("owner")
-            )
-            if owner:
-                real_holder = owner
-                print(f"  Using real holder as seller: {owner[:20]}...")
-            else:
-                print(f"  {WARN}  Could not parse owner from getAccountInfo; using dummy wallet")
+        ata_exists_for_sim = ata_info.get("result", {}).get("value") is not None
+        _check(
+            "Bot WSOLP T22 ATA exists on-chain (simulation will reach program logic)",
+            ata_exists_for_sim,
+            wsolp_ata[:16] if ata_exists_for_sim else "not found — sim will fail at account preload",
+        )
 
-        dummy_kp = Keypair()
-        seller_wallet = real_holder if real_holder else str(dummy_kp.pubkey())
-
+        # Build TX with real bot keypair (sigVerify=False in simulation)
         tx_bytes = build_pumpswap_sell_tx(
-            wallet_pubkey=seller_wallet,
-            keypair=dummy_kp,      # signed with dummy (sigVerify=False in sim)
+            wallet_pubkey=bot_wallet,
+            keypair=bot_kp,
             token_mint=T22_MINT,
-            token_amount_raw=1,          # sell 1 raw token unit
-            min_sol_out_lamports=0,      # accept any output
+            token_amount_raw=1,
+            min_sol_out_lamports=0,
             priority_fee_sol=0.0001,
             token_program_id=TOKEN_PROGRAM_T22,
             pool=pool,
             rpc_url=RPC_URL,
         )
         _check("TX built without exception", tx_bytes is not None)
-        _check("TX non-empty", len(tx_bytes) > 0, f"{len(tx_bytes)} bytes")
-        _check(
-            "TX size in range for 24-account instruction (>800 bytes)",
-            len(tx_bytes) > 800,
-            f"{len(tx_bytes)} bytes",
-        )
-        _check("Using real token holder (ATA exists on-chain)", real_holder is not None,
-               seller_wallet[:16] if real_holder else "dummy wallet — sim may fail early")
+        _check("TX size ≥ 900 bytes (24-account instruction)", len(tx_bytes) >= 900, f"{len(tx_bytes)} bytes")
+
     except Exception as e:
-        print(f"  {FAIL}  build_pumpswap_sell_tx raised: {e}")
+        print(f"  {FAIL}  Test 4 raised: {e}")
         import traceback; traceback.print_exc()
 else:
     print(f"  {WARN}  Skipped (pool fetch failed in Test 2)")
