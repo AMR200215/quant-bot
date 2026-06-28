@@ -53,6 +53,7 @@ from app import alerts
 from memecoin.pumpportal_monitor import monitor as _pp_monitor
 from memecoin.helius_account_monitor import helius_monitor as _helius_monitor
 import memecoin.health_monitor as _health
+import memecoin.program_monitor as _program_monitor
 
 
 class _NoDexData(Exception):
@@ -1812,6 +1813,7 @@ def start(daemon: bool = True):
     ranks   = build_wallet_ranks(wallets)
 
     _health.start()
+    _program_monitor.start(daemon=daemon)
 
     _pp_monitor.start(daemon=daemon)
     _pp_monitor.add_price_callback(_on_pp_price_tick)

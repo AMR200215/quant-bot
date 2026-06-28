@@ -128,8 +128,9 @@ _JITO_TIP_ACCOUNTS = [
 JITO_TIP_LAMPORTS = 1_000_000   # 0.001 SOL (~$0.17) — only applied when Jito path active
 JITO_RPC_URL      = "https://mainnet.block-engine.jito.wtf/api/v1/transactions"
 
-SOLANA_RPC          = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-SOLANA_RPC_FALLBACK = "https://api.mainnet-beta.solana.com"
+SOLANA_RPC           = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+SOLANA_RPC_FALLBACK  = "https://api.mainnet-beta.solana.com"   # Solana public (free)
+SOLANA_RPC_FALLBACK2 = "https://rpc.ankr.com/solana"           # Ankr free tier (no auth)
 
 # Which execution backend to use.  "pumpportal" is the default; set to
 # "jupiter" to fall back to the old path (useful for A/B testing).
@@ -467,19 +468,54 @@ def _get_keypair():
 # Shared RPC helpers
 # ---------------------------------------------------------------------------
 def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
-    """POST to SOLANA_RPC; on 429 retry once after 1.5s (burst rate limit),
-    then fall back to publicnode only if still failing."""
-    resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
-    if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
-        # Helius $49 plan: 429 = burst spike, not monthly exhaustion.
-        # Wait 1.5s and retry primary before falling back to unreliable publicnode.
-        log.warning("Primary RPC 429 — retrying Helius in 1.5s")
-        time.sleep(1.5)
+    """POST to SOLANA_RPC with a three-tier fallback chain.
+
+    Tier 1 — Helius (primary, paid):
+      429 burst → retry once after 1.5s before escalating.
+      Timeout or persistent 429 → Tier 2.
+
+    Tier 2 — Solana public RPC (api.mainnet-beta.solana.com):
+      Timeout or 429 → Tier 3.
+
+    Tier 3 — Ankr free RPC (rpc.ankr.com/solana):
+      Last resort; response returned regardless of status.
+    """
+    # ── Tier 1: Helius ──────────────────────────────────────────────────────
+    _primary_failed = False
+    try:
         resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
-    if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
-        log.warning("Primary RPC still 429 after retry — falling back to publicnode")
-        resp = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
-    return resp
+        if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
+            log.warning("Primary RPC 429 — retrying Helius in 1.5s")
+            time.sleep(1.5)
+            resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
+        if resp.status_code not in (429, 503) or SOLANA_RPC == SOLANA_RPC_FALLBACK:
+            return resp
+        _primary_failed = True
+    except requests.exceptions.Timeout:
+        log.warning("Primary RPC unavailable (timeout) — falling back to mainnet-beta")
+        _primary_failed = True
+    except requests.exceptions.RequestException as e:
+        log.warning("Primary RPC unavailable (%s) — falling back to mainnet-beta", e)
+        _primary_failed = True
+
+    if not _primary_failed:
+        return resp  # type: ignore[return-value]  # 503 path falls through
+
+    # ── Tier 2: Solana public RPC ───────────────────────────────────────────
+    log.warning("Primary RPC still failing — falling back to mainnet-beta")
+    try:
+        resp2 = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
+        if resp2.status_code not in (429, 503):
+            return resp2
+        log.warning("mainnet-beta also failing (%d) — trying Ankr", resp2.status_code)
+    except requests.exceptions.Timeout:
+        log.warning("mainnet-beta timeout — trying Ankr")
+    except requests.exceptions.RequestException as e:
+        log.warning("mainnet-beta unavailable (%s) — trying Ankr", e)
+
+    # ── Tier 3: Ankr free RPC ───────────────────────────────────────────────
+    log.warning("Primary RPC unavailable (429) — falling back to publicnode")
+    return requests.post(SOLANA_RPC_FALLBACK2, json=payload, timeout=timeout)
 
 
 def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 1) -> int:
