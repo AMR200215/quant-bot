@@ -16,12 +16,13 @@ Internal flow
 -------------
 1. fetch_pool()  — getProgramAccounts on PUMP_AMM_PROGRAM filtered to base_mint
 2. Parse pool state (binary Anchor layout, MIN_SIZE=211 / FULL_SIZE=243)
-3. build_pumpswap_sell_tx()  — assemble 21-account sell instruction + 5-ix TX
+3. build_pumpswap_sell_tx()  — assemble 21-account sell instruction + 3 remainingAccounts + 5-ix TX
 4. simulate_sell()  — simulateTransaction RPC → parse logs → classify error
 """
 
 import base64
 import logging
+import random
 import struct
 import threading
 import time
@@ -38,6 +39,20 @@ FEE_PROGRAM           = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
 GLOBAL_CONFIG         = "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
 EVENT_AUTHORITY       = "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR"
 PROTOCOL_FEE_RECIPIENT = "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"
+
+# Buyback fee recipients — one of these 8 is appended (readonly) + its WSOL ATA (writable)
+# as remainingAccounts on every sell TX, per the April 28 2025 breaking upgrade.
+# The SDK picks randomly; we do the same.
+BUYBACK_FEE_RECIPIENTS = [
+    "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
+    "9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7",
+    "GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL",
+    "3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR",
+    "5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6",
+    "EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL",
+    "5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD",
+    "A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW",
+]
 
 TOKEN_PROGRAM_SPL     = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 TOKEN_PROGRAM_T22     = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
@@ -118,6 +133,19 @@ def _derive_coin_creator_vault_authority(coin_creator_str: str) -> str:
     prog  = Pubkey.from_string(PUMP_AMM_PROGRAM)
     cc_pk = Pubkey.from_string(coin_creator_str)
     pda, _ = Pubkey.find_program_address([b"creator_vault", bytes(cc_pk)], prog)
+    return str(pda)
+
+
+def _derive_pool_v2_pda(base_mint_str: str) -> str:
+    """PDA: seeds=[b"pool-v2", base_mint_bytes], program=PUMP_AMM_PROGRAM.
+
+    Added in the April 2025 pool-v2 upgrade. Appended as a readonly remaining
+    account on sell TXs when coin_creator is non-null.
+    """
+    from solders.pubkey import Pubkey
+    prog     = Pubkey.from_string(PUMP_AMM_PROGRAM)
+    mint_pk  = Pubkey.from_string(base_mint_str)
+    pda, _   = Pubkey.find_program_address([b"pool-v2", bytes(mint_pk)], prog)
     return str(pda)
 
 
@@ -302,7 +330,10 @@ def build_pumpswap_sell_tx(
       0. SetComputeUnitPrice
       1. SetComputeUnitLimit (200_000 CU)
       2. CreateAssociatedTokenAccountIdempotent for user WSOL ATA  (data=bytes([1]))
-      3. PumpSwap sell instruction (21 accounts)
+      3. PumpSwap sell instruction (21 IDL accounts + 2-3 remainingAccounts):
+           remaining[0] = poolV2Pda(base_mint)  ← only when coin_creator is non-null
+           remaining[-2] = buyback_fee_recipient (readonly, random from 8)
+           remaining[-1] = ATA(buyback_fee_recipient, WSOL, SPL)  (writable)
       4. CloseAccount on user WSOL ATA → unwrap SOL to wallet
 
     Returns fully-signed VersionedTransaction bytes ready for _send_transaction().
@@ -393,8 +424,30 @@ def build_pumpswap_sell_tx(
         ],
     )
 
-    # --- Instruction 3: PumpSwap sell (21 accounts — official IDL order) ---
+    # --- Instruction 3: PumpSwap sell (21 IDL accounts + remainingAccounts) ---
     sell_data = _SELL_DISCRIMINATOR + struct.pack("<QQ", token_amount_raw, min_sol_out_lamports)
+
+    # --- remainingAccounts (April 2025 breaking upgrade) ---
+    # When coin_creator is non-null: prepend poolV2Pda (readonly)
+    # Always: append one random buyback fee recipient (readonly) + its WSOL ATA (writable)
+    remaining_accounts: list = []
+
+    has_coin_creator = (coin_creator_str != _NULL_PUBKEY_STR)
+    if has_coin_creator:
+        pool_v2_pda_str = _derive_pool_v2_pda(token_mint)
+        pool_v2_pda_pk  = Pubkey.from_string(pool_v2_pda_str)
+        remaining_accounts.append(
+            AccountMeta(pubkey=pool_v2_pda_pk, is_signer=False, is_writable=False),
+        )
+
+    buyback_recip_str     = random.choice(BUYBACK_FEE_RECIPIENTS)
+    buyback_recip_pk      = Pubkey.from_string(buyback_recip_str)
+    buyback_recip_wsol_str = _derive_ata(buyback_recip_str, WSOL_MINT, TOKEN_PROGRAM_SPL)
+    buyback_recip_wsol_pk  = Pubkey.from_string(buyback_recip_wsol_str)
+    remaining_accounts.extend([
+        AccountMeta(pubkey=buyback_recip_pk,      is_signer=False, is_writable=False),
+        AccountMeta(pubkey=buyback_recip_wsol_pk, is_signer=False, is_writable=True),
+    ])
 
     ix_sell = Instruction(
         program_id=amm_prog_pk,
@@ -442,6 +495,11 @@ def build_pumpswap_sell_tx(
             AccountMeta(pubkey=fee_config_pk,      is_signer=False, is_writable=False),
             # 20 fee_program                   readonly
             AccountMeta(pubkey=fee_prog_pk,        is_signer=False, is_writable=False),
+            # 21+ remainingAccounts (see above):
+            #   [poolV2Pda readonly]  ← only when coin_creator non-null
+            #   buyback_fee_recipient  readonly
+            #   ATA(buyback_fee_recipient, WSOL) writable
+            *remaining_accounts,
         ],
     )
 
@@ -476,11 +534,13 @@ def build_pumpswap_sell_tx(
         recent_blockhash=Hash.from_string(blockhash_str),
     )
 
+    n_accounts = 21 + len(remaining_accounts)
     log.debug(
-        "build_pumpswap_sell_tx  mint=%s  pool=%s  amount=%d  min_sol_out=%d  is_t22=%s",
+        "build_pumpswap_sell_tx  mint=%s  pool=%s  amount=%d  min_sol_out=%d  is_t22=%s  accounts=%d  buyback=%s",
         token_mint[:8], pool["pool_address"][:8],
         token_amount_raw, min_sol_out_lamports,
         token_program_id == TOKEN_PROGRAM_T22,
+        n_accounts, buyback_recip_str[:8],
     )
 
     return bytes(VersionedTransaction(msg, [keypair]))
