@@ -42,7 +42,22 @@ T22_MINT  = "GvUCjmWSXA5hrTh9smmNA1AU55YCtP9mDLQcrKA1pump"
 # HITTIN — most recent unsellable, T22, MIGRATION_UNCERTAIN case, Jun 27
 HITTIN_MINT = "2dGd4bRL4KVXfAu4dWxoXeFsJ24prZvs8WJ67HuXpump"
 
-RPC_URL = "https://api.mainnet-beta.solana.com"
+# Load .env if present (so SOLANA_RPC_URL is available when run directly on VPS)
+import os as _os
+_env_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), ".env")
+if _os.path.exists(_env_path):
+    for _line in open(_env_path):
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            _os.environ.setdefault(_k.strip(), _v.strip())
+
+RPC_URL = (
+    _os.getenv("SOLANA_RPC_URL")
+    or _os.getenv("HELIUS_RPC_URL")
+    or "https://api.mainnet-beta.solana.com"
+)
+print(f"RPC: {RPC_URL[:60]}...")
 
 PASS = "\033[92m✓ PASS\033[0m"
 FAIL = "\033[91m✗ FAIL\033[0m"
