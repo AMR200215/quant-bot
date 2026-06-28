@@ -1368,7 +1368,7 @@ def _portfolio_thread():
                     p.token_address
                     for p in portfolio.open_positions()
                     if p.chain == "solana"
-                    and "pump" in (p.dex_id or "").lower()
+                    and (p.dex_id or "") in ("pumpfun", "pumpswap")
                 }
                 new_mints   = open_pumpfun - _subscribed_mints
                 stale_mints = _subscribed_mints - open_pumpfun
@@ -1391,7 +1391,7 @@ def _portfolio_thread():
                     p.token_address
                     for p in portfolio.open_positions()
                     if p.chain == "solana"
-                    and "pump" in (p.dex_id or "").lower()
+                    and (p.dex_id or "") in ("pumpfun", "pumpswap")
                 }
 
             # ── Price overrides: PP (always) + Helius (slow tick only) ───────

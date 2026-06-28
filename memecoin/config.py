@@ -331,6 +331,25 @@ GMGN_BASE        = "https://gmgn.ai/defi/quotation/v1"
 RUGCHECK_BASE    = "https://api.rugcheck.xyz/v1"
 HONEYPOT_BASE    = "https://api.honeypot.is/v2"
 
+# ── T22 buy policy ──────────────────────────────────────────────────────────
+ALLOW_T22_LIVE_NORMAL        = False   # live full-size buys of non-hook T22 tokens
+ALLOW_T22_CANARY             = True    # canary-size buys of T22 tokens ($3 max)
+BLOCK_T22_TRANSFER_HOOK      = True    # paper-only if token has transfer hook
+BLOCK_T22_UNKNOWN_EXTENSIONS = True    # paper-only if token has unknown T22 extensions
+
+# ── Exit / sell safety ──────────────────────────────────────────────────────
+MAX_JUPITER_EXIT_PRICE_IMPACT_PCT = 35    # block Jupiter exit if impact > 35%
+ALLOW_JUPITER_PANIC_EXIT          = False # override impact guard for last-resort
+
+# ── Live buy kill switch ─────────────────────────────────────────────────────
+LIVE_BUYS_ENABLED              = True    # master switch — auto-disabled on unknown sell failure
+AUTO_DISABLE_ON_UNKNOWN_SELL_FAILURE = True  # disable live buys when error_class=unknown_sell_failure
+
+# ── Canary / validation mode ──────────────────────────────────────────────────
+LIVE_CANARY_MODE         = True    # cap live buys to MAX_CANARY_TRADE_USD until validated
+MAX_CANARY_TRADE_USD     = 3       # max single trade USD in canary mode
+EXIT_SYSTEM_VALIDATED    = False   # set True after: 1 T22 BC live sell + 1 T22 PS live sell + 10 clean exits
+
 # ---------------------------------------------------------------------------
 # PumpSwap local exit layer (Level 3)
 # ---------------------------------------------------------------------------

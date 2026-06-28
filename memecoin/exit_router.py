@@ -25,6 +25,7 @@ import csv
 import logging
 import os
 import time
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
@@ -40,6 +41,17 @@ class TokenExitState(Enum):
     MIGRATION_UNCERTAIN = "MIGRATION_UNCERTAIN"
     GRADUATED_PUMPSWAP  = "GRADUATED_PUMPSWAP"
     UNKNOWN             = "UNKNOWN"
+    # SPL/T22-split states (replaces coarse BONDING_CURVE/GRADUATED_PUMPSWAP for T22 decisions)
+    BONDING_CURVE_SPL          = "BONDING_CURVE_SPL"
+    BONDING_CURVE_T22          = "BONDING_CURVE_T22"
+    NEAR_GRADUATION_SPL        = "NEAR_GRADUATION_SPL"
+    NEAR_GRADUATION_T22        = "NEAR_GRADUATION_T22"
+    MIGRATION_UNCERTAIN_SPL    = "MIGRATION_UNCERTAIN_SPL"
+    MIGRATION_UNCERTAIN_T22    = "MIGRATION_UNCERTAIN_T22"
+    GRADUATED_PUMPSWAP_SPL     = "GRADUATED_PUMPSWAP_SPL"
+    GRADUATED_PUMPSWAP_T22     = "GRADUATED_PUMPSWAP_T22"
+    TRANSFER_HOOK_UNSUPPORTED  = "TRANSFER_HOOK_UNSUPPORTED"
+    UNKNOWN_UNSUPPORTED        = "UNKNOWN_UNSUPPORTED"
 
 
 class ExitRoute(Enum):
@@ -79,8 +91,14 @@ except ImportError:
 _ROUTE_LOG_FILE = LOGS_DIR / "exit_route_attempts.csv"
 _ROUTE_LOG_FIELDS = [
     "ts", "pos_id", "token_symbol", "token_mint",
-    "exit_state", "route", "sim_ok", "sim_error", "success",
-    "error_class", "notes",
+    "token_program", "is_token2022", "token_extensions",
+    "exit_state", "exit_reason",
+    "route_name", "route_order",
+    "vsol_at_trigger", "vsol_at_sell", "migration_age", "dex_id", "pool_address",
+    "simulation_ok", "simulation_error", "custom_error_code",
+    "tx_sent", "tx_sig", "confirmed", "confirm_error",
+    "jupiter_price_impact_pct", "fallback_used",
+    "final_status", "error_class", "notes",
 ]
 
 # ---------------------------------------------------------------------------
@@ -158,6 +176,32 @@ def classify(pos, pp_monitor) -> TokenExitState:
 
     log.debug("classify  mint=%s  dex_id=%r vsol=0  → UNKNOWN", token_mint[:8], dex_id)
     return TokenExitState.UNKNOWN
+
+
+def classify_detailed(pos, pp_monitor) -> TokenExitState:
+    """Like classify() but returns SPL/T22-split states for finer routing."""
+    # Get coarse state first
+    coarse = classify(pos, pp_monitor)
+    token_mint = pos.token_address
+
+    # Detect token program
+    try:
+        from memecoin.executor import _pumpfun_mint_token_program
+        from memecoin.pumpswap_local import TOKEN_PROGRAM_T22
+        tok_prog = _pumpfun_mint_token_program(token_mint)
+        is_t22 = (tok_prog == TOKEN_PROGRAM_T22)
+    except Exception:
+        is_t22 = False
+
+    # Map coarse → split state
+    _map = {
+        TokenExitState.BONDING_CURVE:       (TokenExitState.BONDING_CURVE_T22 if is_t22 else TokenExitState.BONDING_CURVE_SPL),
+        TokenExitState.NEAR_GRADUATION:     (TokenExitState.NEAR_GRADUATION_T22 if is_t22 else TokenExitState.NEAR_GRADUATION_SPL),
+        TokenExitState.MIGRATION_UNCERTAIN: (TokenExitState.MIGRATION_UNCERTAIN_T22 if is_t22 else TokenExitState.MIGRATION_UNCERTAIN_SPL),
+        TokenExitState.GRADUATED_PUMPSWAP:  (TokenExitState.GRADUATED_PUMPSWAP_T22 if is_t22 else TokenExitState.GRADUATED_PUMPSWAP_SPL),
+        TokenExitState.UNKNOWN:             TokenExitState.UNKNOWN_UNSUPPORTED,
+    }
+    return _map.get(coarse, coarse)
 
 
 # ---------------------------------------------------------------------------
@@ -380,31 +424,48 @@ def run_pumpswap_local_path(
 # Audit log
 # ---------------------------------------------------------------------------
 
-def _log_route_attempt(entry: dict, pos, exit_state: TokenExitState) -> None:
+def _log_route_attempt(result: dict, pos, exit_state: TokenExitState) -> None:
     """Append one row to logs/exit_route_attempts.csv for audit and debugging."""
+    row = {
+        "ts":                    datetime.utcnow().isoformat(timespec="seconds"),
+        "pos_id":                getattr(pos, "position_id", getattr(pos, "id", "")),
+        "token_symbol":          getattr(pos, "token_symbol", ""),
+        "token_mint":            getattr(pos, "token_address", ""),
+        "token_program":         result.get("token_program", ""),
+        "is_token2022":          result.get("is_token2022", ""),
+        "token_extensions":      result.get("token_extensions", ""),
+        "exit_state":            exit_state.value,
+        "exit_reason":           result.get("exit_reason", ""),
+        "route_name":            result.get("route", result.get("route_name", "")),
+        "route_order":           result.get("route_order", ""),
+        "vsol_at_trigger":       result.get("vsol_at_trigger", ""),
+        "vsol_at_sell":          result.get("vsol_at_sell", ""),
+        "migration_age":         result.get("migration_age", ""),
+        "dex_id":                getattr(pos, "dex_id", ""),
+        "pool_address":          result.get("pool_address", ""),
+        "simulation_ok":         result.get("sim_ok", ""),
+        "simulation_error":      result.get("sim_error", ""),
+        "custom_error_code":     result.get("custom_error_code", ""),
+        "tx_sent":               result.get("tx_sent", ""),
+        "tx_sig":                result.get("tx_sig", result.get("success_sig", "")),
+        "confirmed":             result.get("confirmed", result.get("success", "")),
+        "confirm_error":         result.get("confirm_error", ""),
+        "jupiter_price_impact_pct": result.get("jupiter_price_impact_pct", ""),
+        "fallback_used":         result.get("fallback_used", ""),
+        "final_status":          "success" if result.get("success") else "failed",
+        "error_class":           result.get("error_class", ""),
+        "notes":                 result.get("notes", ""),
+    }
     try:
         _ROUTE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not _ROUTE_LOG_FILE.exists() or _ROUTE_LOG_FILE.stat().st_size == 0
-        row = {
-            "ts":           time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
-            "pos_id":       pos.id,
-            "token_symbol": pos.token_symbol,
-            "token_mint":   pos.token_address,
-            "exit_state":   exit_state.value,
-            "route":        entry.get("route", ""),
-            "sim_ok":       entry.get("sim_ok", ""),
-            "sim_error":    entry.get("sim_error", ""),
-            "success":      entry.get("success", ""),
-            "error_class":  entry.get("error_class", ""),
-            "notes":        entry.get("notes", ""),
-        }
+        write_header = not _ROUTE_LOG_FILE.exists()
         with open(_ROUTE_LOG_FILE, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=_ROUTE_LOG_FIELDS)
+            writer = csv.DictWriter(f, fieldnames=_ROUTE_LOG_FIELDS, extrasaction="ignore")
             if write_header:
                 writer.writeheader()
             writer.writerow(row)
-    except Exception as log_err:
-        log.warning("_log_route_attempt write failed: %s", log_err)
+    except Exception as _le:
+        log.warning("exit_router: route log write failed: %s", _le)
 
 
 # Public alias expected by portfolio.py

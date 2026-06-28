@@ -1061,6 +1061,15 @@ class MemeExecutor:
         """
         _t0 = time.time()
         try:
+            # ── Kill switch: check before live buy ───────────────────────────────
+            try:
+                import memecoin.kill_switch as _kill_switch
+                if not _kill_switch.live_buys_enabled():
+                    log.warning("BUY blocked — kill switch active (live buys disabled)  token=%s", token_address[:8])
+                    return {"success": False, "reason": "kill_switch_active"}
+            except Exception:
+                pass
+
             _, VersionedTransaction, _ = _load_solders()
             keypair    = _get_keypair()
             wallet     = str(keypair.pubkey())
@@ -1742,6 +1751,31 @@ class MemeExecutor:
                     log.warning("SELL pump-amm failed — trying Jupiter fallback  token=%s", token_address[:8])
                     try:
                         _jup_quote    = _jup_get_quote(token_address, SOL_MINT, _jup_sell_tokens)
+                        # ── Price impact guard ────────────────────────────────────────────────
+                        try:
+                            from memecoin.config import MAX_JUPITER_EXIT_PRICE_IMPACT_PCT as _max_impact
+                            from memecoin.config import ALLOW_JUPITER_PANIC_EXIT as _panic_ok
+                            _impact_pct = float(_jup_quote.get("priceImpactPct", 0)) * 100
+                            if _impact_pct > _max_impact and not _panic_ok:
+                                log.error(
+                                    "SELL Jupiter blocked — price impact %.1f%% > %.0f%% limit  token=%s",
+                                    _impact_pct, _max_impact, token_address[:8],
+                                )
+                                try:
+                                    from app.alerts import _send
+                                    _send(f"⚠️ JUPITER BLOCKED: {token_address[:8]} — impact {_impact_pct:.1f}% > {_max_impact}% limit. Manual rescue needed.")
+                                except Exception:
+                                    pass
+                                return {
+                                    "success": False,
+                                    "reason":  "jupiter_impact_too_high",
+                                    "error_class": "jupiter_price_impact_too_high",
+                                    "jupiter_price_impact_pct": _impact_pct,
+                                }
+                            if _impact_pct > 0:
+                                log.warning("SELL Jupiter price impact: %.1f%%  token=%s", _impact_pct, token_address[:8])
+                        except (ImportError, KeyError, TypeError, ValueError):
+                            pass
                         _jup_fee_lvl  = "High" if urgent else "UnsafeMax"
                         _jup_fee_flr  = 0.0005 if urgent else 0.005
                         _jup_fee      = max(_helius_priority_fee(token_address, _jup_fee_lvl), _jup_fee_flr)
@@ -2023,8 +2057,32 @@ class MemeExecutor:
             # _graduated_detected=False: all 3 PP steps failed (non-6005 reverts).
             #   Route: Jupiter directly (existing behaviour for dead/rugged tokens).
             if _graduated_detected:
+                # ── Try local PumpSwap first (correct account structure) ──────────────
+                log.warning("SELL 6005-detected → trying local PumpSwap first  token=%s", token_address[:8])
+                try:
+                    from memecoin.exit_router import run_pumpswap_local_path as _er_local
+                    from memecoin.portfolio import _get_open_position_by_token as _get_pos
+                    _pos_6005 = _get_pos(token_address)
+                    if _pos_6005 is not None:
+                        _local_result = _er_local(_pos_6005, "6005_graduated", rpc_url=SOLANA_RPC)
+                        if _local_result.get("success"):
+                            log.info("SELL local PumpSwap (6005 path) confirmed  sig=%s  fill=$%.10f",
+                                     _local_result.get("tx_sig", "")[:16], _local_result.get("fill_price", 0))
+                            return {
+                                "success":    True,
+                                "fill_price": _local_result.get("fill_price", entry_price),
+                                "tx_sig":     _local_result.get("tx_sig", ""),
+                                "all_sigs":   all_sigs,
+                                "ladder_step": len(_active_ladder) + 1,
+                                "jup_fallback": False,
+                            }
+                        log.warning("SELL local PumpSwap (6005 path) failed  error_class=%s — falling to pump-amm",
+                                    _local_result.get("error_class", "unknown"))
+                except Exception as _local_6005_err:
+                    log.warning("SELL local PumpSwap (6005 path) exception: %s — falling to pump-amm", _local_6005_err)
+                # ── Fall through to PumpPortal pump-amm ──────────────────────────────
                 log.warning(
-                    "SELL 6005-detected — routing pump-amm (graduated mid-hold)  token=%s",
+                    "SELL 6005-detected — routing pump-amm (local PS failed)  token=%s",
                     token_address[:8],
                 )
                 _grad2_fee_level = "High" if urgent else "UnsafeMax"
@@ -2112,6 +2170,31 @@ class MemeExecutor:
             try:
                 if _jup_sell_tokens is not None and _jup_sell_tokens > 0:
                     _jup_quote    = _jup_get_quote(token_address, SOL_MINT, _jup_sell_tokens)
+                    # ── Price impact guard ────────────────────────────────────────────────
+                    try:
+                        from memecoin.config import MAX_JUPITER_EXIT_PRICE_IMPACT_PCT as _max_impact
+                        from memecoin.config import ALLOW_JUPITER_PANIC_EXIT as _panic_ok
+                        _impact_pct = float(_jup_quote.get("priceImpactPct", 0)) * 100
+                        if _impact_pct > _max_impact and not _panic_ok:
+                            log.error(
+                                "SELL Jupiter blocked — price impact %.1f%% > %.0f%% limit  token=%s",
+                                _impact_pct, _max_impact, token_address[:8],
+                            )
+                            try:
+                                from app.alerts import _send
+                                _send(f"⚠️ JUPITER BLOCKED: {token_address[:8]} — impact {_impact_pct:.1f}% > {_max_impact}% limit. Manual rescue needed.")
+                            except Exception:
+                                pass
+                            return {
+                                "success": False,
+                                "reason":  "jupiter_impact_too_high",
+                                "error_class": "jupiter_price_impact_too_high",
+                                "jupiter_price_impact_pct": _impact_pct,
+                            }
+                        if _impact_pct > 0:
+                            log.warning("SELL Jupiter price impact: %.1f%%  token=%s", _impact_pct, token_address[:8])
+                    except (ImportError, KeyError, TypeError, ValueError):
+                        pass
                     _jup2_fee_lvl = "High" if urgent else "UnsafeMax"
                     _jup2_fee_flr = 0.0005 if urgent else 0.005
                     _jup_fee      = max(_helius_priority_fee(token_address, _jup2_fee_lvl), _jup2_fee_flr)
@@ -2179,6 +2262,14 @@ class MemeExecutor:
                 "SELL ladder EXHAUSTED (incl. Jupiter fallback)  token=%s  sigs=%s",
                 token_address[:8], all_sigs,
             )
+            # ── Kill switch: auto-disable live buys on unknown sell failure ───────────
+            try:
+                from memecoin.config import AUTO_DISABLE_ON_UNKNOWN_SELL_FAILURE as _auto_disable
+                if _auto_disable:
+                    import memecoin.kill_switch as _ks
+                    _ks.disable_live_buys(f"unknown sell failure: token={token_address[:8]}")
+            except Exception:
+                pass
             return {
                 "success":     False,
                 "reason":      "all_steps_reverted",

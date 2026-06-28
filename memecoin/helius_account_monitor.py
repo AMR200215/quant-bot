@@ -132,7 +132,7 @@ class HeliusAccountMonitor:
             for p in live_positions
             if (p.notes and "live|tx:" in p.notes)
             and p.chain == "solana"
-            and "pump" in (getattr(p, "dex_id", "") or "").lower()
+            and (getattr(p, "dex_id", "") or "") in ("pumpfun", "pumpswap")
         }
 
         with self._lock:

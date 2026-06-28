@@ -1,0 +1,908 @@
+[
+  {
+    "trackedWalletAddress": "ARu4n5mFdZogZAravu7CcizaojWnS6oqka37gdLT5SZn",
+    "name": "mined_ARu4n5mF",
+    "appearances": 37,
+    "avg_early_position": 9.2,
+    "score": 3.641,
+    "tokens": [
+      "FiBpLvmbSFXPExHhPskiVCwLtWhd1uywq2QwgW3zpump",
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "35Lod8esDj2c1QuzceUYMRhBwTJuEzoYD4fqttk1pump",
+      "9LQ3ruKXhXoMJk5334bunknq1kUErXJjdFkAJXrapump",
+      "8h4a46euwqfiZ9A3GYkiocXeu9pkNnwTaQGHgBf7pump",
+      "CJpji2BFQYyDTReBukYHRPsMvY76CdFqqehaQmoXpump",
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "ARea51UmRfn22Ds7KwFZirSMEEn1gtBdrhW4zLeveeV1",
+      "4BQxyLWiTrJuxX7vKN7BtDCLbYDBM69pVBBCe5oGpump",
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "3TYgKwkE2Y3rxdw9osLRSpxpXmSC1C1oo19W9KHspump",
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump",
+      "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "DACYVx34V5aQaehN3MZGYxPfoyQYHZSnFAFw3T2Vbonk",
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump",
+      "RoAFTaaY51FvFTiEaiVYbg8bjFnGkBMzEor85JwVibe",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump",
+      "7CwakoFevSoLSyX99HF68Zr7ZCDRzuGhN1LCWCq1pump",
+      "EvuUBn8Kc9jJJC2cbCVm9jrs6QWBZVhdm5piXnnWpump",
+      "EKZQYuPfCCyUm5V55U6QdCUbvWnTKDXkjReactvu6Bxw",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p",
+      "4fn2MEmrAgxCT27RF2Smte2xedGv86xgNGxxoVAvpump",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj",
+      "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+      "559QpGfcfXafDm1XkhiYQHsPtJbMusisNkPp7fEmd3N",
+      "eBayUWr5Xykndyuv1KR5Qyfy24Hsm64VQweBpRo5rtr",
+      "ESU5CUssr32ktEQbRr6iq58ADntsxrpT1EE3cqjMpump",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r",
+      "7vpD2L6mWoFt3T4b6ae25G4JTjAjURrjxrJVWpeSpump",
+      "C3yEFkF4K28ubCXsSjMGi9yawMDkRE5ZwhCSjSfApump",
+      "4jNGJNw173z9kSTWC9EwaSeD5Z3vhFxtDa9XkPZxpump",
+      "6PmTqo12jkA7sYfpkBEdJA2LYA7VG5CBRKqjwEqpump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump",
+      "8165ivoW1aXTGUu6fH3ySUYUkMVE2KcqSzTTkyggpump",
+      "DE5zi2Lxscsga9Vhzk82r9qASQ1gykYe6uHTLj9Vpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf",
+    "name": "mined_8psNvWTr",
+    "appearances": 25,
+    "avg_early_position": 13.3,
+    "score": 1.7507,
+    "tokens": [
+      "FiBpLvmbSFXPExHhPskiVCwLtWhd1uywq2QwgW3zpump",
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "9LQ3ruKXhXoMJk5334bunknq1kUErXJjdFkAJXrapump",
+      "8h4a46euwqfiZ9A3GYkiocXeu9pkNnwTaQGHgBf7pump",
+      "CJpji2BFQYyDTReBukYHRPsMvY76CdFqqehaQmoXpump",
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "CYSVBkXuuDaZ4gNqzQPaWuoxejr6ZgTKLSJeGNdjpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "ARea51UmRfn22Ds7KwFZirSMEEn1gtBdrhW4zLeveeV1",
+      "4BQxyLWiTrJuxX7vKN7BtDCLbYDBM69pVBBCe5oGpump",
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "3TYgKwkE2Y3rxdw9osLRSpxpXmSC1C1oo19W9KHspump",
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump",
+      "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "DACYVx34V5aQaehN3MZGYxPfoyQYHZSnFAFw3T2Vbonk",
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump",
+      "EvuUBn8Kc9jJJC2cbCVm9jrs6QWBZVhdm5piXnnWpump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj",
+      "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r",
+      "7vpD2L6mWoFt3T4b6ae25G4JTjAjURrjxrJVWpeSpump",
+      "4jNGJNw173z9kSTWC9EwaSeD5Z3vhFxtDa9XkPZxpump",
+      "6PmTqo12jkA7sYfpkBEdJA2LYA7VG5CBRKqjwEqpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "2tgUbS9UMoQD6GkDZBiqKYCURnGrSb6ocYwRABrSJUvY",
+    "name": "mined_2tgUbS9U",
+    "appearances": 9,
+    "avg_early_position": 8.2,
+    "score": 0.9759,
+    "tokens": [
+      "FiBpLvmbSFXPExHhPskiVCwLtWhd1uywq2QwgW3zpump",
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "3o6RF4XvSAyVavD1JWNqwasBi4L69ZJUhy9Pm8Tfpump",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump",
+      "EKZQYuPfCCyUm5V55U6QdCUbvWnTKDXkjReactvu6Bxw",
+      "4fn2MEmrAgxCT27RF2Smte2xedGv86xgNGxxoVAvpump",
+      "C3yEFkF4K28ubCXsSjMGi9yawMDkRE5ZwhCSjSfApump",
+      "FhwV2wZicstWLnULi7dXZYaCRRv17AtQ9RcmJSngpump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC",
+    "name": "mined_HLnpSz9h",
+    "appearances": 8,
+    "avg_early_position": 8.8,
+    "score": 0.8205,
+    "tokens": [
+      "CJpji2BFQYyDTReBukYHRPsMvY76CdFqqehaQmoXpump",
+      "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+      "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "BW4dkTpSZxCmXMfpNqtPHbqiqwtvsQ93bPf7RuBVdpce",
+      "RoAFTaaY51FvFTiEaiVYbg8bjFnGkBMzEor85JwVibe",
+      "EKZQYuPfCCyUm5V55U6QdCUbvWnTKDXkjReactvu6Bxw",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj",
+      "eBayUWr5Xykndyuv1KR5Qyfy24Hsm64VQweBpRo5rtr"
+    ]
+  },
+  {
+    "trackedWalletAddress": "35dszeQQQzkMvjcmyrPWPnN5ZyK9ZjYkNp9kKXZWMvji",
+    "name": "mined_35dszeQQ",
+    "appearances": 9,
+    "avg_early_position": 11.2,
+    "score": 0.7364,
+    "tokens": [
+      "FiBpLvmbSFXPExHhPskiVCwLtWhd1uywq2QwgW3zpump",
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "4BQxyLWiTrJuxX7vKN7BtDCLbYDBM69pVBBCe5oGpump",
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "AzFY2jd6hw2KVVszbCAbxaKEj3pGMvsNG8JbpFAnpump",
+      "4jNGJNw173z9kSTWC9EwaSeD5Z3vhFxtDa9XkPZxpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL",
+    "name": "mined_GpMZbSM2",
+    "appearances": 3,
+    "avg_early_position": 3.7,
+    "score": 0.6429,
+    "tokens": [
+      "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "DACYVx34V5aQaehN3MZGYxPfoyQYHZSnFAFw3T2Vbonk",
+      "7nZuYZYZnof9gF3zr9QhdnxpQ1mTM8LN3VaJuhrGbonk"
+    ]
+  },
+  {
+    "trackedWalletAddress": "JD6rVaerbyz6wjQ433nrw6bFTgFrp46MiYmi8EtUAfsG",
+    "name": "mined_JD6rVaer",
+    "appearances": 6,
+    "avg_early_position": 8.7,
+    "score": 0.6207,
+    "tokens": [
+      "9LQ3ruKXhXoMJk5334bunknq1kUErXJjdFkAJXrapump",
+      "CJpji2BFQYyDTReBukYHRPsMvY76CdFqqehaQmoXpump",
+      "CUuD7xqniTXskFBAiZtsNE53i8cynXuzrGAXhLwcpump",
+      "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+      "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "EKZQYuPfCCyUm5V55U6QdCUbvWnTKDXkjReactvu6Bxw"
+    ]
+  },
+  {
+    "trackedWalletAddress": "9nnLbotNTcUhvbrsA6Mdkx45Sm82G35zo28AqUvjExn8",
+    "name": "mined_9nnLbotN",
+    "appearances": 7,
+    "avg_early_position": 10.4,
+    "score": 0.6125,
+    "tokens": [
+      "9LQ3ruKXhXoMJk5334bunknq1kUErXJjdFkAJXrapump",
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p",
+      "FhwV2wZicstWLnULi7dXZYaCRRv17AtQ9RcmJSngpump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "6LXutJvKUw8Q5ue2gCgKHQdAN4suWW8awzFVC6XCguFx",
+    "name": "mined_6LXutJvK",
+    "appearances": 5,
+    "avg_early_position": 7.2,
+    "score": 0.6098,
+    "tokens": [
+      "DACYVx34V5aQaehN3MZGYxPfoyQYHZSnFAFw3T2Vbonk",
+      "7fj85y28pKMndm4So66Szkb5GMGfLHFEkwsZdDx2pump",
+      "RoAFTaaY51FvFTiEaiVYbg8bjFnGkBMzEor85JwVibe",
+      "AzFY2jd6hw2KVVszbCAbxaKEj3pGMvsNG8JbpFAnpump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p"
+    ]
+  },
+  {
+    "trackedWalletAddress": "52oc72vjNbpUhF7jNE1pPAvc17JwBTyxybFp3u7PvetG",
+    "name": "mined_52oc72vj",
+    "appearances": 5,
+    "avg_early_position": 7.4,
+    "score": 0.5952,
+    "tokens": [
+      "CUuD7xqniTXskFBAiZtsNE53i8cynXuzrGAXhLwcpump",
+      "4t1e5fzuPvHrdZmupjfc6P1yKUWBwWwKumrmJ9d7pump",
+      "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+      "4uneHhw6CtxmK6AWU4wULD3tYH7wcarcyAcT6cxRpump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "2MFoS3MPtvyQ4Wh4M9pdfPjz6UhVoNbFbGJAskCPCj3h",
+    "name": "mined_2MFoS3MP",
+    "appearances": 8,
+    "avg_early_position": 13.5,
+    "score": 0.5517,
+    "tokens": [
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "ARea51UmRfn22Ds7KwFZirSMEEn1gtBdrhW4zLeveeV1",
+      "3o6RF4XvSAyVavD1JWNqwasBi4L69ZJUhy9Pm8Tfpump",
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump",
+      "AzFY2jd6hw2KVVszbCAbxaKEj3pGMvsNG8JbpFAnpump",
+      "FhwV2wZicstWLnULi7dXZYaCRRv17AtQ9RcmJSngpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV",
+    "name": "mined_BQ72nSv9",
+    "appearances": 7,
+    "avg_early_position": 12.0,
+    "score": 0.5385,
+    "tokens": [
+      "9LQ3ruKXhXoMJk5334bunknq1kUErXJjdFkAJXrapump",
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump",
+      "AzFY2jd6hw2KVVszbCAbxaKEj3pGMvsNG8JbpFAnpump",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj",
+      "FhwV2wZicstWLnULi7dXZYaCRRv17AtQ9RcmJSngpump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "BM9CcyErJcu2mjrFvUsRRrD3snGeHDDVirJLvL6EjvMN",
+    "name": "mined_BM9CcyEr",
+    "appearances": 6,
+    "avg_early_position": 11.7,
+    "score": 0.4737,
+    "tokens": [
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "CJpji2BFQYyDTReBukYHRPsMvY76CdFqqehaQmoXpump",
+      "CYSVBkXuuDaZ4gNqzQPaWuoxejr6ZgTKLSJeGNdjpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "4xDsmeTWPNjgSVSS1VTfzFq3iHZhp77ffPkAmkZkdu71",
+    "name": "mined_4xDsmeTW",
+    "appearances": 6,
+    "avg_early_position": 13.2,
+    "score": 0.4235,
+    "tokens": [
+      "FiBpLvmbSFXPExHhPskiVCwLtWhd1uywq2QwgW3zpump",
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "RoAFTaaY51FvFTiEaiVYbg8bjFnGkBMzEor85JwVibe",
+      "EKZQYuPfCCyUm5V55U6QdCUbvWnTKDXkjReactvu6Bxw",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj"
+    ]
+  },
+  {
+    "trackedWalletAddress": "6U91aKa8pmMxkJwBCfPTmUEfZi6dHe7DcFq2ALvB2tbB",
+    "name": "mined_6U91aKa8",
+    "appearances": 7,
+    "avg_early_position": 16.0,
+    "score": 0.4118,
+    "tokens": [
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "AzFY2jd6hw2KVVszbCAbxaKEj3pGMvsNG8JbpFAnpump",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj",
+      "eBayUWr5Xykndyuv1KR5Qyfy24Hsm64VQweBpRo5rtr",
+      "FhwV2wZicstWLnULi7dXZYaCRRv17AtQ9RcmJSngpump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "CapuXNQoDviLvU1PxFiizLgPNQCxrsag1uMeyk6zLVps",
+    "name": "mined_CapuXNQo",
+    "appearances": 5,
+    "avg_early_position": 11.2,
+    "score": 0.4098,
+    "tokens": [
+      "FiBpLvmbSFXPExHhPskiVCwLtWhd1uywq2QwgW3zpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "RoAFTaaY51FvFTiEaiVYbg8bjFnGkBMzEor85JwVibe",
+      "AzFY2jd6hw2KVVszbCAbxaKEj3pGMvsNG8JbpFAnpump",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj"
+    ]
+  },
+  {
+    "trackedWalletAddress": "GGztQqQ6pCPaJQnNpXBgELr5cs3WwDakRbh1iEMzjgSJ",
+    "name": "mined_GGztQqQ6",
+    "appearances": 6,
+    "avg_early_position": 14.2,
+    "score": 0.3956,
+    "tokens": [
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "ARea51UmRfn22Ds7KwFZirSMEEn1gtBdrhW4zLeveeV1",
+      "AzFY2jd6hw2KVVszbCAbxaKEj3pGMvsNG8JbpFAnpump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj"
+    ]
+  },
+  {
+    "trackedWalletAddress": "6Z5dcYBExcLyQdauPK9A7VhMcM2GwEfFzymnjp2kf41a",
+    "name": "mined_6Z5dcYBE",
+    "appearances": 3,
+    "avg_early_position": 6.7,
+    "score": 0.3913,
+    "tokens": [
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump",
+      "4fn2MEmrAgxCT27RF2Smte2xedGv86xgNGxxoVAvpump",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r"
+    ]
+  },
+  {
+    "trackedWalletAddress": "7iVCXQn4u6tiTEfNVqbWSEsRdEi69E9oYsSMiepuECwi",
+    "name": "mined_7iVCXQn4",
+    "appearances": 3,
+    "avg_early_position": 7.0,
+    "score": 0.375,
+    "tokens": [
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "ARea51UmRfn22Ds7KwFZirSMEEn1gtBdrhW4zLeveeV1",
+      "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "6QisQNhyDtjFmgvkZ6SuQk68qHdzaZBRKemkssDAdGRu",
+    "name": "mined_6QisQNhy",
+    "appearances": 2,
+    "avg_early_position": 4.5,
+    "score": 0.3636,
+    "tokens": [
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "4fn2MEmrAgxCT27RF2Smte2xedGv86xgNGxxoVAvpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "DisxKgHiidoniTRSUcYr7rFkY7iv5LRbSutT64bWR5wW",
+    "name": "mined_DisxKgHi",
+    "appearances": 2,
+    "avg_early_position": 5.5,
+    "score": 0.3077,
+    "tokens": [
+      "7CwakoFevSoLSyX99HF68Zr7ZCDRzuGhN1LCWCq1pump",
+      "DeV8Eqg3aGHiiqf3BaEnx5G9kgAcs98EDfbSW7Dvpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "Uf3onHjKuZYGQiLXtWECELGsdyqCeiAk78c6V4LwRcy",
+    "name": "mined_Uf3onHjK",
+    "appearances": 4,
+    "avg_early_position": 12.2,
+    "score": 0.3019,
+    "tokens": [
+      "559QpGfcfXafDm1XkhiYQHsPtJbMusisNkPp7fEmd3N",
+      "6PmTqo12jkA7sYfpkBEdJA2LYA7VG5CBRKqjwEqpump",
+      "8165ivoW1aXTGUu6fH3ySUYUkMVE2KcqSzTTkyggpump",
+      "DE5zi2Lxscsga9Vhzk82r9qASQ1gykYe6uHTLj9Vpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "omegoMAe1AMY5MFKQQr3JwXVy8F4eCvmBAfcpo8XAfq",
+    "name": "mined_omegoMAe",
+    "appearances": 3,
+    "avg_early_position": 9.0,
+    "score": 0.3,
+    "tokens": [
+      "7CwakoFevSoLSyX99HF68Zr7ZCDRzuGhN1LCWCq1pump",
+      "559QpGfcfXafDm1XkhiYQHsPtJbMusisNkPp7fEmd3N",
+      "8165ivoW1aXTGUu6fH3ySUYUkMVE2KcqSzTTkyggpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "4jkL4dNkY2UbpYrTgLA3u5FqKwKs1LM46RcE6FQU3qXi",
+    "name": "mined_4jkL4dNk",
+    "appearances": 2,
+    "avg_early_position": 6.0,
+    "score": 0.2857,
+    "tokens": [
+      "4BQxyLWiTrJuxX7vKN7BtDCLbYDBM69pVBBCe5oGpump",
+      "4fn2MEmrAgxCT27RF2Smte2xedGv86xgNGxxoVAvpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "784wcFWsiNH9e48joMZYyMcBupdy5sU31UaVZotmucAy",
+    "name": "mined_784wcFWs",
+    "appearances": 5,
+    "avg_early_position": 18.6,
+    "score": 0.2551,
+    "tokens": [
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "FhwV2wZicstWLnULi7dXZYaCRRv17AtQ9RcmJSngpump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "54Pz1e35z9uoFdnxtzjp7xZQoFiofqhdayQWBMN7dsuy",
+    "name": "mined_54Pz1e35",
+    "appearances": 4,
+    "avg_early_position": 15.0,
+    "score": 0.25,
+    "tokens": [
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "AeBgCFnkSWMAwv3zjaJPB93hxEBUEVkhEyKVFaxT84pJ",
+    "name": "mined_AeBgCFnk",
+    "appearances": 3,
+    "avg_early_position": 11.7,
+    "score": 0.2368,
+    "tokens": [
+      "FiBpLvmbSFXPExHhPskiVCwLtWhd1uywq2QwgW3zpump",
+      "8h4a46euwqfiZ9A3GYkiocXeu9pkNnwTaQGHgBf7pump",
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "2rbMgYvzAb3xDk6vXrzKkY3VwsmyDZsJTkvB3JJYsRzA",
+    "name": "mined_2rbMgYvz",
+    "appearances": 2,
+    "avg_early_position": 7.5,
+    "score": 0.2353,
+    "tokens": [
+      "BW4dkTpSZxCmXMfpNqtPHbqiqwtvsQ93bPf7RuBVdpce",
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "6GtWC65rKZExWEm1sdHYTsrmApANoNYXEUZv9bUueWKT",
+    "name": "mined_6GtWC65r",
+    "appearances": 2,
+    "avg_early_position": 7.5,
+    "score": 0.2353,
+    "tokens": [
+      "8165ivoW1aXTGUu6fH3ySUYUkMVE2KcqSzTTkyggpump",
+      "DE5zi2Lxscsga9Vhzk82r9qASQ1gykYe6uHTLj9Vpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "4wncaMtsKxfnGK4PC6EMfZGQ6YQtLMt61dAsMRaXrte9",
+    "name": "mined_4wncaMts",
+    "appearances": 4,
+    "avg_early_position": 16.8,
+    "score": 0.2254,
+    "tokens": [
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump",
+      "FhwV2wZicstWLnULi7dXZYaCRRv17AtQ9RcmJSngpump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "Ar2Y6o1QmrRAskjii1cRfijeKugHH13ycxW5cd7rro1x",
+    "name": "mined_Ar2Y6o1Q",
+    "appearances": 3,
+    "avg_early_position": 12.3,
+    "score": 0.225,
+    "tokens": [
+      "EKZQYuPfCCyUm5V55U6QdCUbvWnTKDXkjReactvu6Bxw",
+      "4fn2MEmrAgxCT27RF2Smte2xedGv86xgNGxxoVAvpump",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r"
+    ]
+  },
+  {
+    "trackedWalletAddress": "DSN3j1ykL3obAVNv7ZX49VsFCPe4LqzxHnmtLiPwY6xg",
+    "name": "mined_DSN3j1yk",
+    "appearances": 2,
+    "avg_early_position": 8.0,
+    "score": 0.2222,
+    "tokens": [
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p"
+    ]
+  },
+  {
+    "trackedWalletAddress": "7JCe3GHwkEr3feHgtLXnmuJ1yB3A7coSeyynxTBgdG8k",
+    "name": "mined_7JCe3GHw",
+    "appearances": 4,
+    "avg_early_position": 17.2,
+    "score": 0.2192,
+    "tokens": [
+      "9LQ3ruKXhXoMJk5334bunknq1kUErXJjdFkAJXrapump",
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "4BQxyLWiTrJuxX7vKN7BtDCLbYDBM69pVBBCe5oGpump",
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "ARqJ18xaBLrEJYARaYHxfRKSi1pB7dZjwq1NW6Fiuieb",
+    "name": "mined_ARqJ18xa",
+    "appearances": 3,
+    "avg_early_position": 13.3,
+    "score": 0.2093,
+    "tokens": [
+      "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump",
+      "EKZQYuPfCCyUm5V55U6QdCUbvWnTKDXkjReactvu6Bxw"
+    ]
+  },
+  {
+    "trackedWalletAddress": "33nMBXAHjwCaQrJuFtTjLaC9yD7L1aWgykCcRWW625Jk",
+    "name": "mined_33nMBXAH",
+    "appearances": 4,
+    "avg_early_position": 18.2,
+    "score": 0.2078,
+    "tokens": [
+      "7CwakoFevSoLSyX99HF68Zr7ZCDRzuGhN1LCWCq1pump",
+      "C3yEFkF4K28ubCXsSjMGi9yawMDkRE5ZwhCSjSfApump",
+      "8165ivoW1aXTGUu6fH3ySUYUkMVE2KcqSzTTkyggpump",
+      "DE5zi2Lxscsga9Vhzk82r9qASQ1gykYe6uHTLj9Vpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "7iWnBRRhBCiNXXPhqiGzvvBkKrvFSWqqmxRyu9VyYBxE",
+    "name": "mined_7iWnBRRh",
+    "appearances": 3,
+    "avg_early_position": 14.0,
+    "score": 0.2,
+    "tokens": [
+      "8h4a46euwqfiZ9A3GYkiocXeu9pkNnwTaQGHgBf7pump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p"
+    ]
+  },
+  {
+    "trackedWalletAddress": "HFqp6ErWHY6Uzhj8rFyjYuDya2mXUpYEk8VW75K9PSiY",
+    "name": "mined_HFqp6ErW",
+    "appearances": 2,
+    "avg_early_position": 9.0,
+    "score": 0.2,
+    "tokens": [
+      "4BQxyLWiTrJuxX7vKN7BtDCLbYDBM69pVBBCe5oGpump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p"
+    ]
+  },
+  {
+    "trackedWalletAddress": "EUQgqeijA8YsL9rZ7CmGRTRD3f4yusQYccFg59UMn6KG",
+    "name": "mined_EUQgqeij",
+    "appearances": 2,
+    "avg_early_position": 9.5,
+    "score": 0.1905,
+    "tokens": [
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump",
+      "4BQxyLWiTrJuxX7vKN7BtDCLbYDBM69pVBBCe5oGpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "BVzZBEeuGbErmZY6SXD49ojSRZRDpAuaxeQnTGBkdtUJ",
+    "name": "mined_BVzZBEeu",
+    "appearances": 2,
+    "avg_early_position": 9.5,
+    "score": 0.1905,
+    "tokens": [
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj"
+    ]
+  },
+  {
+    "trackedWalletAddress": "B69iUyURrsZjE7Z9Cui4kdrb2jQVsTVjbq7vDA9Ls1oW",
+    "name": "mined_B69iUyUR",
+    "appearances": 3,
+    "avg_early_position": 15.7,
+    "score": 0.18,
+    "tokens": [
+      "Bk3oDuwjKj6aptkWSZB37cubk6VenQQbaRkaYjADpump",
+      "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "4y3aGCCeAvLWnCzQF9ymmscW9n43bQbKRoWn4MsAuHYe",
+    "name": "mined_4y3aGCCe",
+    "appearances": 2,
+    "avg_early_position": 10.5,
+    "score": 0.1739,
+    "tokens": [
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r"
+    ]
+  },
+  {
+    "trackedWalletAddress": "E4zuKYP8pBneyknJnmEWgFdazGyAsRVwiVXmmU6NYKRT",
+    "name": "mined_E4zuKYP8",
+    "appearances": 2,
+    "avg_early_position": 11.0,
+    "score": 0.1667,
+    "tokens": [
+      "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r"
+    ]
+  },
+  {
+    "trackedWalletAddress": "7rbxsXchaL1Jz46BXbF88k1hBYoWHLaKo8YbofMndW46",
+    "name": "mined_7rbxsXch",
+    "appearances": 2,
+    "avg_early_position": 11.0,
+    "score": 0.1667,
+    "tokens": [
+      "C3yEFkF4K28ubCXsSjMGi9yawMDkRE5ZwhCSjSfApump",
+      "pdfpQk44pUKqYV8BKWZjREHPLvToHFbbduLbDaupump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "a5muLbuebBEA9Cz1zVK9LWgLsw8FH5PxgA1WkZ4SJTd",
+    "name": "mined_a5muLbue",
+    "appearances": 2,
+    "avg_early_position": 11.5,
+    "score": 0.16,
+    "tokens": [
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r"
+    ]
+  },
+  {
+    "trackedWalletAddress": "GP8StUXNYSZjPikyRsvkTbvRV1GBxMErb59cpeCJnDf1",
+    "name": "mined_GP8StUXN",
+    "appearances": 3,
+    "avg_early_position": 18.0,
+    "score": 0.1579,
+    "tokens": [
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p"
+    ]
+  },
+  {
+    "trackedWalletAddress": "6R6gDdSQfJ8Bpz1xzgnhPqrb7dhyK52XrPahENFYmP5v",
+    "name": "mined_6R6gDdSQ",
+    "appearances": 2,
+    "avg_early_position": 13.0,
+    "score": 0.1429,
+    "tokens": [
+      "FiBpLvmbSFXPExHhPskiVCwLtWhd1uywq2QwgW3zpump",
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "FMVHP1xw6ZHB9zLGyrJeeAvEzCBgouH8bPzdkYqq2C5W",
+    "name": "mined_FMVHP1xw",
+    "appearances": 2,
+    "avg_early_position": 13.0,
+    "score": 0.1429,
+    "tokens": [
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump",
+      "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "3CgvbiM3op4vjrrjH2zcrQUwsqh5veNVRjFCB9N6sRoD",
+    "name": "mined_3CgvbiM3",
+    "appearances": 2,
+    "avg_early_position": 13.0,
+    "score": 0.1429,
+    "tokens": [
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p",
+      "usemtUxHat32zmoyLicWbiLXxnYi2eoELbHGE6Nugpj"
+    ]
+  },
+  {
+    "trackedWalletAddress": "3LkxrpEn5WjKa8SMe7PgVgFK7S9V9yjxDz6hB95pCqzt",
+    "name": "mined_3LkxrpEn",
+    "appearances": 2,
+    "avg_early_position": 13.5,
+    "score": 0.1379,
+    "tokens": [
+      "7hGcjF3T7BoLrSQuJ4uiKwSJZzosHTBDiZo6F9icpump",
+      "4fn2MEmrAgxCT27RF2Smte2xedGv86xgNGxxoVAvpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "3NtxeVw1TUKM5i6o7SMx8pnbnwq7q6qoXN5WHAfnHmWJ",
+    "name": "mined_3NtxeVw1",
+    "appearances": 2,
+    "avg_early_position": 13.5,
+    "score": 0.1379,
+    "tokens": [
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r",
+      "DE5zi2Lxscsga9Vhzk82r9qASQ1gykYe6uHTLj9Vpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "DDtMt919cJPji4nQfoDtn7cqUGdpzH6py2hVxumgxYv3",
+    "name": "mined_DDtMt919",
+    "appearances": 2,
+    "avg_early_position": 14.0,
+    "score": 0.1333,
+    "tokens": [
+      "EvuUBn8Kc9jJJC2cbCVm9jrs6QWBZVhdm5piXnnWpump",
+      "559QpGfcfXafDm1XkhiYQHsPtJbMusisNkPp7fEmd3N"
+    ]
+  },
+  {
+    "trackedWalletAddress": "BqwX75ayLPyprL6Lx5KYESmfUditNT4hUcrXfybFD5hx",
+    "name": "mined_BqwX75ay",
+    "appearances": 2,
+    "avg_early_position": 14.0,
+    "score": 0.1333,
+    "tokens": [
+      "559QpGfcfXafDm1XkhiYQHsPtJbMusisNkPp7fEmd3N",
+      "8165ivoW1aXTGUu6fH3ySUYUkMVE2KcqSzTTkyggpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "8tDrpoUHE2UGFNvdHDsQCeHYrdbdU2rHhYFZmi9wWYco",
+    "name": "mined_8tDrpoUH",
+    "appearances": 2,
+    "avg_early_position": 14.5,
+    "score": 0.129,
+    "tokens": [
+      "9LQ3ruKXhXoMJk5334bunknq1kUErXJjdFkAJXrapump",
+      "A41qECYS9FyLdg5D52LiDBbGeRQzWQRyNc1NY5DMpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "4w1NEBWKEHAEba3q6yPMrJnSaRY5t7AmdHGmV7n8tvzf",
+    "name": "mined_4w1NEBWK",
+    "appearances": 2,
+    "avg_early_position": 14.5,
+    "score": 0.129,
+    "tokens": [
+      "EKZQYuPfCCyUm5V55U6QdCUbvWnTKDXkjReactvu6Bxw",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r"
+    ]
+  },
+  {
+    "trackedWalletAddress": "VoJYnyymYMchBMYMnQoesDGc8bT3KgQsbgFRLmcX5u3",
+    "name": "mined_VoJYnyym",
+    "appearances": 2,
+    "avg_early_position": 14.5,
+    "score": 0.129,
+    "tokens": [
+      "7hGcjF3T7BoLrSQuJ4uiKwSJZzosHTBDiZo6F9icpump",
+      "7vpD2L6mWoFt3T4b6ae25G4JTjAjURrjxrJVWpeSpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "GGXbncYcpx5qhUx47Rey8hTGJjmXWF133cN8C4hN9Vc1",
+    "name": "mined_GGXbncYc",
+    "appearances": 2,
+    "avg_early_position": 14.5,
+    "score": 0.129,
+    "tokens": [
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r",
+      "DE5zi2Lxscsga9Vhzk82r9qASQ1gykYe6uHTLj9Vpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "9S2VqBf7haR2ps3APpErDEyDt689ggq4mRXVLq5ABfxZ",
+    "name": "mined_9S2VqBf7",
+    "appearances": 2,
+    "avg_early_position": 15.5,
+    "score": 0.1212,
+    "tokens": [
+      "559QpGfcfXafDm1XkhiYQHsPtJbMusisNkPp7fEmd3N",
+      "8165ivoW1aXTGUu6fH3ySUYUkMVE2KcqSzTTkyggpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "EWeo6mgydi6R8PDvYDGyTCa7azGZchNWUVyUSn9Q9kjF",
+    "name": "mined_EWeo6mgy",
+    "appearances": 2,
+    "avg_early_position": 16.0,
+    "score": 0.1176,
+    "tokens": [
+      "8h4a46euwqfiZ9A3GYkiocXeu9pkNnwTaQGHgBf7pump",
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "2Jy2VdYU6YmSKL2fAk59iTBHavGUu41HNRMekdwcVUVg",
+    "name": "mined_2Jy2VdYU",
+    "appearances": 2,
+    "avg_early_position": 16.0,
+    "score": 0.1176,
+    "tokens": [
+      "7ebpkp8S4Aqdpio3tJtqVpGkPP5W5rhsAx6V78HZpump",
+      "FhwV2wZicstWLnULi7dXZYaCRRv17AtQ9RcmJSngpump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "2dxPGk8bpF8GQNSk3pWRfPree9WoUy4SGmh24fkQvJrc",
+    "name": "mined_2dxPGk8b",
+    "appearances": 2,
+    "avg_early_position": 16.5,
+    "score": 0.1143,
+    "tokens": [
+      "CJpji2BFQYyDTReBukYHRPsMvY76CdFqqehaQmoXpump",
+      "2QBFACQ3hvAMhWhJA2wmUm2hiNQQYtys1bCraiG9pump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "69yhtoJR4JYPPABZcSNkzuqbaFbwHsCkja1sP1Q2aVT5",
+    "name": "mined_69yhtoJR",
+    "appearances": 2,
+    "avg_early_position": 16.5,
+    "score": 0.1143,
+    "tokens": [
+      "BHnRgZG5CFM86wwhc4TSEQXB4JTMPWKhNNJDYS7Epump",
+      "DACYVx34V5aQaehN3MZGYxPfoyQYHZSnFAFw3T2Vbonk"
+    ]
+  },
+  {
+    "trackedWalletAddress": "tV6FuPWza8Bi33mJPAJ5HanhGAnsHYZwJEMnhh4Y1i9",
+    "name": "mined_tV6FuPWz",
+    "appearances": 2,
+    "avg_early_position": 16.5,
+    "score": 0.1143,
+    "tokens": [
+      "4fn2MEmrAgxCT27RF2Smte2xedGv86xgNGxxoVAvpump",
+      "DCcvx7U5uJQ12U6nZhMEVQZ4upHtajXQbFfdQ3eHde7r"
+    ]
+  },
+  {
+    "trackedWalletAddress": "34FKjAdVcTax2DHqV2XnbXa9J3zmyKcFuFKWbcmgxjgm",
+    "name": "mined_34FKjAdV",
+    "appearances": 2,
+    "avg_early_position": 17.0,
+    "score": 0.1111,
+    "tokens": [
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p"
+    ]
+  },
+  {
+    "trackedWalletAddress": "5vwQiye6NZuXzpRkk4AcfvjnUFd9gGBRHsHxLKujfPqu",
+    "name": "mined_5vwQiye6",
+    "appearances": 2,
+    "avg_early_position": 18.0,
+    "score": 0.1053,
+    "tokens": [
+      "HALhUaqtq2V6yudLNqbKUYtNxZDCPeinGbS5ysrSpump",
+      "DmcqxT7WXgXhq2LHURQ2h8GA5PeCBuMTLeyaj6MXhf3p"
+    ]
+  },
+  {
+    "trackedWalletAddress": "8xtZX2fw9YwJGUirvbVL2wQnbcFfrhxdrJLDYqhAbC8V",
+    "name": "mined_8xtZX2fw",
+    "appearances": 2,
+    "avg_early_position": 21.0,
+    "score": 0.0909,
+    "tokens": [
+      "C4egP1mBDHKsu4CcQbrTsWsSH7GQ9BNfQcdKJnvZpump",
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "Em8J3gBWapfVBGVhVipwQnLrqCvnWBnLajw6XFsFECPF",
+    "name": "mined_Em8J3gBW",
+    "appearances": 2,
+    "avg_early_position": 21.0,
+    "score": 0.0909,
+    "tokens": [
+      "7XpyZMWa7w3XELf5kEWkmhtovq2Du3pMJYrBQEG7pump",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "5NHQzaUwD65edKDX28WdE43nCunChVHTnV22hcxARzur",
+    "name": "mined_5NHQzaUw",
+    "appearances": 2,
+    "avg_early_position": 21.5,
+    "score": 0.0889,
+    "tokens": [
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump",
+      "eBayUWr5Xykndyuv1KR5Qyfy24Hsm64VQweBpRo5rtr"
+    ]
+  },
+  {
+    "trackedWalletAddress": "3rPk742bH4BsV1mD1e2wPRbXpq4EUQ7nXZkcZWf9w18s",
+    "name": "mined_3rPk742b",
+    "appearances": 2,
+    "avg_early_position": 22.0,
+    "score": 0.087,
+    "tokens": [
+      "8h4a46euwqfiZ9A3GYkiocXeu9pkNnwTaQGHgBf7pump",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump"
+    ]
+  },
+  {
+    "trackedWalletAddress": "AnnJ8GDbb8dUhct15BTimJzW8rxhGTddcz4BMiGWeWr9",
+    "name": "mined_AnnJ8GDb",
+    "appearances": 2,
+    "avg_early_position": 26.5,
+    "score": 0.0727,
+    "tokens": [
+      "8h4a46euwqfiZ9A3GYkiocXeu9pkNnwTaQGHgBf7pump",
+      "5AzpW3d8nLJZNgyZZLyh8Tt7NeNX62qUfua91Uapump"
+    ]
+  }
+]

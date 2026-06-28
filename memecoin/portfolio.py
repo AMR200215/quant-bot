@@ -781,6 +781,21 @@ class Portfolio:
 
         _live_size = _gss(signal.signal_type).get("live_trade_size_usd", paper_pos.size_usd)
 
+        # ── Canary mode size enforcement ─────────────────────────────────────
+        try:
+            from memecoin.config import LIVE_CANARY_MODE as _canary_mode
+            from memecoin.config import EXIT_SYSTEM_VALIDATED as _validated
+            from memecoin.config import MAX_CANARY_TRADE_USD as _canary_max
+            import memecoin.kill_switch as _ks
+            if not _ks.live_buys_enabled():
+                # Will be caught by kill switch check in executor, but also gate here
+                _live_size = 0
+            elif _canary_mode and not _validated:
+                _live_size = min(_live_size, _canary_max)
+                log.info("CANARY MODE: capping trade size to $%.2f (EXIT_SYSTEM_VALIDATED=False)", _canary_max)
+        except Exception:
+            pass
+
         # Build the live position as a separate object
         live_pos = Position(
             id=f"L{str(_uuid.uuid4())[:7]}",   # L-prefix = live, visually distinct
@@ -2215,3 +2230,30 @@ class Portfolio:
         # Sort merged result by exit_time ascending
         rows.sort(key=lambda r: float(r.get("exit_time") or 0))
         return rows
+
+
+# ---------------------------------------------------------------------------
+# Module-level helper for executor.py (used by 6005 → local PumpSwap path)
+# ---------------------------------------------------------------------------
+
+def _get_open_position_by_token(token_address: str):
+    """
+    Return the first open Position (live or paper) matching token_address, or None.
+    Used by executor.py's 6005-detected path to get a pos object for exit_router.
+    """
+    try:
+        from memecoin.scanner import portfolio as _portfolio
+        for pos in _portfolio.open_positions():
+            if pos.token_address == token_address:
+                return pos
+    except Exception:
+        pass
+    # Fallback: load directly from positions file
+    try:
+        positions = _load_positions()
+        for pos in positions.values():
+            if pos.token_address == token_address and not pos.closed:
+                return pos
+    except Exception:
+        pass
+    return None

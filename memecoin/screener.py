@@ -5,8 +5,11 @@ Captures all DexScreener fields needed for model training.
 """
 
 import logging
+import struct
 import time
 from typing import Optional
+
+import requests
 
 from memecoin.config import (
     MIN_LIQUIDITY_USD, MAX_MCAP_USD, MIN_HOLDERS, CHAINS,
@@ -17,6 +20,133 @@ from memecoin.data_client import (
 from memecoin.rug_detector import run_rug_checks, RugReport
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# T22 Extension type IDs (u16 LE in mint data)
+# ---------------------------------------------------------------------------
+_TOKEN_PROGRAM_T22 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+_T22_EXTENSION_NAMES = {
+    0:  "Uninitialized",
+    1:  "TransferFeeConfig",
+    2:  "TransferFeeAmount",
+    3:  "MintCloseAuthority",
+    4:  "ConfidentialTransferMint",
+    5:  "ConfidentialTransferAccount",
+    6:  "DefaultAccountState",
+    7:  "ImmutableOwner",
+    8:  "MemoTransfer",
+    9:  "NonTransferable",
+    10: "InterestBearingConfig",
+    11: "CpiGuard",
+    12: "PermanentDelegate",
+    13: "NonTransferableAccount",
+    14: "TransferHook",
+    15: "TransferHookAccount",
+    16: "ConfidentialTransferFeeConfig",
+    17: "ConfidentialTransferFeeAmount",
+    18: "MetadataPointer",
+    19: "TokenMetadata",
+    20: "GroupPointer",
+    21: "TokenGroup",
+    22: "GroupMemberPointer",
+    23: "TokenGroupMember",
+}
+
+# Safe extensions — live buys allowed when only these are present
+_T22_SAFE_EXTENSIONS = {1, 3, 7, 8, 12, 18, 19, 20, 21, 22, 23}
+
+# Transfer hook type ID
+_T22_TRANSFER_HOOK_ID = 14
+
+
+def check_token_program(mint: str, rpc_url: str = "https://api.mainnet-beta.solana.com") -> dict:
+    """
+    Check if a token mint uses Token-2022 and classify its extensions.
+
+    Returns dict with:
+      is_token2022        bool
+      has_transfer_hook   bool
+      has_unknown_extensions bool
+      extensions_list     list[str]   — extension names found
+      live_blocked        bool        — True = paper-only (hard block)
+      canary_only         bool        — True = canary-size buys only
+      token_program       str         — program ID string
+    """
+    result = {
+        "is_token2022":           False,
+        "has_transfer_hook":      False,
+        "has_unknown_extensions": False,
+        "extensions_list":        [],
+        "live_blocked":           False,
+        "canary_only":            False,
+        "token_program":          "",
+    }
+    try:
+        resp = requests.post(rpc_url, json={
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getAccountInfo",
+            "params": [mint, {"encoding": "base64"}],
+        }, timeout=5)
+        data = resp.json().get("result", {}).get("value") or {}
+        owner = data.get("owner", "")
+        result["token_program"] = owner
+
+        if owner != _TOKEN_PROGRAM_T22:
+            return result  # SPL token — no T22 checks needed
+
+        result["is_token2022"] = True
+
+        # Parse extensions from mint account data (base64-encoded)
+        import base64
+        raw_b64 = (data.get("data") or [""])[0]
+        mint_data = base64.b64decode(raw_b64) if raw_b64 else b""
+
+        # T22 mint layout: 82 bytes fixed header, then extensions (type u16 LE + length u16 LE + data)
+        extensions_found = []
+        has_hook = False
+        has_unknown = False
+        offset = 82  # skip standard mint header
+        while offset + 4 <= len(mint_data):
+            ext_type = struct.unpack_from("<H", mint_data, offset)[0]
+            ext_len  = struct.unpack_from("<H", mint_data, offset + 2)[0]
+            if ext_type == 0:
+                break  # Uninitialized — end of extension list
+            name = _T22_EXTENSION_NAMES.get(ext_type, f"Unknown({ext_type})")
+            extensions_found.append(name)
+            if ext_type == _T22_TRANSFER_HOOK_ID:
+                has_hook = True
+            if ext_type not in _T22_SAFE_EXTENSIONS and ext_type != _T22_TRANSFER_HOOK_ID:
+                has_unknown = True
+            offset += 4 + ext_len
+
+        result["extensions_list"]        = extensions_found
+        result["has_transfer_hook"]      = has_hook
+        result["has_unknown_extensions"] = has_unknown
+
+        # Apply policy
+        try:
+            from memecoin.config import (
+                BLOCK_T22_TRANSFER_HOOK, BLOCK_T22_UNKNOWN_EXTENSIONS,
+                ALLOW_T22_LIVE_NORMAL, ALLOW_T22_CANARY,
+            )
+        except ImportError:
+            BLOCK_T22_TRANSFER_HOOK      = True
+            BLOCK_T22_UNKNOWN_EXTENSIONS = True
+            ALLOW_T22_LIVE_NORMAL        = False
+            ALLOW_T22_CANARY             = True
+
+        if has_hook and BLOCK_T22_TRANSFER_HOOK:
+            result["live_blocked"] = True
+        elif has_unknown and BLOCK_T22_UNKNOWN_EXTENSIONS:
+            result["live_blocked"] = True
+        elif not ALLOW_T22_LIVE_NORMAL and ALLOW_T22_CANARY:
+            result["canary_only"] = True
+
+    except Exception as _e:
+        log.debug("check_token_program error for %s: %s", mint[:8], _e)
+
+    return result
 
 
 def screen_token(
@@ -44,6 +174,12 @@ def screen_token(
         "reason": "",
         "pair": None,
         "safety": None,
+        # T22 token program fields
+        "is_token2022":      False,
+        "has_transfer_hook": False,
+        "token_extensions":  [],
+        "live_blocked_t22":  False,
+        "canary_only_t22":   False,
         # price
         "price_usd": 0.0,
         "price_change_5m": 0.0,
@@ -239,6 +375,27 @@ def screen_token(
                              dev_entry.get("rug_count", 0))
         except Exception as _de:
             log.debug("Dev history check failed for %s: %s", token_address[:8], _de)
+
+    # ---- Token-2022 extension screening (Solana only) ----
+    if chain == "solana":
+        try:
+            rpc_url_t22 = CHAINS.get(chain, {}).get("rpc", "https://api.mainnet-beta.solana.com")
+            t22_info = check_token_program(token_address, rpc_url=rpc_url_t22)
+            result["is_token2022"]      = t22_info.get("is_token2022", False)
+            result["has_transfer_hook"] = t22_info.get("has_transfer_hook", False)
+            result["token_extensions"]  = t22_info.get("extensions_list", [])
+            result["live_blocked_t22"]  = t22_info.get("live_blocked", False)
+            result["canary_only_t22"]   = t22_info.get("canary_only", False)
+            if t22_info.get("live_blocked"):
+                log.info(
+                    "T22 live blocked  token=%s  hook=%s  unknown_ext=%s  exts=%s",
+                    token_address[:8],
+                    t22_info.get("has_transfer_hook"),
+                    t22_info.get("has_unknown_extensions"),
+                    t22_info.get("extensions_list"),
+                )
+        except Exception as _t22e:
+            log.debug("T22 check failed for %s: %s", token_address[:8], _t22e)
 
     result["passed"] = True
     return result
