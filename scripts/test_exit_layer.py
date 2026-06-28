@@ -52,16 +52,36 @@ if _os.path.exists(_env_path):
             _k, _, _v = _line.partition("=")
             _os.environ.setdefault(_k.strip(), _v.strip())
 
-RPC_URL = (
-    _os.getenv("SOLANA_RPC_URL")
-    or _os.getenv("HELIUS_RPC_URL")
-    or "https://api.mainnet-beta.solana.com"
-)
-print(f"RPC: {RPC_URL[:60]}...")
+# Use public RPC for test — avoids competing with live bot for Helius credits.
+# Helius gets 429 when the bot is running concurrently; public RPC is fine for
+# a handful of test calls with small delays between them.
+RPC_URL = "https://api.mainnet-beta.solana.com"
+print(f"RPC: {RPC_URL}")
 
 PASS = "\033[92m✓ PASS\033[0m"
 FAIL = "\033[91m✗ FAIL\033[0m"
 WARN = "\033[93m⚠ WARN\033[0m"
+
+import time as _time
+import requests as _requests
+
+def _rpc_with_retry(rpc_url, payload, retries=4, base_delay=3):
+    """POST RPC with exponential backoff on 429."""
+    for attempt in range(retries):
+        try:
+            resp = _requests.post(rpc_url, json=payload, timeout=15)
+            if resp.status_code == 429:
+                wait = base_delay * (2 ** attempt)
+                print(f"  [rate-limit] 429 — waiting {wait}s before retry {attempt+1}/{retries}...")
+                _time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except _requests.HTTPError as e:
+            if attempt == retries - 1:
+                raise
+            _time.sleep(base_delay * (2 ** attempt))
+    raise RuntimeError("RPC retry exhausted")
 
 
 def _check(label, condition, detail=""):
@@ -123,7 +143,7 @@ section("TEST 2 — WSOLP pool data (hardcoded from verified on-chain state)")
 
 pool = None
 try:
-    from memecoin.pumpswap_local import _rpc, PumpSwapPoolError
+    from memecoin.pumpswap_local import PumpSwapPoolError
 
     # Hardcoded from fetch_pool() output (verified Jun 2026):
     #   pool H5gzcMCC parsed from getProgramAccounts, base_mint=GvUCjmWS, coin_creator=47QmPMMZ
@@ -138,11 +158,11 @@ try:
 
     # Lightweight sanity check — verify the pool account still exists via getAccountInfo
     print("  Verifying pool account is still on-chain (lightweight getAccountInfo)...")
-    ai = _rpc(RPC_URL, {
+    ai = _rpc_with_retry(RPC_URL, {
         "jsonrpc": "2.0", "id": 1,
         "method": "getAccountInfo",
         "params": [pool["pool_address"], {"encoding": "base64", "commitment": "confirmed"}],
-    }, timeout=10)
+    })
     pool_exists = ai.get("result", {}).get("value") is not None
 
     _check("Pool account exists on-chain", pool_exists, pool["pool_address"][:20])
@@ -182,29 +202,29 @@ if pool is not None:
     try:
         from solders.keypair import Keypair
         from solders.pubkey import Pubkey
-        from memecoin.pumpswap_local import (
-            build_pumpswap_sell_tx, TOKEN_PROGRAM_T22, _rpc,
-        )
+        from memecoin.pumpswap_local import build_pumpswap_sell_tx, TOKEN_PROGRAM_T22
 
         # Find a real token holder via getTokenLargestAccounts on the pool_base_token_account.
         # We need a wallet that actually has a T22 ATA for WSOLP so the account exists on-chain.
         # With sigVerify=False the signer constraint is bypassed at the runtime level.
         print("  Looking up token holders for WSOLP...")
-        holders_resp = _rpc(RPC_URL, {
+        _time.sleep(2)  # space out from Test 2 to avoid public RPC burst limit
+        holders_resp = _rpc_with_retry(RPC_URL, {
             "jsonrpc": "2.0", "id": 1,
             "method": "getTokenLargestAccounts",
             "params": [T22_MINT, {"commitment": "confirmed"}],
-        }, timeout=10)
+        })
         accounts = holders_resp.get("result", {}).get("value", [])
         if accounts:
             # getTokenLargestAccounts returns token account addresses, not owner wallets.
             # Fetch the owner of the largest account.
             top_ta = accounts[0]["address"]
-            ai = _rpc(RPC_URL, {
+            _time.sleep(1)
+            ai = _rpc_with_retry(RPC_URL, {
                 "jsonrpc": "2.0", "id": 2,
                 "method": "getAccountInfo",
                 "params": [top_ta, {"encoding": "jsonParsed", "commitment": "confirmed"}],
-            }, timeout=10)
+            })
             owner = (
                 ai.get("result", {})
                   .get("value", {})
