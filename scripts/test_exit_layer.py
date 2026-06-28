@@ -70,7 +70,7 @@ try:
 
     # Build a minimal mock position object
     class _FakePos:
-        mint = HITTIN_MINT
+        token_address = HITTIN_MINT
         chain = "solana"
         dex_id = "pumpfun"
         notes = "cohort:graduated"
