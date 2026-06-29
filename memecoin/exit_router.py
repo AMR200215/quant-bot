@@ -240,6 +240,9 @@ def run_pumpswap_local_path(
         "error_class": "",
         "tx_sig":      "",
         "notes":       "",
+        "expected_sol_out_lamports": None,
+        "min_sol_out_lamports":      None,
+        "realized_sol_out_lamports": None,
     }
 
     token_mint = pos.token_address
@@ -300,13 +303,54 @@ def run_pumpswap_local_path(
             return result
 
         # ── Step 5: compute min_sol_out (slippage) ───────────────────────────
-        # Pass min_sol_out_lamports=0 for simulation runs — we just want to know
-        # if the TX structure is valid; actual min will be computed at send time.
-        # For real sends: apply SLIPPAGE_SELL_PCT (35% → accept 65% of fair value).
-        # We cannot compute fair value here without AMM reserves — use 0 as the
-        # safe no-minimum floor (slippage is already wide at 35%).
-        # TODO: read pool reserves and compute fair sol_out before setting min.
-        min_sol_out_lamports = 0  # accept any positive amount (market order semantics)
+        # Simulation always uses 0 — we only want to validate account structure.
+        # Live sends compute fair value from pool reserves and apply slippage floor.
+        try:
+            from memecoin.config import (
+                ALLOW_ZERO_MIN_OUT_EMERGENCY as _allow_zero,
+                LOCAL_PUMPSWAP_MAX_SLIPPAGE_PCT as _ps_slip,
+            )
+        except ImportError:
+            _allow_zero = False
+            _ps_slip    = 35
+        min_sol_out_lamports = 0      # simulation default
+        _expected_sol_out_lam = None
+        _sol_reserves_lam     = None
+        # Compute reserve-based min_out for live send (not sim)
+        if PUMPSWAP_LOCAL_SELL_ENABLED and not PUMPSWAP_LOCAL_SIM_ONLY:
+            try:
+                from memecoin.pumpswap_local import compute_min_sol_out as _cmin
+                _min_out, _sol_res = _cmin(
+                    token_amount_raw, pool, rpc_url, slippage_pct=_ps_slip
+                )
+                _sol_reserves_lam = _sol_res
+                if _min_out > 0:
+                    min_sol_out_lamports  = _min_out
+                    _expected_sol_out_lam = int(_min_out / (1.0 - _ps_slip / 100.0))
+                    log.info(
+                        "run_pumpswap_local_path: min_out=%d lam  expected=%d lam  "
+                        "slip=%.0f%%  mint=%s",
+                        min_sol_out_lamports, _expected_sol_out_lam, _ps_slip, token_mint[:8],
+                    )
+                elif not _allow_zero:
+                    log.error(
+                        "run_pumpswap_local_path: reserve read failed, cannot set min_out  "
+                        "mint=%s  — aborting (set ALLOW_ZERO_MIN_OUT_EMERGENCY=True to override)",
+                        token_mint[:8],
+                    )
+                    result["error_class"] = "pumpswap_reserve_read_failed"
+                    result["notes"]       = "reserve_read_failed:no_min_out"
+                    _log_route_attempt(result, pos, TokenExitState.GRADUATED_PUMPSWAP)
+                    return result
+            except Exception as _res_err:
+                log.warning("run_pumpswap_local_path: reserve compute error: %s", _res_err)
+                if not _allow_zero:
+                    result["error_class"] = "pumpswap_reserve_read_failed"
+                    result["notes"]       = f"reserve_err:{_res_err}"
+                    _log_route_attempt(result, pos, TokenExitState.GRADUATED_PUMPSWAP)
+                    return result
+        result["expected_sol_out_lamports"] = _expected_sol_out_lam
+        result["min_sol_out_lamports"]      = min_sol_out_lamports
 
         # ── Step 6: build TX ─────────────────────────────────────────────────
         try:

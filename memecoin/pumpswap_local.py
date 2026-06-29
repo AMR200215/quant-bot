@@ -307,6 +307,94 @@ def fetch_pool(token_mint: str, rpc_url: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Reserve reading and min_sol_out computation
+# ---------------------------------------------------------------------------
+
+def fetch_pool_sol_reserves(pool: dict, rpc_url: str) -> int | None:
+    """
+    Read the pool's WSOL reserve via getTokenAccountBalance on pool_quote_token_account.
+    Returns lamports (int) or None on any error.
+    Used to compute min_sol_out for live sells.
+    """
+    quote_ta = pool.get("pool_quote_token_account")
+    if not quote_ta:
+        return None
+    try:
+        data = _rpc(rpc_url, {
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getTokenAccountBalance",
+            "params": [quote_ta],
+        }, timeout=10)
+        amount_str = (
+            data.get("result", {})
+                .get("value", {})
+                .get("amount")
+        )
+        if amount_str:
+            return int(amount_str)
+    except Exception as e:
+        log.warning("fetch_pool_sol_reserves: RPC error  pool_quote_ta=%s  err=%s",
+                    quote_ta[:8], e)
+    return None
+
+
+def compute_min_sol_out(
+    token_amount_raw: int,
+    pool: dict,
+    rpc_url: str,
+    slippage_pct: float = 35.0,
+) -> tuple[int, int | None]:
+    """
+    Estimate expected SOL out using constant-product AMM formula, then apply slippage.
+
+    We need:
+      - pool_base_token_account balance (token reserves)
+      - pool_quote_token_account balance (SOL reserves in lamports)
+
+    Returns (min_sol_out_lamports, sol_reserves_lam).
+      min_sol_out_lamports = 0 if reserves cannot be read (caller must decide to abort or use 0).
+    """
+    sol_reserves_lam = fetch_pool_sol_reserves(pool, rpc_url)
+    if sol_reserves_lam is None:
+        return 0, None
+
+    # Fetch token reserves via getTokenAccountBalance on pool_base_token_account
+    base_ta = pool.get("pool_base_token_account")
+    token_reserves_raw = None
+    if base_ta:
+        try:
+            data = _rpc(rpc_url, {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getTokenAccountBalance",
+                "params": [base_ta],
+            }, timeout=10)
+            amt = data.get("result", {}).get("value", {}).get("amount")
+            if amt:
+                token_reserves_raw = int(amt)
+        except Exception as e:
+            log.warning("compute_min_sol_out: token reserve RPC error  base_ta=%s  err=%s",
+                        base_ta[:8], e)
+
+    if token_reserves_raw is None or token_reserves_raw == 0:
+        return 0, sol_reserves_lam
+
+    # Constant-product AMM: x*y=k
+    # Expected SOL out = sol_reserves * token_in / (token_reserves + token_in)
+    k = sol_reserves_lam * token_reserves_raw
+    sol_out_expected = sol_reserves_lam - k // (token_reserves_raw + token_amount_raw)
+    # Apply slippage floor
+    min_sol_out = int(sol_out_expected * (1.0 - slippage_pct / 100.0))
+    min_sol_out = max(0, min_sol_out)
+    log.info(
+        "compute_min_sol_out  token_in=%d  sol_reserves=%d lam  token_reserves=%d"
+        "  expected_out=%d lam  min_out=%d lam (%.0f%% slippage)",
+        token_amount_raw, sol_reserves_lam, token_reserves_raw,
+        sol_out_expected, min_sol_out, slippage_pct,
+    )
+    return min_sol_out, sol_reserves_lam
+
+
+# ---------------------------------------------------------------------------
 # TX builder
 # ---------------------------------------------------------------------------
 
@@ -552,6 +640,12 @@ def build_pumpswap_sell_tx(
 
 # Error string patterns → error_class mapping (evaluated in order, first match wins)
 _SIM_ERROR_PATTERNS = [
+    # pump.fun bonding-curve Custom:6001 — T22 ATA wrong token program or BC sell on graduated
+    ("custom program error: 0x1771", "pumpfun_t22_custom_6001"),
+    ("Custom:6001",                   "pumpfun_t22_custom_6001"),
+    # pump.fun Custom:6005 — sell on bonding-curve of already-graduated token
+    ("custom program error: 0x177d", "pumpfun_custom_6005_graduated"),
+    ("Custom:6005",                   "pumpfun_custom_6005_graduated"),
     # No pool / account not found
     ("AccountNotFound",              "pumpswap_no_pool"),
     ("invalid account data",         "pumpswap_no_pool"),

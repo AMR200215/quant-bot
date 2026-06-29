@@ -357,3 +357,5 @@ EXIT_ROUTER_ENABLED          = True    # master switch for exit state classifica
 PUMPSWAP_LOCAL_SELL_ENABLED  = False   # flip True only after sim validation passes
 PUMPSWAP_LOCAL_SIM_ONLY      = True    # simulate, log result, then fall through to executor
 PUMPSWAP_LOCAL_REQUIRE_SIM_OK = True   # if sim fails, do not send (always respected)
+ALLOW_ZERO_MIN_OUT_EMERGENCY   = False  # if True, skip min_sol_out check (last resort only)
+LOCAL_PUMPSWAP_MAX_SLIPPAGE_PCT = 35    # max slippage for min_sol_out computation (35%)

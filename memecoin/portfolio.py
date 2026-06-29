@@ -782,6 +782,7 @@ class Portfolio:
         _live_size = _gss(signal.signal_type).get("live_trade_size_usd", paper_pos.size_usd)
 
         # ── Canary mode size enforcement ─────────────────────────────────────
+        _canary_capped = False
         try:
             from memecoin.config import LIVE_CANARY_MODE as _canary_mode
             from memecoin.config import EXIT_SYSTEM_VALIDATED as _validated
@@ -792,6 +793,7 @@ class Portfolio:
                 _live_size = 0
             elif _canary_mode and not _validated:
                 _live_size = min(_live_size, _canary_max)
+                _canary_capped = True
                 log.info("CANARY MODE: capping trade size to $%.2f (EXIT_SYSTEM_VALIDATED=False)", _canary_max)
         except Exception:
             pass
@@ -1167,7 +1169,8 @@ class Portfolio:
                 _est_tag     = "|entry_estimated" if result.get("entry_estimated") else ""
                 _slip_tag    = f"|slip:{result['entry_slippage_pct']:+.1f}%" if result.get("entry_slippage_pct") is not None else ""
                 _cohort_tag  = "|cohort:graduated" if result.get("pp_silent") else "|cohort:bonding_curve"
-                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}"
+                _canary_tag  = f"|canary_cap:{_canary_max}" if _canary_capped else ""
+                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}"
                 # ── Paper twin: mirror live fill price for honest P&L comparison ──
                 # Rebase paper entry to actual fill so paper and live stops
                 # trigger at the same token price regardless of price source.

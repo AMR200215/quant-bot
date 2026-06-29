@@ -1070,6 +1070,56 @@ class MemeExecutor:
             except Exception:
                 pass
 
+            # ── T22 policy: enforce before live buy ──────────────────────────────
+            # Checks token program and T22 extensions. Forces paper-only or canary
+            # based on config policy. Note tags are appended to journal.
+            _t22_buy_notes = ""
+            try:
+                from memecoin.screener import check_token_program as _check_t22
+                from memecoin.config import (
+                    BLOCK_T22_TRANSFER_HOOK as _blk_hook,
+                    BLOCK_T22_UNKNOWN_EXTENSIONS as _blk_unk,
+                    ALLOW_T22_LIVE_NORMAL as _allow_t22_live,
+                    ALLOW_T22_CANARY as _allow_t22_canary,
+                    EXIT_SYSTEM_VALIDATED as _exit_validated,
+                    LIVE_DRY_RUN as _ldr,
+                )
+                _t22_info = _check_t22(token_address)
+                if _t22_info.get("is_token2022"):
+                    _t22_buy_notes = f"|token_program:TOKEN_2022|t22_extensions:{','.join(_t22_info.get('extensions_list', []))}"
+                    if _t22_info.get("has_transfer_hook") and _blk_hook:
+                        log.warning("BUY blocked — T22 transfer hook  token=%s", token_address[:8])
+                        return {"success": False, "reason": "t22_transfer_hook_blocked",
+                                "notes": _t22_buy_notes + "|t22_policy:paper_only_transfer_hook"}
+                    if _t22_info.get("has_unknown_extensions") and _blk_unk:
+                        log.warning("BUY blocked — T22 unknown extension  token=%s", token_address[:8])
+                        return {"success": False, "reason": "t22_unknown_extension_blocked",
+                                "notes": _t22_buy_notes + "|t22_policy:paper_only_unknown_extension"}
+                    # Normal T22: live only if validated; canary only if canary allowed
+                    if not _allow_t22_live or not _exit_validated:
+                        if _allow_t22_canary:
+                            _t22_buy_notes += "|t22_policy:canary"
+                            log.info("T22 normal — canary mode  token=%s", token_address[:8])
+                            # Size is already capped by canary mode in portfolio.py;
+                            # if called directly, enforce cap here too.
+                            if not _ldr and size_usd > 3:
+                                log.info("T22 canary size cap: %.2f→3  token=%s", size_usd, token_address[:8])
+                                size_usd = 3
+                        else:
+                            log.warning("BUY blocked — T22 live not allowed  token=%s", token_address[:8])
+                            return {"success": False, "reason": "t22_live_not_allowed",
+                                    "notes": _t22_buy_notes + "|t22_policy:paper_only"}
+                elif _t22_info.get("token_program") and _t22_info["token_program"] not in (
+                    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+                ):
+                    log.warning("BUY blocked — unknown token program %s  token=%s",
+                                _t22_info.get("token_program", "?")[:8], token_address[:8])
+                    return {"success": False, "reason": "unknown_token_program",
+                            "notes": f"|token_program:{_t22_info.get('token_program', 'unknown')}|t22_policy:paper_only"}
+            except Exception as _t22_check_err:
+                log.debug("T22 pre-buy check failed (non-blocking): %s", _t22_check_err)
+
             _, VersionedTransaction, _ = _load_solders()
             keypair    = _get_keypair()
             wallet     = str(keypair.pubkey())
@@ -1906,8 +1956,28 @@ class MemeExecutor:
                                 log.warning("LOCAL BUILD sell step %d failed (%s) — PumpPortal  token=%s",
                                             step, _lb_err, token_address[:8])
                         elif _tokens_to_sell_local > 0:
-                            log.info("LOCAL BUILD sell SKIPPED (Token-2022) — PumpPortal  token=%s",
-                                     token_address[:8])
+                            # T22 bonding-curve sell: use T22-native local path first.
+                            # bonding_curve_t22.run_bc_t22_sell() derives user ATA with Token-2022
+                            # token program — fixes Custom:6001 from wrong ATA derivation.
+                            _bc_t22_result = None
+                            try:
+                                from memecoin.bonding_curve_t22 import run_bc_t22_sell as _run_bc_t22
+                                from memecoin.exit_router import TokenExitState as _TES, _log_route_attempt as _lra
+                                _fake_pos = type("P", (), {
+                                    "token_address": token_address, "token_symbol": getattr(pos, "token_symbol", "?"),
+                                    "id": getattr(pos, "id", "?"), "tokens_held": _tokens_to_sell_local,
+                                    "notes": getattr(pos, "notes", ""),
+                                })()
+                                _bc_t22_result = _run_bc_t22(_fake_pos, reason, rpc_url=CHAINS.get("solana", {}).get("rpc", "https://api.mainnet-beta.solana.com"))
+                                _lra(_bc_t22_result, _fake_pos, _TES.BONDING_CURVE_T22)
+                            except Exception as _t22_err:
+                                log.warning("BC T22 sell call failed (%s) — PumpPortal fallback  token=%s",
+                                            _t22_err, token_address[:8])
+                            # If T22 local path succeeded, skip PumpPortal
+                            if _bc_t22_result and _bc_t22_result.get("success"):
+                                log.info("BC T22 LOCAL SELL success  token=%s", token_address[:8])
+                                _sig_sent_local = True
+                                sig = _bc_t22_result.get("tx_sig", "")
                         if not _sig_sent_local:
                             tx_bytes  = _pumpportal_build_tx(
                                 wallet_pubkey=wallet, action="sell", token_mint=token_address,

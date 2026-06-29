@@ -1554,6 +1554,55 @@ def _portfolio_thread():
                         )
                         continue
 
+                    # GAP 2: if PP never saw migration (mig_age=inf) AND both feeds
+                    # are silent, do NOT blindly market-sell — the token may be mid-migration.
+                    # Try to discover route before firing feed_blind.
+                    if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC and mig_age == float("inf"):
+                        log.warning(
+                            "migration_uncertain_blind_suppressed — PP+Dex silent but migration unknown  "
+                            "token=%s  pp_age=%.0fs  dex_age=%.0fs",
+                            pos.token_symbol, pp_age, dex_age,
+                        )
+                        # Try DexScreener to discover current state
+                        _mu_dex_id = ""
+                        try:
+                            from memecoin.data_client import dex_get_token as _dex_mu
+                            _mu_pair = _dex_mu("solana", mint)
+                            _mu_dex_id = (_mu_pair.get("dexId") or "").lower() if _mu_pair else ""
+                        except Exception:
+                            pass
+                        # Try PumpSwap pool via RPC
+                        _mu_pool_exists = False
+                        try:
+                            from memecoin.pumpswap_local import fetch_pool as _fetch_ps_pool, PumpSwapPoolError as _PSErr
+                            _fetch_ps_pool(mint, CHAINS.get("solana", {}).get("rpc", "https://api.mainnet-beta.solana.com"))
+                            _mu_pool_exists = True
+                        except Exception:
+                            pass
+                        if _mu_dex_id == "pumpswap" or _mu_pool_exists:
+                            log.error(
+                                "MIGRATION_UNCERTAIN → PumpSwap pool found — routing graduated exit  token=%s",
+                                pos.token_symbol,
+                            )
+                            if pos.notes and "|cohort:bonding_curve" in pos.notes:
+                                pos.notes = pos.notes.replace("|cohort:bonding_curve", "|cohort:graduated")
+                            portfolio.close_position(pos.id, "migration_uncertain_graduated", pos.current_price)
+                        else:
+                            log.error(
+                                "MIGRATION_UNCERTAIN — no pool found, scheduling controlled retry  token=%s",
+                                pos.token_symbol,
+                            )
+                            try:
+                                from app.alerts import _send
+                                _send(
+                                    f"⚠️ MIGRATION UNCERTAIN {pos.token_symbol} — "
+                                    f"PP+Dex both silent, migration unknown. "
+                                    f"No pool found. Manual check required."
+                                )
+                            except Exception:
+                                pass
+                        continue  # do NOT fire feed_blind regardless of outcome
+
                     if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC:
                         log.error(
                             "FEED BLIND — both PP (%.0fs) and DexScreener (%.0fs) silent "
