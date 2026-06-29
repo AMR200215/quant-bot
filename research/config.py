@@ -75,7 +75,7 @@ INTERVAL_MINUTES = {
 }
 
 # ---------------------------------------------------------------------------
-# Screener threshold snapshot (trading bot values as of 2026-06-21)
+# Screener threshold snapshot (trading bot values as of 2026-06-30)
 # Analysis scripts use these to compute screener_passed at query time.
 # Update date comment when these change in the trading bot.
 # ---------------------------------------------------------------------------
@@ -83,10 +83,10 @@ SCREENER_MIN_LIQUIDITY_USD       = 8_000
 SCREENER_MAX_MCAP_USD            = 8_000_000
 SCREENER_MIN_BUY_SELL_RATIO_5M  = 0.55
 SCREENER_MIN_VOL_5M              = 2_000
-SCREENER_MAX_VOL_5M              = 15_000
-SCREENER_MAX_VOL_H1              = 20_000
-SCREENER_MAX_PRICE_CHANGE_5M     = 500     # >500% in 5m = blow-off top risk
-SCREENER_MAX_RUGCHECK_SCORE      = 500     # rugcheck 0-1000: lower = safer; >500 = risky
+SCREENER_MAX_VOL_5M              = 50_000   # raised from 15K — research shows winners avg ~$22K
+SCREENER_MAX_VOL_H1              = 100_000  # raised from 20K to match wider 5m ceiling
+SCREENER_MAX_PRICE_CHANGE_5M     = 500      # >500% in 5m = blow-off top risk
+SCREENER_MAX_RUGCHECK_SCORE      = 500      # rugcheck 0-1000: lower = safer; >500 = risky
 
 # ---------------------------------------------------------------------------
 # Dedup window: ignore same token seen within this many hours
