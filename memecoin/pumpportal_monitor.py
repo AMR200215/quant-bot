@@ -709,6 +709,15 @@ class PumpPortalMonitor:
         tick_thread.join(timeout=0.1)
 
         if got_tick:
+            # Clear the 5.5s tick-check timeout — the main recv loop must block
+            # indefinitely (heartbeat thread handles dead-connection detection).
+            # Without this, every recv in the main loop times out after 5.5s and
+            # triggers a reconnect, causing the ~10-30s disconnect cycle seen in logs.
+            try:
+                new_ws.settimeout(None)
+            except Exception:
+                pass
+
             # Seamless handover: install prewarm, mark old as planned close
             with self._prewarm_lock:
                 self._prewarm_ws = new_ws
@@ -795,6 +804,12 @@ class PumpPortalMonitor:
             log.info("PumpPortal using pre-warmed rotation WS (gap <100ms)")
         else:
             ws = _ws_mod.create_connection(WS_URL, timeout=30)
+            # timeout=30 sets recv timeout too — clear it so recv blocks indefinitely.
+            # Heartbeat thread handles dead-connection detection via last_frame_ts.
+            try:
+                ws.settimeout(None)
+            except Exception:
+                pass
 
         conn_start = time.time()
         self._conn_start_ts = conn_start
