@@ -1184,6 +1184,22 @@ class MemeExecutor:
             except Exception:
                 pass
 
+            # ── Canary T22-probe-only gate ────────────────────────────────────────
+            # When CANARY_T22_PROBE_ONLY=True, block all non-T22 live buys so only
+            # Token-2022 tokens are purchased during the probe validation window.
+            try:
+                from memecoin.config import CANARY_T22_PROBE_ONLY as _t22_only
+                if _t22_only:
+                    _prog = _pumpfun_mint_token_program(token_address)
+                    if _prog != _TOKEN22_PROGRAM_ID:
+                        log.info(
+                            "BUY blocked — CANARY_T22_PROBE_ONLY: SPL token skipped  token=%s",
+                            token_address[:8],
+                        )
+                        return {"success": False, "reason": "canary_t22_probe_only_spl_blocked"}
+            except Exception:
+                pass
+
             # ── T22 policy: enforce before live buy ──────────────────────────────
             # Checks token program and T22 extensions. Forces paper-only or canary
             # based on config policy. Note tags are appended to journal.

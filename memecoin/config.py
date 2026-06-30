@@ -370,6 +370,7 @@ AUTO_DISABLE_ON_UNKNOWN_SELL_FAILURE = True  # disable live buys when error_clas
 LIVE_CANARY_MODE         = True    # cap live buys to MAX_CANARY_TRADE_USD until validated
 MAX_CANARY_TRADE_USD     = 3       # max single trade USD in canary mode
 EXIT_SYSTEM_VALIDATED    = False   # set True after: 1 T22 BC live sell + 1 T22 PS live sell + 10 clean exits
+CANARY_T22_PROBE_ONLY    = True    # when True: live buys only for Token-2022 tokens, all SPL blocked
 
 # ---------------------------------------------------------------------------
 # PumpSwap local exit layer (Level 3)
