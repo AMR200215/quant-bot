@@ -341,6 +341,11 @@ BLOCK_T22_UNKNOWN_EXTENSIONS = True    # paper-only if token has unknown T22 ext
 MAX_JUPITER_EXIT_PRICE_IMPACT_PCT = 35    # block Jupiter exit if impact > 35%
 ALLOW_JUPITER_PANIC_EXIT          = False # override impact guard for last-resort
 
+# ── Jupiter rescue sell (automatic fallback when PumpSwap local path fails) ──
+JUPITER_RESCUE_ENABLED               = True   # master switch for automatic Jupiter rescue sells
+JUPITER_RESCUE_MAX_PRICE_IMPACT_PCT  = 50     # block rescue if impact > 50% UNLESS panic exit
+ALLOW_JUPITER_RESCUE_PANIC_EXIT      = True   # allow high-impact sells for urgent/migration reasons
+
 # ── Jupiter retry / backoff (quote + swap build) ──────────────────────────────
 JUPITER_MAX_RETRIES        = 4    # max attempts on 429 or timeout (1 initial + 3 retries)
 JUPITER_BACKOFF_BASE_MS    = 250  # initial backoff after first 429

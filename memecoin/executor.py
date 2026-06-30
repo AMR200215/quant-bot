@@ -2046,7 +2046,7 @@ class MemeExecutor:
                     from app.alerts import _send
                     _send(
                         f"\U0001f6a8 GRADUATED UNSELLABLE {token_address[:8]} — "
-                        f"pump-amm + Jupiter both failed. Manual sell needed. "
+                        f"pump-amm + Jupiter both failed — Jupiter rescue will be attempted. "
                         f"mint={token_address}"
                     )
                 except Exception:

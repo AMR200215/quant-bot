@@ -1513,7 +1513,59 @@ class Portfolio:
                         except Exception as _er_exc:
                             log.warning("ExitRouter error (non-fatal, falling through): %s", _er_exc)
 
-                    if not _pumpswap_local_succeeded:
+                    # ── Jupiter rescue: fire before executor if local PumpSwap failed with pool error ──
+                    _rescue_attempted = False
+                    _rescue_succeeded = False
+                    _RESCUE_TRIGGER_CLASSES = frozenset({
+                        "pumpswap_no_pool", "pumpswap_bad_pool_layout", "pool_not_indexed",
+                        "local_build_failed", "local_sim_failed", "pumpswap_simulation_failed",
+                    })
+                    _er_rescue_eligible = (
+                        "_er" in dir() and "_exit_state" in dir()
+                        and _exit_state in (
+                            _er.TokenExitState.GRADUATED_PUMPSWAP,
+                            _er.TokenExitState.MIGRATION_UNCERTAIN,
+                        )
+                    )
+                    if not _pumpswap_local_succeeded and _er_rescue_eligible:
+                        _ps_ec = _ps_result.get("error_class", "") if "_ps_result" in dir() else ""
+                        _should_rescue = _ps_ec in _RESCUE_TRIGGER_CLASSES or not _ps_ec
+                        if _should_rescue:
+                            try:
+                                from memecoin.jupiter_rescue import force_jupiter_rescue_sell
+                                try:
+                                    from app.alerts import _send as _alert_send
+                                    _alert_send(
+                                        f"\u26a1 MIGRATION UNCERTAIN {pos.token_symbol} — "
+                                        f"attempting Jupiter rescue (pool may be indexing)"
+                                    )
+                                except Exception:
+                                    pass
+                                _resc = force_jupiter_rescue_sell(pos, reason)
+                                _rescue_attempted = True
+                                if _resc.get("success"):
+                                    _rescue_succeeded = True
+                                    _fill = _resc.get("fill_price") or pos.exit_price
+                                    if _fill:
+                                        pos.exit_price = _fill
+                                    pos.notes = (pos.notes or "") + (
+                                        f"|sell_tx:{_resc.get('tx_sig','')}|sell_fill:{_fill:.10f}"
+                                        f"|route:JUPITER_RESCUE"
+                                    )
+                                    log.info(
+                                        "Jupiter rescue succeeded  %s  sig=%s  sol=%.6f",
+                                        pos.token_symbol, _resc.get("tx_sig", "")[:16],
+                                        _resc.get("sol_received", 0),
+                                    )
+                                    try:
+                                        from app.alerts import alert_live_sell
+                                        alert_live_sell(pos, _resc.get("sol_received", 0), _resc.get("tx_sig", ""))
+                                    except Exception:
+                                        pass
+                            except Exception as _resc_exc:
+                                log.warning("Jupiter rescue exception (non-fatal): %s", _resc_exc)
+
+                    if not _pumpswap_local_succeeded and not _rescue_succeeded:
                         ex     = MemeExecutor()
                         # escalate=True when:
                         #   (a) this is a retry — previous full ladder failed
@@ -1529,7 +1581,7 @@ class Portfolio:
                             or _er_classified_graduated
                         )
                     result = {}  # default: no executor result (set below if executor runs)
-                    if not _pumpswap_local_succeeded:
+                    if not _pumpswap_local_succeeded and not _rescue_succeeded:
                         if _is_graduated and not _is_retry:
                             log.info("SELL graduated token — pump-amm PRIMARY, Jupiter FALLBACK  token=%s",
                                      pos.token_address[:8])
@@ -1610,7 +1662,8 @@ class Portfolio:
                                 _send(
                                     f"\U0001f480 SELL FAILED {pos.token_symbol} — "
                                     f"pump-amm + Jupiter failed {_grad_attempts}x. "
-                                    f"Possible honeypot. Try selling manually in Phantom:\n"
+                                    f"Jupiter rescue also failed. "
+                                    f"Manual rescue needed in Phantom:\n"
                                     f"mint: {pos.token_address}"
                                 )
                             except Exception:
