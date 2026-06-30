@@ -185,75 +185,91 @@ def step_token_state(mint: str, wallet: str, rpc_url: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def step_jupiter_quote(
-    mint: str, amount_raw: int, slippage_bps: int
+    mint: str, amount_raw: int, slippage_bps: int, max_retries: int = 4
 ) -> tuple[dict | None, str, float]:
-    """Returns (quote_dict, error_class, latency_ms)."""
+    """Returns (quote_dict, error_class, latency_ms). Retries on 429."""
     _head("2. JUPITER QUOTE")
     t0 = time.time()
     error_class = ""
-    try:
-        params = {
-            "inputMint":       mint,
-            "outputMint":      WSOL_MINT,
-            "amount":          str(amount_raw),
-            "dynamicSlippage": "true",
-            "maxSlippageBps":  str(slippage_bps),
-        }
-        resp = requests.get(JUPITER_QUOTE_URL, params=params, timeout=12)
-        latency_ms = (time.time() - t0) * 1000
+    params = {
+        "inputMint":       mint,
+        "outputMint":      WSOL_MINT,
+        "amount":          str(amount_raw),
+        "dynamicSlippage": "true",
+        "maxSlippageBps":  str(slippage_bps),
+    }
 
-        if resp.status_code == 429:
-            _err("Jupiter 429 — rate limited", f"latency={latency_ms:.0f}ms")
-            return None, JUPITER_429, latency_ms
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.get(JUPITER_QUOTE_URL, params=params, timeout=12)
+            latency_ms = (time.time() - t0) * 1000
 
-        if resp.status_code != 200:
-            body = resp.text[:300]
-            if "no route" in body.lower() or "could not find" in body.lower():
-                _err("Jupiter — no route found", body)
-                return None, JUPITER_ROUTE_NO_LIQUIDITY, latency_ms
-            if "token2022" in body.lower() or "unsupported" in body.lower():
-                _err("Jupiter — T22 unsupported", body)
-                return None, TOKEN2022_UNSUPPORTED, latency_ms
-            _err(f"Jupiter HTTP {resp.status_code}", body)
+            if resp.status_code == 429:
+                wait = 3 * attempt
+                if attempt < max_retries:
+                    _warn(f"Jupiter 429 — rate limited (attempt {attempt}/{max_retries}), retrying in {wait}s…",
+                          f"latency={latency_ms:.0f}ms")
+                    time.sleep(wait)
+                    continue
+                _err(f"Jupiter 429 — rate limited after {max_retries} attempts", f"latency={latency_ms:.0f}ms")
+                return None, JUPITER_429, latency_ms
+
+            if resp.status_code != 200:
+                body = resp.text[:300]
+                if "no route" in body.lower() or "could not find" in body.lower():
+                    _err("Jupiter — no route found", body)
+                    return None, JUPITER_ROUTE_NO_LIQUIDITY, latency_ms
+                if "token2022" in body.lower() or "unsupported" in body.lower():
+                    _err("Jupiter — T22 unsupported", body)
+                    return None, TOKEN2022_UNSUPPORTED, latency_ms
+                _err(f"Jupiter HTTP {resp.status_code}", body)
+                return None, JUPITER_QUOTE_UNAVAILABLE, latency_ms
+
+            quote = resp.json()
+            if "error" in quote:
+                msg = quote["error"]
+                if "no route" in msg.lower() or "could not find" in msg.lower():
+                    _err(f"Jupiter no route: {msg}", f"latency={latency_ms:.0f}ms")
+                    return None, JUPITER_ROUTE_NO_LIQUIDITY, latency_ms
+                _err(f"Jupiter quote error: {msg}", f"latency={latency_ms:.0f}ms")
+                return None, JUPITER_QUOTE_UNAVAILABLE, latency_ms
+
+            # Success
+            out_amount   = int(quote.get("outAmount", 0))
+            price_impact = float(quote.get("priceImpactPct", 0))
+            route_labels = [
+                s.get("label", s.get("ammKey", "?"))
+                for plan in quote.get("routePlan", [])
+                for s in [plan.get("swapInfo", {})]
+            ]
+
+            suffix = f"  (attempt {attempt})" if attempt > 1 else ""
+            _ok(f"Quote OK  latency={latency_ms:.0f}ms{suffix}",
+                f"outAmount={out_amount:,} lamports ({out_amount/1e9:.6f} SOL)\n"
+                f"priceImpact={price_impact:.4f}%\n"
+                f"route={route_labels}")
+
+            if price_impact > 50:
+                _warn(f"Price impact very high: {price_impact:.2f}%")
+                error_class = JUPITER_PRICE_IMPACT_TOO_HIGH
+
+            return quote, error_class, latency_ms
+
+        except requests.exceptions.Timeout:
+            latency_ms = (time.time() - t0) * 1000
+            if attempt < max_retries:
+                _warn(f"Jupiter quote timeout (attempt {attempt}/{max_retries}), retrying…")
+                time.sleep(2)
+                continue
+            _err("Jupiter quote timed out", f"latency={latency_ms:.0f}ms")
+            return None, JUPITER_QUOTE_UNAVAILABLE, latency_ms
+        except Exception as e:
+            latency_ms = (time.time() - t0) * 1000
+            _err(f"Jupiter quote exception: {e}", f"latency={latency_ms:.0f}ms")
             return None, JUPITER_QUOTE_UNAVAILABLE, latency_ms
 
-        quote = resp.json()
-        if "error" in quote:
-            msg = quote["error"]
-            if "no route" in msg.lower() or "could not find" in msg.lower():
-                _err(f"Jupiter no route: {msg}", f"latency={latency_ms:.0f}ms")
-                return None, JUPITER_ROUTE_NO_LIQUIDITY, latency_ms
-            _err(f"Jupiter quote error: {msg}", f"latency={latency_ms:.0f}ms")
-            return None, JUPITER_QUOTE_UNAVAILABLE, latency_ms
-
-        # Success
-        out_amount   = int(quote.get("outAmount", 0))
-        price_impact = float(quote.get("priceImpactPct", 0))
-        route_labels = [
-            s.get("label", s.get("ammKey", "?"))
-            for plan in quote.get("routePlan", [])
-            for s in [plan.get("swapInfo", {})]
-        ]
-
-        _ok(f"Quote OK  latency={latency_ms:.0f}ms",
-            f"outAmount={out_amount:,} lamports ({out_amount/1e9:.6f} SOL)\n"
-            f"priceImpact={price_impact:.4f}%\n"
-            f"route={route_labels}")
-
-        if price_impact > 50:
-            _warn(f"Price impact very high: {price_impact:.2f}%")
-            error_class = JUPITER_PRICE_IMPACT_TOO_HIGH
-
-        return quote, error_class, latency_ms
-
-    except requests.exceptions.Timeout:
-        latency_ms = (time.time() - t0) * 1000
-        _err("Jupiter quote timed out", f"latency={latency_ms:.0f}ms")
-        return None, JUPITER_QUOTE_UNAVAILABLE, latency_ms
-    except Exception as e:
-        latency_ms = (time.time() - t0) * 1000
-        _err(f"Jupiter quote exception: {e}", f"latency={latency_ms:.0f}ms")
-        return None, JUPITER_QUOTE_UNAVAILABLE, latency_ms
+    latency_ms = (time.time() - t0) * 1000
+    return None, JUPITER_429, latency_ms
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -412,12 +428,14 @@ def step_local_comparison(
         from solders.keypair import Keypair
 
         dummy_kp = Keypair()
+        # wallet_pubkey must match keypair.pubkey() — use dummy's pubkey for dry-run build
+        dummy_wallet = str(dummy_kp.pubkey())
 
         # Build
         try:
             pool = fetch_pool(mint, rpc_url)
             tx_bytes = build_pumpswap_sell_tx(
-                wallet_pubkey=wallet,
+                wallet_pubkey=dummy_wallet,
                 keypair=dummy_kp,
                 token_mint=mint,
                 token_amount_raw=amount_raw,
@@ -568,6 +586,9 @@ def main():
 
     # ── Resolve RPC ───────────────────────────────────────────────────────────
     rpc_url = args.rpc
+    if not rpc_url:
+        # Prefer the env var (set by .env / systemd EnvironmentFile)
+        rpc_url = os.environ.get("SOLANA_RPC_URL", "")
     if not rpc_url:
         try:
             import memecoin.config as cfg
