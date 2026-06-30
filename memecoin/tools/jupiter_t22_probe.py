@@ -131,7 +131,9 @@ def step_token_state(mint: str, wallet: str, rpc_url: str) -> dict:
                   "Warning: this mint may not be Token-2022")
     except Exception as e:
         result["error"] = f"check_token_program failed: {e}"
-        _err("Token program check failed", str(e))
+        _err("Token program check failed", str(e)[:120])
+
+    time.sleep(0.3)  # avoid Helius burst rate limit between RPC calls
 
     # ── PumpSwap pool / graduation status ─────────────────────────────────────
     try:
@@ -143,8 +145,10 @@ def step_token_state(mint: str, wallet: str, rpc_url: str) -> dict:
             f"pool={pool['pool_address'][:16]}…  "
             f"coin_creator={'set' if pool.get('coin_creator') not in ('', '11111111111111111111111111111111') else 'null'}")
     except Exception as e:
-        _warn("PumpSwap pool not found (not graduated, or pool lookup failed)", str(e))
+        _warn("PumpSwap pool not found (not graduated, or pool lookup failed)", str(e)[:120])
         result["dex_id"] = "unknown"
+
+    time.sleep(0.3)  # avoid Helius burst rate limit
 
     # ── Wallet ATA balance ────────────────────────────────────────────────────
     try:
@@ -497,8 +501,10 @@ def step_verdict(
     def _tick(v): return f"{_GREEN}PASS{_RESET}" if v else f"{_RED}FAIL{_RESET}"
 
     jup_build = quote_ok and swap_build_ok
-    print(f"  {'Jupiter':<26}  {_tick(jup_build):<15}  {_tick(sim_ok):<15}  {sim_error_class or swap_error_class or quote_error_class or '—'}")
-    print(f"  {'PUMPSWAP_LOCAL (T22)':<26}  {_tick(local_build_ok):<15}  {_tick(local_sim_ok):<15}  {local_error_class or '—'}")
+    jup_ec = (sim_error_class or swap_error_class or quote_error_class or "—")[:40]
+    loc_ec = (local_error_class or "—").split(":")[0][:40]  # trim long RPC error URLs
+    print(f"  {'Jupiter':<26}  {_tick(jup_build):<15}  {_tick(sim_ok):<15}  {jup_ec}")
+    print(f"  {'PUMPSWAP_LOCAL (T22)':<26}  {_tick(local_build_ok):<15}  {_tick(local_sim_ok):<15}  {loc_ec}")
 
     # Verdict logic
     if not token_state.get("is_t22"):
