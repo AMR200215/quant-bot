@@ -341,6 +341,12 @@ BLOCK_T22_UNKNOWN_EXTENSIONS = True    # paper-only if token has unknown T22 ext
 MAX_JUPITER_EXIT_PRICE_IMPACT_PCT = 35    # block Jupiter exit if impact > 35%
 ALLOW_JUPITER_PANIC_EXIT          = False # override impact guard for last-resort
 
+# ── Jupiter retry / backoff (quote + swap build) ──────────────────────────────
+JUPITER_MAX_RETRIES        = 4    # max attempts on 429 or timeout (1 initial + 3 retries)
+JUPITER_BACKOFF_BASE_MS    = 250  # initial backoff after first 429
+JUPITER_BACKOFF_MAX_MS     = 3000 # backoff ceiling (exponential, capped here)
+JUPITER_BACKOFF_JITTER_MS  = 150  # uniform random jitter added to each backoff
+
 # ── Live buy kill switch ─────────────────────────────────────────────────────
 LIVE_BUYS_ENABLED              = True    # master switch — auto-disabled on unknown sell failure
 AUTO_DISABLE_ON_UNKNOWN_SELL_FAILURE = True  # disable live buys when error_class=unknown_sell_failure

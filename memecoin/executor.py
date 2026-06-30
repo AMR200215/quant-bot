@@ -996,42 +996,156 @@ def _pumpportal_build_tx(
 # Jupiter execution path (fallback)
 # ---------------------------------------------------------------------------
 
+# Error classes emitted by the Jupiter retry helpers.
+# These surface in logs and exit_route_attempts.csv.
+_JUP_EC_RETRYING          = "jupiter_429_retrying"
+_JUP_EC_EXHAUSTED         = "jupiter_429_exhausted"
+_JUP_EC_QUOTE_FAILED      = "jupiter_quote_failed"
+_JUP_EC_SWAP_BUILD_FAILED = "jupiter_swap_build_failed"
+_JUP_EC_SIM_FAILED        = "jupiter_sim_failed"
+_JUP_EC_READY_NO_SEND     = "jupiter_ready_but_send_disabled"
+
+
+def _jup_backoff_ms(attempt: int) -> float:
+    """Exponential backoff with jitter in milliseconds, capped at JUPITER_BACKOFF_MAX_MS."""
+    import random
+    try:
+        from memecoin.config import (
+            JUPITER_BACKOFF_BASE_MS   as _base,
+            JUPITER_BACKOFF_MAX_MS    as _ceil,
+            JUPITER_BACKOFF_JITTER_MS as _jitter,
+        )
+    except ImportError:
+        _base, _ceil, _jitter = 250, 3000, 150
+    raw = _base * (2 ** (attempt - 1))  # exponential: 250, 500, 1000, 2000, …
+    capped = min(raw, _ceil)
+    return capped + random.uniform(0, _jitter)
+
 
 def _jup_get_quote(input_mint: str, output_mint: str, amount: int) -> dict:
-    resp = requests.get(
-        JUPITER_QUOTE_URL,
-        params={
-            "inputMint":       input_mint,
-            "outputMint":      output_mint,
-            "amount":          amount,
-            "dynamicSlippage": "true",
-            "maxSlippageBps":  SLIPPAGE_BUY_PCT * 100,
-        },
-        timeout=10,
+    """
+    Fetch Jupiter quote with retry on HTTP 429 or transient timeout.
+
+    Config: JUPITER_MAX_RETRIES, JUPITER_BACKOFF_BASE_MS,
+            JUPITER_BACKOFF_MAX_MS, JUPITER_BACKOFF_JITTER_MS
+    """
+    try:
+        from memecoin.config import JUPITER_MAX_RETRIES as _max_retries
+    except ImportError:
+        _max_retries = 4
+
+    params = {
+        "inputMint":       input_mint,
+        "outputMint":      output_mint,
+        "amount":          amount,
+        "dynamicSlippage": "true",
+        "maxSlippageBps":  SLIPPAGE_BUY_PCT * 100,
+    }
+    last_exc: Exception | None = None
+    for attempt in range(1, _max_retries + 1):
+        try:
+            resp = requests.get(JUPITER_QUOTE_URL, params=params, timeout=10)
+        except requests.exceptions.Timeout as exc:
+            last_exc = exc
+            wait_ms = _jup_backoff_ms(attempt)
+            log.warning(
+                "Jupiter quote timeout  endpoint=quote  attempt=%d/%d  backoff_ms=%.0f  mint=%s",
+                attempt, _max_retries, wait_ms, input_mint[:8],
+            )
+            if attempt < _max_retries:
+                time.sleep(wait_ms / 1000)
+            continue
+
+        if resp.status_code == 429:
+            wait_ms = _jup_backoff_ms(attempt)
+            if attempt < _max_retries:
+                log.warning(
+                    "Jupiter quote 429  error_class=%s  endpoint=quote  attempt=%d/%d"
+                    "  backoff_ms=%.0f  mint=%s",
+                    _JUP_EC_RETRYING, attempt, _max_retries, wait_ms, input_mint[:8],
+                )
+                time.sleep(wait_ms / 1000)
+                continue
+            log.error(
+                "Jupiter quote 429  error_class=%s  endpoint=quote  attempt=%d/%d  mint=%s",
+                _JUP_EC_EXHAUSTED, attempt, _max_retries, input_mint[:8],
+            )
+            resp.raise_for_status()  # raises HTTPError(429) to caller
+
+        resp.raise_for_status()
+        return resp.json()
+
+    # All retries exhausted via timeout path
+    log.error(
+        "Jupiter quote  error_class=%s  attempt=%d/%d  mint=%s  last_exc=%s",
+        _JUP_EC_EXHAUSTED, _max_retries, _max_retries, input_mint[:8], last_exc,
     )
-    resp.raise_for_status()
-    return resp.json()
+    raise last_exc or RuntimeError(_JUP_EC_EXHAUSTED)
 
 
 def _jup_build_swap_tx(quote: dict, wallet_pubkey: str,
                        slippage_bps: int = SLIPPAGE_SELL_PCT * 100,
                        priority_fee_lamports: int = None) -> bytes:
-    """Build swap transaction via Jupiter swap API. Returns raw tx bytes."""
+    """
+    Build swap transaction via Jupiter swap API with retry on HTTP 429.
+    Returns raw tx bytes. Does NOT sign or send.
+
+    Config: JUPITER_MAX_RETRIES, JUPITER_BACKOFF_BASE_MS,
+            JUPITER_BACKOFF_MAX_MS, JUPITER_BACKOFF_JITTER_MS
+    """
     if priority_fee_lamports is None:
         priority_fee_lamports = int(PRIORITY_FEE_SOL * 1e9)
-    swap_resp = requests.post(
-        JUPITER_SWAP_URL,
-        json={
-            "quoteResponse":             quote,
-            "userPublicKey":             wallet_pubkey,
-            "wrapAndUnwrapSol":          True,
-            "dynamicSlippage":           {"maxBps": slippage_bps},
-            "prioritizationFeeLamports": priority_fee_lamports,
-        },
-        timeout=15,
+    try:
+        from memecoin.config import JUPITER_MAX_RETRIES as _max_retries
+    except ImportError:
+        _max_retries = 4
+
+    payload = {
+        "quoteResponse":             quote,
+        "userPublicKey":             wallet_pubkey,
+        "wrapAndUnwrapSol":          True,
+        "dynamicSlippage":           {"maxBps": slippage_bps},
+        "prioritizationFeeLamports": priority_fee_lamports,
+    }
+    last_exc: Exception | None = None
+    for attempt in range(1, _max_retries + 1):
+        try:
+            swap_resp = requests.post(JUPITER_SWAP_URL, json=payload, timeout=15)
+        except requests.exceptions.Timeout as exc:
+            last_exc = exc
+            wait_ms = _jup_backoff_ms(attempt)
+            log.warning(
+                "Jupiter swap timeout  endpoint=swap  attempt=%d/%d  backoff_ms=%.0f  wallet=%s",
+                attempt, _max_retries, wait_ms, wallet_pubkey[:8],
+            )
+            if attempt < _max_retries:
+                time.sleep(wait_ms / 1000)
+            continue
+
+        if swap_resp.status_code == 429:
+            wait_ms = _jup_backoff_ms(attempt)
+            if attempt < _max_retries:
+                log.warning(
+                    "Jupiter swap 429  error_class=%s  endpoint=swap  attempt=%d/%d"
+                    "  backoff_ms=%.0f  wallet=%s",
+                    _JUP_EC_RETRYING, attempt, _max_retries, wait_ms, wallet_pubkey[:8],
+                )
+                time.sleep(wait_ms / 1000)
+                continue
+            log.error(
+                "Jupiter swap 429  error_class=%s  endpoint=swap  attempt=%d/%d  wallet=%s",
+                _JUP_EC_EXHAUSTED, attempt, _max_retries, wallet_pubkey[:8],
+            )
+            swap_resp.raise_for_status()
+
+        swap_resp.raise_for_status()
+        return base64.b64decode(swap_resp.json()["swapTransaction"])
+
+    log.error(
+        "Jupiter swap  error_class=%s  attempt=%d/%d  wallet=%s  last_exc=%s",
+        _JUP_EC_EXHAUSTED, _max_retries, _max_retries, wallet_pubkey[:8], last_exc,
     )
-    swap_resp.raise_for_status()
-    return base64.b64decode(swap_resp.json()["swapTransaction"])
+    raise last_exc or RuntimeError(_JUP_EC_EXHAUSTED)
 
 
 # ---------------------------------------------------------------------------
@@ -1718,30 +1832,49 @@ class MemeExecutor:
             # If both fail: alert "graduated unsellable" and return — do NOT loop-retry
             # burning fees; caller (portfolio) will keep position open for manual exit.
             if escalate:
-                log.warning("SELL escalate (graduated) — pump-amm PRIMARY  token=%s", token_address[:8])
                 _grad_fee_level = "High" if urgent else "UnsafeMax"
                 _grad_fee_floor = 0.0005 if urgent else 0.005
                 _grad_fee = max(_helius_priority_fee(token_address, _grad_fee_level), _grad_fee_floor)
 
-                # ── PRIMARY: PumpPortal pool="pump-amm" ──────────────────────────
+                # ── T22 check: pump-amm cannot handle Token-2022 ATAs ────────────
+                # pump-amm uses SPL ATA derivation → always reverts with Custom:6001
+                # for T22 tokens. Skip directly to Jupiter for T22 graduated tokens.
+                _skip_pamm_t22 = (
+                    _mint_token_program_cache.get(token_address) == _TOKEN22_PROGRAM_ID
+                    or "TokenzQ" in _mint_token_program_cache.get(token_address, "")
+                )
+                if _skip_pamm_t22:
+                    log.warning(
+                        "SELL escalate (graduated T22) — pump-amm SKIPPED, going direct to Jupiter  token=%s",
+                        token_address[:8],
+                    )
+                else:
+                    log.warning("SELL escalate (graduated) — pump-amm PRIMARY  token=%s", token_address[:8])
+
+                # ── PRIMARY: PumpPortal pool="pump-amm" (SPL tokens only) ─────────
                 _pamm_sig  = None
                 _pamm_conf = False
                 _pamm_err  = None
                 try:
-                    _t_pamm = time.time()
-                    _pamm_bytes = _pumpportal_build_tx(
-                        wallet_pubkey=wallet, action="sell", token_mint=token_address,
-                        amount=_sell_amount, denominated_in_sol=False,
-                        slippage_pct=98, priority_fee_sol=_grad_fee,
-                        pool="pump-amm",
-                    )
-                    _pamm_tx     = VersionedTransaction.from_bytes(_pamm_bytes)
-                    _pamm_signed = VersionedTransaction(_pamm_tx.message, [keypair])
-                    _pamm_sig    = _send_transaction(bytes(_pamm_signed))
-                    all_sigs.append(_pamm_sig)
-                    log.warning("SELL pump-amm sent  sig=%s  token=%s  build_ms=%.0f",
-                                _pamm_sig[:16], token_address[:8], (time.time() - _t_pamm) * 1000)
-                    _pamm_conf, _pamm_err = _confirm_tx(_pamm_sig, t_sent=_t_pamm)
+                    if _skip_pamm_t22:
+                        # pump-amm always reverts Custom:6001 for T22 (wrong ATA program).
+                        # Set err so the fallback condition below evaluates naturally.
+                        _pamm_err = "pump_amm_skipped_t22"
+                    else:
+                        _t_pamm = time.time()
+                        _pamm_bytes = _pumpportal_build_tx(
+                            wallet_pubkey=wallet, action="sell", token_mint=token_address,
+                            amount=_sell_amount, denominated_in_sol=False,
+                            slippage_pct=98, priority_fee_sol=_grad_fee,
+                            pool="pump-amm",
+                        )
+                        _pamm_tx     = VersionedTransaction.from_bytes(_pamm_bytes)
+                        _pamm_signed = VersionedTransaction(_pamm_tx.message, [keypair])
+                        _pamm_sig    = _send_transaction(bytes(_pamm_signed))
+                        all_sigs.append(_pamm_sig)
+                        log.warning("SELL pump-amm sent  sig=%s  token=%s  build_ms=%.0f",
+                                    _pamm_sig[:16], token_address[:8], (time.time() - _t_pamm) * 1000)
+                        _pamm_conf, _pamm_err = _confirm_tx(_pamm_sig, t_sent=_t_pamm)
                 except Exception as _pamm_ex:
                     log.warning("SELL pump-amm build/send failed: %s  token=%s", _pamm_ex, token_address[:8])
 
