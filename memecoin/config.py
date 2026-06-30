@@ -347,6 +347,21 @@ JUPITER_BACKOFF_BASE_MS    = 250  # initial backoff after first 429
 JUPITER_BACKOFF_MAX_MS     = 3000 # backoff ceiling (exponential, capped here)
 JUPITER_BACKOFF_JITTER_MS  = 150  # uniform random jitter added to each backoff
 
+# ── Jupiter request governor ────────────────────────────────────────────────
+# Token-bucket rate limiter with three independent priority tiers.
+# BACKGROUND is consumed by scanner/warming. EXIT and EMERGENCY are reserved
+# exclusively for sell-path callers. See memecoin/jupiter_governor.py.
+JUPITER_GOVERNOR_ENABLED  = True  # set False to disable (pass-through mode)
+JUPITER_BACKGROUND_RPM    = 20    # tokens/min for warming / non-urgent calls
+JUPITER_EXIT_RPM          = 15    # tokens/min reserved for live exit signals
+JUPITER_EMERGENCY_RPM     = 6     # tokens/min reserved for emergency sell retries
+# Note: JUPITER_MAX_RETRIES / JUPITER_BACKOFF_* above are shared with the governor.
+# JUPITER_JITTER_MS is the governor's jitter parameter (executor uses JUPITER_BACKOFF_JITTER_MS).
+JUPITER_JITTER_MS         = 100   # governor jitter (separate from executor backoff jitter)
+
+# Phase-gate: keep False until real-wallet simulation passes for T22 exits
+JUPITER_T22_GRAD_PRIMARY_ENABLED = False
+
 # ── Live buy kill switch ─────────────────────────────────────────────────────
 LIVE_BUYS_ENABLED              = True    # master switch — auto-disabled on unknown sell failure
 AUTO_DISABLE_ON_UNKNOWN_SELL_FAILURE = True  # disable live buys when error_class=unknown_sell_failure
