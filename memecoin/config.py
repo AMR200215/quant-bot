@@ -386,3 +386,35 @@ PUMPSWAP_LOCAL_SIM_ONLY      = True    # simulate, log result, then fall through
 PUMPSWAP_LOCAL_REQUIRE_SIM_OK = True   # if sim fails, do not send (always respected)
 ALLOW_ZERO_MIN_OUT_EMERGENCY   = False  # if True, skip min_sol_out check (last resort only)
 LOCAL_PUMPSWAP_MAX_SLIPPAGE_PCT = 35    # max slippage for min_sol_out computation (35%)
+
+# ---------------------------------------------------------------------------
+# Execution RPC — multi-RPC failover for rescue sell path only
+# On 429 / 503 / timeout, rotates through primaries then fallbacks.
+# ---------------------------------------------------------------------------
+EXECUTION_RPC_URLS = [
+    "https://api.mainnet-beta.solana.com",
+]
+EXECUTION_RPC_FALLBACK_URLS: list = []   # add paid RPC here (e.g. Helius, Triton)
+EXECUTION_RPC_TIMEOUT_MS     = 3000      # per-request timeout (ms)
+EXECUTION_RPC_MAX_RETRIES    = 2         # total URL attempts across primary + fallback
+
+# ---------------------------------------------------------------------------
+# Jupiter rescue: TTL-based double-sell prevention
+# ---------------------------------------------------------------------------
+# Tag written to pos.notes on rescue start: |jupiter_rescue_pending:<sig16>:<unix_ts>
+# If a position still has this tag when rescue fires again:
+#   - age < TTL  → skip (rescue still in flight)
+#   - age >= TTL → check sig status via RPC:
+#       confirmed/finalized → "already_sold" (don't retry)
+#       failed/unknown      → clear tag, allow fresh rescue
+JUPITER_RESCUE_PENDING_TTL_SEC = 30
+
+# ---------------------------------------------------------------------------
+# Jupiter rescue: same-signed-tx rebroadcast
+# After sendTransaction to primary RPC, rebroadcast the same signed bytes to
+# up to REBROADCAST_MAX_RPC fallback RPCs during the confirmation window.
+# Improves confirmation rate without rebuilding/re-signing the transaction.
+# ---------------------------------------------------------------------------
+JUPITER_RESCUE_REBROADCAST_ENABLED      = True
+JUPITER_RESCUE_REBROADCAST_INTERVAL_MS  = 500   # delay between rebroadcast attempts (ms)
+JUPITER_RESCUE_REBROADCAST_MAX_RPC      = 3     # max extra RPCs to broadcast to
