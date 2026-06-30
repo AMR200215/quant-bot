@@ -89,10 +89,19 @@ def _ts() -> str:
 def _read_open_positions() -> dict[str, dict]:
     """
     Read memecoin_positions.json, return {pos_id: pos_dict} for open positions.
+    The file is a JSON list of position objects, each with an "id" field.
     Returns empty dict on any read/parse error (watcher keeps running).
     """
     try:
         raw = json.loads(_POSITIONS_FILE.read_text())
+        # File is a list of position dicts
+        if isinstance(raw, list):
+            return {
+                pos["id"]: pos
+                for pos in raw
+                if pos.get("status") == "open" and pos.get("id")
+            }
+        # Fallback: legacy dict format {pos_id: pos_dict}
         return {
             pos_id: pos
             for pos_id, pos in raw.items()
