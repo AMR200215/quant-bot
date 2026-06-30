@@ -275,8 +275,8 @@ def main() -> None:
     parser.add_argument("--rpc",  help="RPC URL for probe (default: from config)")
     parser.add_argument("--poll", type=float, default=5.0,
                         help="Poll interval in seconds (default: 5)")
-    parser.add_argument("--max-probes", type=int, default=3,
-                        help="Exit after this many T22 probes regardless of result (default: 3)")
+    parser.add_argument("--max-probes", type=int, default=1,
+                        help="Exit after this many T22 probes regardless of result (default: 1)")
     args = parser.parse_args()
 
     probe_count = 0
