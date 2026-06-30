@@ -275,7 +275,11 @@ def main() -> None:
     parser.add_argument("--rpc",  help="RPC URL for probe (default: from config)")
     parser.add_argument("--poll", type=float, default=5.0,
                         help="Poll interval in seconds (default: 5)")
+    parser.add_argument("--max-probes", type=int, default=3,
+                        help="Exit after this many T22 probes regardless of result (default: 3)")
     args = parser.parse_args()
+
+    probe_count = 0
 
     # Tracked state: set of pos_ids already probed this session
     probed: set[str] = set()
@@ -299,6 +303,7 @@ def main() -> None:
     print(f"  Watcher log: {_WATCHER_LOG.relative_to(_REPO_ROOT)}")
     if args.rpc:
         print(f"  RPC override: {args.rpc[:40]}…")
+    print(f"  Auto-exit:   after first sim_ok=True OR after {args.max_probes} probes")
     print(f"\n  {_YELLOW}Waiting for first T22 canary buy…{_RESET} (Ctrl-C to stop)\n")
 
     try:
@@ -347,6 +352,53 @@ def main() -> None:
                     "probe_latency_ms": probe.get("probe_latency_ms", 0),
                     "probe_exit_code":  probe.get("probe_exit_code", -1),
                 })
+
+                probe_count += 1
+                sim_ok = probe.get("sim_ok", False)
+                verdict = probe.get("probe_verdict", "UNKNOWN")
+                ec = probe.get("probe_error_class", "")
+
+                # ── Telegram alert ─────────────────────────────────────────────
+                try:
+                    from app.alerts import send as _tg_send
+                    if sim_ok:
+                        _tg_send(
+                            f"✅ T22 CANARY PROBE — PHASE 1 VALIDATED\n"
+                            f"mint: {mint[:16]}…\n"
+                            f"symbol: {sym}\n"
+                            f"quote ✓  build ✓  sim ✓\n"
+                            f"verdict: {verdict}"
+                        )
+                    else:
+                        _tg_send(
+                            f"⚠️ T22 CANARY PROBE — sim FAILED ({probe_count}/{args.max_probes})\n"
+                            f"mint: {mint[:16]}…\n"
+                            f"symbol: {sym}\n"
+                            f"quote {'✓' if probe.get('quote_ok') else '✗'}  "
+                            f"build {'✓' if probe.get('swap_build_ok') else '✗'}  sim ✗\n"
+                            f"error: {ec[:60]}"
+                        )
+                except Exception as _tg_e:
+                    print(f"  [{_ts()}] Telegram alert failed: {_tg_e}")
+
+                if sim_ok:
+                    print(f"[{_ts()}] sim_ok=True — Phase 1 validated. Watcher exiting.\n")
+                    return
+
+                if probe_count >= args.max_probes:
+                    print(f"[{_ts()}] Reached max-probes={args.max_probes}. Watcher exiting.")
+                    print(f"  Check logs/canary_t22_probe_watcher.csv for all results.\n")
+                    try:
+                        from app.alerts import send as _tg_send
+                        _tg_send(
+                            f"⛔ T22 CANARY PROBE — max probes reached ({args.max_probes}), "
+                            f"sim never passed. Check logs/canary_t22_probe_watcher.csv"
+                        )
+                    except Exception:
+                        pass
+                    return
+
+                print(f"  [{_ts()}] sim_ok=False ({probe_count}/{args.max_probes} probes). Continuing…\n")
 
     except KeyboardInterrupt:
         print(f"\n[{_ts()}] Watcher stopped by user.\n")
