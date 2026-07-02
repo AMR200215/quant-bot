@@ -1928,8 +1928,7 @@ def start(daemon: bool = True):
 
     # ── Auto-gate epoch startup log ───────────────────────────────────────────
     try:
-        _pm = PortfolioManager()
-        _epoch_stats = _pm.live_cohort_stats().get("social_alert", {})
+        _epoch_stats = Portfolio().live_cohort_stats().get("social_alert", {})
         _epoch_n   = _epoch_stats.get("trade_count", 0)
         _epoch_pnl = _epoch_stats.get("net_pnl_usd", 0.0)
         from memecoin.config import LIVE_GATE_EPOCH as _gate_epoch
@@ -1938,8 +1937,8 @@ def start(daemon: bool = True):
             _epoch_n, _epoch_pnl, _gate_epoch,
             "OPEN" if _epoch_n < 50 or _epoch_pnl >= 0 else "CLOSED",
         )
-    except Exception:
-        pass
+    except Exception as _gate_log_err:
+        log.debug("auto-gate startup log failed: %s", _gate_log_err)
 
     log.info("Memecoin scanner started.")
 
