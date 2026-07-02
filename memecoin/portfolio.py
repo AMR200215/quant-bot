@@ -672,12 +672,22 @@ class Portfolio:
         Per-signal_type live trade stats from live_journal.csv.
         Returns {signal_type: {trade_count, gross_pnl_pct, net_pnl_usd}}.
         Used by the type-2 auto-gate and for reporting.
+
+        Only rows with entry_time >= LIVE_GATE_EPOCH are counted.
+        Pre-epoch trades were executed by buggy builds and are not evidence
+        about the current system.
         """
         import csv as _csv
+        try:
+            from memecoin.config import LIVE_GATE_EPOCH as _epoch
+        except ImportError:
+            _epoch = "1970-01-01"
         stats: dict = {}
         try:
             with open(LIVE_JOURNAL_FILE) as f:
                 for row in _csv.DictReader(f):
+                    if (row.get("entry_time") or "")[:10] < _epoch:
+                        continue
                     st = row.get("signal_type") or "unknown"
                     if st not in stats:
                         stats[st] = {"trade_count": 0, "gross_pnl_pct": 0.0, "net_pnl_usd": 0.0}

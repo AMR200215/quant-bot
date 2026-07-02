@@ -371,6 +371,13 @@ JUPITER_T22_GRAD_PRIMARY_ENABLED = False
 LIVE_BUYS_ENABLED              = True    # master switch — auto-disabled on unknown sell failure
 AUTO_DISABLE_ON_UNKNOWN_SELL_FAILURE = True  # disable live buys when error_class=unknown_sell_failure
 
+# ── Cohort auto-gate epoch ────────────────────────────────────────────────────
+# The auto-gate evaluates only trades executed by the current build.
+# Pre-epoch trades were executed with since-fixed bugs (signal_price=0 stop
+# disabler, 3.33x TP accounting, old +75% trail) and are not evidence about
+# this system. Gate rule is unchanged: >=50 trades AND net<0 → close.
+LIVE_GATE_EPOCH = "2026-07-02"
+
 # ── Canary / validation mode ──────────────────────────────────────────────────
 LIVE_CANARY_MODE         = True    # cap live buys to MAX_CANARY_TRADE_USD until validated
 MAX_CANARY_TRADE_USD     = 3       # max single trade USD in canary mode
