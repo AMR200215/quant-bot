@@ -86,10 +86,85 @@ _NOROUTE_FIELDS = [
 ]
 
 _URGENT_REASONS = frozenset({
-    "hard_stop", "trailing_stop", "feed_blind", "migration_uncertain",
-    "graduated_exit", "sell_stuck", "dev_dump", "rug_lp", "velocity",
-    "abort_tripwire",
+    "hard_stop", "hard_stop_pp",
+    "trailing_stop", "trailing_stop_pp",
+    "feed_blind",
+    "migration_uncertain", "migration_uncertain_no_pool", "migration_uncertain_retry",
+    "graduated_exit", "sell_stuck",
+    "dev_dump", "rug_lp", "velocity",
+    "abort_tripwire", "pre_graduation_exit",
 })
+
+_MIN_VALID_SIG_LEN = 80   # Solana base58 sigs are 87-88 chars; < 80 = legacy truncated
+
+# One-time startup warning for missing fallback RPC config
+_REBROADCAST_WARN_LOGGED = False
+
+
+# ── Result classifier ─────────────────────────────────────────────────────────
+
+def classify_rescue_result(rescue_result: dict) -> str:
+    """
+    Classify a force_jupiter_rescue_sell() return dict into a disposal class.
+
+    Called by portfolio.close_position() and scanner.py after rescue to decide
+    whether to call executor.sell, arm retry, or finalize.
+
+    Returns
+    -------
+    "sold"             — tx confirmed; position should be finalized normally
+    "already_sold"     — position was already closed (stale confirmed sig or zero bal)
+    "pending"          — tx sent but not yet confirmed; keep pending tag, arm retry
+    "no_route"         — no Jupiter route; no tx sent; arm retry, zero SOL burned
+    "retry_no_send"    — transient failure before send (429, price impact, etc.); retry safe
+    "fatal_no_send"    — structural failure (keypair/sign); no tx; alert operator
+    "fallback_allowed" — executor fallback is safe (pre-send, non-rescue-critical state)
+    """
+    success        = rescue_result.get("success", False)
+    reason         = rescue_result.get("reason", "")
+    error_class    = rescue_result.get("error_class", "")
+    send_attempted = rescue_result.get("jupiter_send_attempted", False)
+    tx_sig         = rescue_result.get("tx_sig", "")
+    confirmed      = rescue_result.get("jupiter_confirmed", False)
+
+    if success:
+        return "sold"
+
+    if error_class == "already_sold" or reason == "rescue_stale_sig_confirmed":
+        return "already_sold"
+
+    # Any result where a tx was sent but not confirmed (includes TTL-pending)
+    if reason == "rescue_already_pending":
+        return "pending"
+    if reason == "tx_not_confirmed" or (send_attempted and tx_sig and not confirmed):
+        return "pending"
+
+    if error_class == "jupiter_no_route" or reason == "no_route":
+        return "no_route"
+
+    _RETRY_NO_SEND_EC = frozenset({
+        "jupiter_429_exhausted", "jupiter_quote_error", "jupiter_http_error",
+        "price_impact_exceeded",
+    })
+    _RETRY_NO_SEND_REASONS = frozenset({
+        "jupiter_429_exhausted", "quote_failed", "quote_http_error",
+        "price_impact_too_high", "zero_balance",
+        "token_balance_unavailable", "rescue_disabled", "position_not_open",
+    })
+    if error_class in _RETRY_NO_SEND_EC or reason in _RETRY_NO_SEND_REASONS:
+        return "retry_no_send"
+
+    _FATAL_EC      = frozenset({"keypair_error", "tx_sign_error"})
+    _FATAL_REASONS = frozenset({"keypair_load_failed", "sign_failed"})
+    if error_class in _FATAL_EC or reason in _FATAL_REASONS:
+        return "fatal_no_send"
+
+    # If send was never attempted, executor fallback is safe for non-rescue-critical states
+    if not send_attempted:
+        return "fallback_allowed"
+
+    # Catch-all: tx was sent but something unexpected happened → treat as pending
+    return "pending"
 
 
 # ── CSV helpers ───────────────────────────────────────────────────────────────
@@ -320,6 +395,25 @@ def _build_log_row(pos_id: str, symbol: str, mint: str, trigger_reason: str,
     }
 
 
+# ── Config startup warning ────────────────────────────────────────────────────
+
+def _warn_rebroadcast_config() -> None:
+    """Log once if rebroadcast is enabled but no fallback RPCs are configured."""
+    global _REBROADCAST_WARN_LOGGED
+    if _REBROADCAST_WARN_LOGGED:
+        return
+    _REBROADCAST_WARN_LOGGED = True
+    try:
+        from memecoin.config import JUPITER_RESCUE_REBROADCAST_ENABLED, EXECUTION_RPC_FALLBACK_URLS
+        if JUPITER_RESCUE_REBROADCAST_ENABLED and not EXECUTION_RPC_FALLBACK_URLS:
+            log.warning(
+                "jupiter_rescue: rebroadcast enabled but EXECUTION_RPC_FALLBACK_URLS is empty"
+                " — rescue tx will only be sent to the primary RPC"
+            )
+    except Exception:
+        pass
+
+
 # ── Main rescue function ──────────────────────────────────────────────────────
 
 def force_jupiter_rescue_sell(pos, reason: str, purpose: str = "EXIT") -> dict:  # noqa: C901
@@ -355,6 +449,8 @@ def force_jupiter_rescue_sell(pos, reason: str, purpose: str = "EXIT") -> dict: 
     }
 
     pos_notes = ""  # captured early for log row; updated inside try block
+
+    _warn_rebroadcast_config()
 
     try:
         # ── (a) Config guard ──────────────────────────────────────────────────
@@ -406,11 +502,35 @@ def force_jupiter_rescue_sell(pos, reason: str, purpose: str = "EXIT") -> dict: 
                 )
                 return result
 
-            # Tag expired — check sig status if we have a real sig (not "sending")
-            if pending_sig and pending_sig != "sending":
+            # Tag expired — check sig status if we have a full-length valid sig
+            _sig_is_full = (
+                pending_sig
+                and pending_sig != "sending"
+                and len(pending_sig) >= _MIN_VALID_SIG_LEN
+            )
+            _sig_is_truncated = (
+                pending_sig
+                and pending_sig != "sending"
+                and len(pending_sig) < _MIN_VALID_SIG_LEN
+            )
+
+            if _sig_is_truncated:
+                # Legacy 16-char truncated sig — never call getSignatureStatuses with it.
+                # Clear the tag and allow a fresh rescue (balance check inside build path
+                # will confirm whether tokens remain before sending any tx).
                 log.info(
-                    "jupiter_rescue: pending tag expired (age=%.0fs) — checking sig %s",
-                    tag_age, pending_sig,
+                    "jupiter_rescue: legacy truncated pending sig (len=%d) cleared"
+                    " — allowing fresh rescue  pos=%s",
+                    len(pending_sig), getattr(pos, "id", "?"),
+                )
+                pos.notes = _clear_pending_tag(pos.notes or "")
+                pos_notes = pos.notes
+                # Fall through to fresh rescue below
+
+            elif _sig_is_full:
+                log.info(
+                    "jupiter_rescue: pending tag expired (age=%.0fs) — checking sig %s…",
+                    tag_age, pending_sig[:16],
                 )
                 try:
                     chk = _rpc_post({
@@ -426,10 +546,13 @@ def force_jupiter_rescue_sell(pos, reason: str, purpose: str = "EXIT") -> dict: 
                         log.warning(
                             "jupiter_rescue: stale sig IS confirmed — position already sold"
                             "  sig=%s  pos=%s",
-                            pending_sig, getattr(pos, "id", "?"),
+                            pending_sig[:16], getattr(pos, "id", "?"),
                         )
-                        result["reason"]      = "rescue_stale_sig_confirmed"
-                        result["error_class"] = "already_sold"
+                        result["success"]           = True
+                        result["reason"]            = "rescue_stale_sig_confirmed"
+                        result["error_class"]       = "already_sold"
+                        result["tx_sig"]            = pending_sig
+                        result["jupiter_confirmed"] = True
                         return result
                 except Exception as chk_err:
                     log.warning(
@@ -437,13 +560,22 @@ def force_jupiter_rescue_sell(pos, reason: str, purpose: str = "EXIT") -> dict: 
                         chk_err,
                     )
 
-            # Stale tag — clear it and allow fresh rescue
-            pos.notes = _clear_pending_tag(pos.notes or "")
-            pos_notes = pos.notes
-            log.info(
-                "jupiter_rescue: stale pending tag cleared — allowing fresh rescue  pos=%s",
-                getattr(pos, "id", "?"),
-            )
+                # Stale tag with unconfirmed sig — clear it and allow fresh rescue
+                pos.notes = _clear_pending_tag(pos.notes or "")
+                pos_notes = pos.notes
+                log.info(
+                    "jupiter_rescue: stale pending tag cleared — allowing fresh rescue  pos=%s",
+                    getattr(pos, "id", "?"),
+                )
+
+            else:
+                # "sending" placeholder — stale but no sig to check; clear and allow fresh
+                pos.notes = _clear_pending_tag(pos.notes or "")
+                pos_notes = pos.notes
+                log.info(
+                    "jupiter_rescue: stale 'sending' placeholder cleared  pos=%s",
+                    getattr(pos, "id", "?"),
+                )
 
         # ── (c) Status guard ──────────────────────────────────────────────────
         pos_status = getattr(pos, "status", "open")
@@ -758,14 +890,15 @@ def force_jupiter_rescue_sell(pos, reason: str, purpose: str = "EXIT") -> dict: 
 
         result["tx_sig"] = sig
 
-        # Update pending tag with real sig and timestamp
+        # Update pending tag with FULL sig and timestamp (never truncate — needed for
+        # getSignatureStatuses confirmation on retry).  Use sig[:16] only in logs.
         pos.notes = _re.sub(
             r'\|jupiter_rescue_pending:sending:\d+',
-            f"|jupiter_rescue_pending:{sig[:16]}:{_rescue_ts}",
+            f"|jupiter_rescue_pending:{sig}:{_rescue_ts}",
             pos.notes or "",
         )
         pos_notes = pos.notes
-        log.info("jupiter_rescue: tx sent  sig=%s  mint=%s", sig[:16], mint[:8])
+        log.info("jupiter_rescue: tx sent  sig=%s…  mint=%s", sig[:16], mint[:8])
 
         # ── (m) Confirm + rebroadcast ─────────────────────────────────────────
         confirmed      = False

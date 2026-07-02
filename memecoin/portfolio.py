@@ -1579,50 +1579,110 @@ class Portfolio:
                             log.warning("ExitRouter error (non-fatal, falling through): %s", _er_exc)
 
                     # ── Jupiter rescue: fire before executor if local PumpSwap failed ──
-                    _rescue_attempted = False
-                    _rescue_succeeded = False
+                    _rescue_attempted       = False
+                    _rescue_succeeded       = False
+                    _rescue_class           = "fallback_allowed"
                     _ps_ec = _ps_result.get("error_class", "") if _ps_result is not None else ""
                     if not _pumpswap_local_succeeded and is_rescue_eligible_error(
                         error_class=_ps_ec,
                         exit_state=_exit_state.value if _exit_state is not None else "",
                         reason=reason,
                     ):
-                        if True:
+                        try:
+                            from memecoin.jupiter_rescue import (
+                                force_jupiter_rescue_sell,
+                                classify_rescue_result as _classify_rescue,
+                            )
                             try:
-                                from memecoin.jupiter_rescue import force_jupiter_rescue_sell
+                                from app.alerts import _send as _alert_send
+                                _alert_send(
+                                    f"\u26a1 RESCUE {pos.token_symbol} — "
+                                    f"attempting Jupiter rescue (reason={reason})"
+                                )
+                            except Exception:
+                                pass
+                            _resc             = force_jupiter_rescue_sell(pos, reason)
+                            _rescue_attempted = True
+                            _rescue_class     = _classify_rescue(_resc)
+
+                            if _rescue_class == "sold":
+                                _rescue_succeeded = True
+                                _fill = _resc.get("fill_price") or pos.exit_price
+                                if _fill:
+                                    pos.exit_price = _fill
+                                pos.notes = (pos.notes or "") + (
+                                    f"|sell_tx:{_resc.get('tx_sig','')}|sell_fill:{_fill:.10f}"
+                                    f"|route:JUPITER_RESCUE"
+                                )
+                                log.info(
+                                    "Jupiter rescue succeeded  %s  sig=%s  sol=%.6f",
+                                    pos.token_symbol, (_resc.get("tx_sig") or "")[:16],
+                                    _resc.get("sol_received", 0),
+                                )
                                 try:
-                                    from app.alerts import _send as _alert_send
-                                    _alert_send(
-                                        f"\u26a1 MIGRATION UNCERTAIN {pos.token_symbol} — "
-                                        f"attempting Jupiter rescue (pool may be indexing)"
-                                    )
+                                    from app.alerts import alert_live_sell
+                                    alert_live_sell(pos, _resc.get("sol_received", 0), _resc.get("tx_sig", ""))
                                 except Exception:
                                     pass
-                                _resc = force_jupiter_rescue_sell(pos, reason)
-                                _rescue_attempted = True
-                                if _resc.get("success"):
-                                    _rescue_succeeded = True
-                                    _fill = _resc.get("fill_price") or pos.exit_price
-                                    if _fill:
-                                        pos.exit_price = _fill
-                                    pos.notes = (pos.notes or "") + (
-                                        f"|sell_tx:{_resc.get('tx_sig','')}|sell_fill:{_fill:.10f}"
-                                        f"|route:JUPITER_RESCUE"
-                                    )
-                                    log.info(
-                                        "Jupiter rescue succeeded  %s  sig=%s  sol=%.6f",
-                                        pos.token_symbol, _resc.get("tx_sig", "")[:16],
-                                        _resc.get("sol_received", 0),
-                                    )
-                                    try:
-                                        from app.alerts import alert_live_sell
-                                        alert_live_sell(pos, _resc.get("sol_received", 0), _resc.get("tx_sig", ""))
-                                    except Exception:
-                                        pass
-                            except Exception as _resc_exc:
-                                log.warning("Jupiter rescue exception (non-fatal): %s", _resc_exc)
 
-                    if not _pumpswap_local_succeeded and not _rescue_succeeded:
+                            elif _rescue_class == "already_sold":
+                                # Stale confirmed sig — position was already closed on-chain.
+                                # Finalize without re-entering close_position (no double-sell).
+                                log.info(
+                                    "Jupiter rescue: already_sold  %s — finalizing",
+                                    pos.token_symbol,
+                                )
+                                self._finalize_rescue_sell(pos.id, _resc)
+                                return pos
+
+                            elif _rescue_class == "pending":
+                                # Tx sent but not yet confirmed — keep pending tag in notes,
+                                # arm sell_stuck so retry loop re-checks confirmation.
+                                # Never call executor.sell while a tx may still be inflight.
+                                log.info(
+                                    "Jupiter rescue: tx pending  %s  sig=%s — arming sell_stuck",
+                                    pos.token_symbol, (_resc.get("tx_sig") or "")[:16],
+                                )
+                                try:
+                                    from memecoin.config import (
+                                        SELL_STUCK_RETRY_SEC as _srs,
+                                        JUPITER_RESCUE_PENDING_TTL_SEC as _ttl,
+                                    )
+                                except ImportError:
+                                    _srs = 60; _ttl = 30
+                                pos.status = "sell_stuck"
+                                self._positions[pos_id] = pos
+                                self._sell_stuck_until[pos_id] = time.time() + max(_ttl * 2, _srs)
+                                _save_positions(self._positions)
+                                return pos
+
+                            else:
+                                # no_route / retry_no_send / fatal_no_send:
+                                # No tx was sent. Arm controlled retry for rescue-eligible states.
+                                # DO NOT call executor.sell — it has no path for graduated/uncertain.
+                                log.info(
+                                    "Jupiter rescue: %s for %s — arming migration retry, "
+                                    "blocking executor.sell",
+                                    _rescue_class, pos.token_symbol,
+                                )
+                                try:
+                                    from memecoin.config import SELL_STUCK_RETRY_SEC as _srs
+                                except ImportError:
+                                    _srs = 60
+                                self._arm_migration_retry(pos.id, _srs)
+                                return pos
+
+                        except Exception as _resc_exc:
+                            log.warning("Jupiter rescue exception (non-fatal): %s", _resc_exc)
+
+                    # Block executor.sell if rescue was attempted and result is not "fallback_allowed".
+                    # This covers any exception path where _rescue_class stayed "fallback_allowed"
+                    # despite _rescue_attempted=True — in that case we rely on the exception log
+                    # and let executor try (the exception means rescue never sent a tx).
+                    _rescue_blocks_executor = (
+                        _rescue_attempted and _rescue_class not in ("fallback_allowed",)
+                    )
+                    if not _pumpswap_local_succeeded and not _rescue_succeeded and not _rescue_blocks_executor:
                         ex     = MemeExecutor()
                         # escalate=True when:
                         #   (a) this is a retry — previous full ladder failed
@@ -1638,7 +1698,7 @@ class Portfolio:
                             or _er_classified_graduated
                         )
                     result = {}  # default: no executor result (set below if executor runs)
-                    if not _pumpswap_local_succeeded and not _rescue_succeeded:
+                    if not _pumpswap_local_succeeded and not _rescue_succeeded and not _rescue_blocks_executor:
                         if _is_graduated and not _is_retry:
                             log.info("SELL graduated token — pump-amm PRIMARY, Jupiter FALLBACK  token=%s",
                                      pos.token_address[:8])

@@ -1589,50 +1589,89 @@ def _portfolio_thread():
                                 pos.notes = pos.notes.replace("|cohort:bonding_curve", "|cohort:graduated")
                             portfolio.close_position(pos.id, "migration_uncertain_graduated", pos.current_price)
                         else:
-                            # No pool found — probe Jupiter route first; zero SOL burned if no route.
-                            # Do NOT call PumpPortal/pump-amm or go straight to manual alert.
+                            # No pool found — arm migration retry immediately (non-blocking),
+                            # then dispatch a daemon thread to probe Jupiter. The confirmation
+                            # window can take up to 45s; we must not block the monitor loop.
                             log.error(
-                                "MIGRATION_UNCERTAIN — no pool found, probing Jupiter route  token=%s",
+                                "MIGRATION_UNCERTAIN — no pool found, arming retry + dispatching"
+                                " rescue worker  token=%s",
                                 pos.token_symbol,
                             )
-                            _mu_resc = {}
+                            portfolio._arm_migration_retry(pos.id, SELL_STUCK_RETRY_SEC)
                             try:
-                                from memecoin.jupiter_rescue import (
-                                    force_jupiter_rescue_sell as _force_mu_rescue,
+                                from app.alerts import _send
+                                _send(
+                                    f"⚡ MIGRATION UNCERTAIN {pos.token_symbol} — "
+                                    f"no Jupiter route yet, auto-recovery armed, "
+                                    f"probing every {SELL_STUCK_RETRY_SEC}s."
                                 )
-                                _mu_resc = _force_mu_rescue(pos, "migration_uncertain_no_pool")
-                            except Exception as _mu_probe_err:
-                                log.warning("Migration rescue probe exception: %s", _mu_probe_err)
+                            except Exception:
+                                pass
 
-                            if _mu_resc.get("success"):
-                                # Route existed and tx confirmed — finalize without re-entering
-                                # close_position (prevents double-sell).
-                                log.info(
-                                    "MIGRATION_UNCERTAIN → rescue sold  token=%s  sig=%s  sol=%.6f",
-                                    pos.token_symbol,
-                                    (_mu_resc.get("tx_sig") or "")[:16],
-                                    _mu_resc.get("sol_received", 0),
+                            # One rescue worker per position — guard with inflight set
+                            if pos.id not in _migration_rescue_inflight:
+                                _migration_rescue_inflight.add(pos.id)
+                                _mu_pos_snap = pos       # snapshot ref (same object, mutable)
+                                _mu_pos_id   = pos.id
+
+                                def _mu_rescue_worker(
+                                    _snap=_mu_pos_snap, _pid=_mu_pos_id,
+                                    _pf=portfolio, _sym=pos.token_symbol,
+                                ):
+                                    try:
+                                        from memecoin.jupiter_rescue import (
+                                            force_jupiter_rescue_sell as _force_mu,
+                                            classify_rescue_result as _classify_mu,
+                                        )
+                                        _res = _force_mu(_snap, "migration_uncertain_no_pool")
+                                        _cls = _classify_mu(_res)
+                                        if _cls in ("sold", "already_sold"):
+                                            log.info(
+                                                "MU rescue worker: %s → finalizing  token=%s"
+                                                "  sig=%s  sol=%.6f",
+                                                _cls, _sym,
+                                                (_res.get("tx_sig") or "")[:16],
+                                                _res.get("sol_received", 0),
+                                            )
+                                            _pf._finalize_rescue_sell(_pid, _res)
+                                        elif _cls == "pending":
+                                            # Pending tag already updated in _snap.notes —
+                                            # persist it so retry loop sees the full sig.
+                                            _snap_in_pf = _pf._positions.get(_pid)
+                                            if _snap_in_pf is not None:
+                                                _snap_in_pf.notes = _snap.notes
+                                                _pf._positions[_pid] = _snap_in_pf
+                                                _pf._save()
+                                            log.info(
+                                                "MU rescue worker: tx pending  token=%s"
+                                                "  sig=%s — retry loop will recheck",
+                                                _sym, (_res.get("tx_sig") or "")[:16],
+                                            )
+                                        else:
+                                            # no_route / retry_no_send / fatal_no_send:
+                                            # sell_stuck already armed; nothing else to do
+                                            log.info(
+                                                "MU rescue worker: %s  token=%s — sell_stuck remains",
+                                                _cls, _sym,
+                                            )
+                                    except Exception as _mu_exc:
+                                        log.warning(
+                                            "MU rescue worker exception  token=%s: %s", _sym, _mu_exc
+                                        )
+                                    finally:
+                                        _migration_rescue_inflight.discard(_pid)
+
+                                _mu_thread = threading.Thread(
+                                    target=_mu_rescue_worker,
+                                    daemon=True,
+                                    name=f"mu-rescue-{pos.id[:8]}",
                                 )
-                                portfolio._finalize_rescue_sell(pos.id, _mu_resc)
+                                _mu_thread.start()
                             else:
-                                # No route or safe failure — arm controlled retry, no SOL burned.
-                                _mu_err_cls = (
-                                    _mu_resc.get("error_class") or _mu_resc.get("reason") or "no_route"
+                                log.debug(
+                                    "MU rescue already inflight for %s — skipping duplicate",
+                                    pos.token_symbol,
                                 )
-                                portfolio._arm_migration_retry(pos.id, SELL_STUCK_RETRY_SEC)
-                                log.error(
-                                    "MIGRATION_UNCERTAIN — no route (%s), retry in %ds  token=%s",
-                                    _mu_err_cls, SELL_STUCK_RETRY_SEC, pos.token_symbol,
-                                )
-                                try:
-                                    from app.alerts import _send
-                                    _send(
-                                        f"⚡ MIGRATION UNCERTAIN {pos.token_symbol} — "
-                                        f"no Jupiter route yet, auto-recovery armed, "
-                                        f"probing every {SELL_STUCK_RETRY_SEC}s."
-                                    )
-                                except Exception:
-                                    pass
                         continue  # do NOT fire feed_blind regardless of outcome
 
                     if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC:
@@ -1727,6 +1766,10 @@ def _portfolio_thread():
 # ---------------------------------------------------------------------------
 
 _exit_queue: queue.Queue = queue.Queue()
+
+# In-flight guard: prevents spawning a second migration rescue worker for the
+# same position while a daemon rescue thread is already running.
+_migration_rescue_inflight: set = set()
 
 
 def _on_pp_price_tick(mint: str, price_usd: float) -> None:

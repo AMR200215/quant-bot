@@ -11,8 +11,8 @@ Tests A–F  (original 6)
 
 Tests G–O  (new: TTL, rebroadcast, multi-RPC, balance, no-route, panic)
   G. TTL pending tag — tag age < TTL → rescue_already_pending
-  H. TTL pending tag — tag age >= TTL + sig confirmed → rescue_stale_sig_confirmed
-  I. TTL pending tag — tag age >= TTL + sig failed → clears tag + rescue succeeds
+  H. TTL pending tag — tag age >= TTL + FULL sig confirmed → success=True, rescue_stale_sig_confirmed
+  I. TTL pending tag — tag age >= TTL + FULL sig failed → clears tag + rescue succeeds
   J. Rebroadcast — fallback URLs present → rebroadcast_count > 0
   K. Multi-RPC failover — primary 429 → fallback succeeds (ExecutionRpcClient unit test)
   L. tokens_held=0 + RPC balance OK → amount_source="rpc_balance"
@@ -381,10 +381,11 @@ class TestG_TTLPendingTagWithinTTL(_RescueTestBase):
 
 
 class TestH_TTLExpiredSigConfirmed(_RescueTestBase):
-    """H. Tag age >= TTL + sig confirmed on chain → rescue_stale_sig_confirmed (don't retry)."""
+    """H. Tag age >= TTL + full-length sig confirmed on chain → success=True, reason=rescue_stale_sig_confirmed."""
 
-    def test_expired_confirmed_sig_blocks_retry(self):
-        stale_sig = "StaleSig1111111"
+    def test_expired_confirmed_sig_finalizes(self):
+        # Full 88-char Solana-length sig — new code calls getSignatureStatuses with it
+        stale_sig = "5J3mBbAH58CpQ3Y5RNJpUKPE73Ty8UxmxMjFNSBSiK9hFjfChGTbF7GV1xt3Q3mPGkfXT12xDKVJfmS1234ABCD"
         old_ts    = int(time.time()) - 120   # 120s old — expired (TTL=30)
         self._patch_modules(
             cfg_overrides={"JUPITER_RESCUE_PENDING_TTL_SEC": 30},
@@ -395,18 +396,22 @@ class TestH_TTLExpiredSigConfirmed(_RescueTestBase):
             notes=f"|exit_state:GRADUATED_PUMPSWAP|jupiter_rescue_pending:{stale_sig}:{old_ts}"
         )
         result = self._jr.force_jupiter_rescue_sell(pos, "migration_uncertain")
-        self.assertFalse(result["success"])
+        # success=True so caller can finalize without re-sending a tx
+        self.assertTrue(result["success"], f"Expected success=True: {result}")
         self.assertEqual(result["reason"], "rescue_stale_sig_confirmed")
         self.assertEqual(result["error_class"], "already_sold")
+        self.assertEqual(result["tx_sig"], stale_sig)
+        self.assertTrue(result["jupiter_confirmed"])
         self.assertFalse(result["jupiter_send_attempted"])
-        print("  H PASS: expired tag + sig confirmed → rescue_stale_sig_confirmed (no retry)")
+        print("  H PASS: expired full-sig confirmed → success=True, rescue_stale_sig_confirmed")
 
 
 class TestI_TTLExpiredSigFailed(_RescueTestBase):
     """I. Tag age >= TTL + sig failed → clears stale tag → fresh rescue proceeds and succeeds."""
 
     def test_expired_failed_sig_allows_fresh_rescue(self):
-        stale_sig = "StaleSig2222222"
+        # Full-length sig so getSignatureStatuses is called (error → tag cleared → fresh rescue)
+        stale_sig = "5J3mBbAH58CpQ3Y5RNJpUKPE73Ty8UxmxMjFNSBSiK9hFjfChGTbF7GV1xt3Q3mPGkfXT12xDKVJfmS2222BBBB"
         old_ts    = int(time.time()) - 120
         self._patch_modules(
             cfg_overrides={"JUPITER_RESCUE_PENDING_TTL_SEC": 30},
