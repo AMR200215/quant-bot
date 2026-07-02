@@ -29,6 +29,7 @@ from memecoin.config import (
     MIN_BUY_SELL_RATIO_SOCIAL, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL,
     MAX_VOL_H1_SOCIAL, MAX_PRICE_CHANGE_5M_SOCIAL, MAX_MCAP_SOCIAL,
     REALTIME_PRICE_FEED, SOCIAL_ALERT_ONLY,
+    SELL_STUCK_RETRY_SEC, MIGRATION_UNCERTAIN_MANUAL_TIMEOUT_SEC,
 )
 from memecoin.data_client import (
     dex_get_new_pairs, dex_get_boosted, gmgn_new_sol, gmgn_trending_sol,
@@ -1588,19 +1589,50 @@ def _portfolio_thread():
                                 pos.notes = pos.notes.replace("|cohort:bonding_curve", "|cohort:graduated")
                             portfolio.close_position(pos.id, "migration_uncertain_graduated", pos.current_price)
                         else:
+                            # No pool found — probe Jupiter route first; zero SOL burned if no route.
+                            # Do NOT call PumpPortal/pump-amm or go straight to manual alert.
                             log.error(
-                                "MIGRATION_UNCERTAIN — no pool found, scheduling controlled retry  token=%s",
+                                "MIGRATION_UNCERTAIN — no pool found, probing Jupiter route  token=%s",
                                 pos.token_symbol,
                             )
+                            _mu_resc = {}
                             try:
-                                from app.alerts import _send
-                                _send(
-                                    f"⚠️ MIGRATION UNCERTAIN {pos.token_symbol} — "
-                                    f"PP+Dex both silent, migration unknown. "
-                                    f"No pool found. Manual check required."
+                                from memecoin.jupiter_rescue import (
+                                    force_jupiter_rescue_sell as _force_mu_rescue,
                                 )
-                            except Exception:
-                                pass
+                                _mu_resc = _force_mu_rescue(pos, "migration_uncertain_no_pool")
+                            except Exception as _mu_probe_err:
+                                log.warning("Migration rescue probe exception: %s", _mu_probe_err)
+
+                            if _mu_resc.get("success"):
+                                # Route existed and tx confirmed — finalize without re-entering
+                                # close_position (prevents double-sell).
+                                log.info(
+                                    "MIGRATION_UNCERTAIN → rescue sold  token=%s  sig=%s  sol=%.6f",
+                                    pos.token_symbol,
+                                    (_mu_resc.get("tx_sig") or "")[:16],
+                                    _mu_resc.get("sol_received", 0),
+                                )
+                                portfolio._finalize_rescue_sell(pos.id, _mu_resc)
+                            else:
+                                # No route or safe failure — arm controlled retry, no SOL burned.
+                                _mu_err_cls = (
+                                    _mu_resc.get("error_class") or _mu_resc.get("reason") or "no_route"
+                                )
+                                portfolio._arm_migration_retry(pos.id, SELL_STUCK_RETRY_SEC)
+                                log.error(
+                                    "MIGRATION_UNCERTAIN — no route (%s), retry in %ds  token=%s",
+                                    _mu_err_cls, SELL_STUCK_RETRY_SEC, pos.token_symbol,
+                                )
+                                try:
+                                    from app.alerts import _send
+                                    _send(
+                                        f"⚡ MIGRATION UNCERTAIN {pos.token_symbol} — "
+                                        f"no Jupiter route yet, auto-recovery armed, "
+                                        f"probing every {SELL_STUCK_RETRY_SEC}s."
+                                    )
+                                except Exception:
+                                    pass
                         continue  # do NOT fire feed_blind regardless of outcome
 
                     if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC:
@@ -1629,17 +1661,51 @@ def _portfolio_thread():
                 # ── Retry sell_stuck positions with expired timers ────────────
                 # sell_stuck positions are excluded from open_positions() and
                 # update_prices() — nothing else retries them. Check here every
-                # 2s slow-tick and call close_position when the timer expires.
+                # 2s slow-tick.
+                import re as _re_mu
                 for _sp in list(portfolio._positions.values()):
                     if _sp.status != "sell_stuck":
                         continue
+
+                    # 10-min manual alert for migration_wait positions.
+                    # Fires once (guard: |migration_manual_alerted|).
+                    # No manual alert before 10 min or before a real failure.
+                    if ("|migration_wait" in (_sp.notes or "")
+                            and "|migration_manual_alerted" not in (_sp.notes or "")):
+                        _mu_ts_m = _re_mu.search(
+                            r'\|migration_uncertain_ts:(\d+)', _sp.notes or ""
+                        )
+                        if _mu_ts_m:
+                            _mu_age = time.time() - int(_mu_ts_m.group(1))
+                            if _mu_age > MIGRATION_UNCERTAIN_MANUAL_TIMEOUT_SEC:
+                                try:
+                                    from app.alerts import _send
+                                    _send(
+                                        f"⚠️ MIGRATION UNCERTAIN {_sp.token_symbol} — "
+                                        f"unsold after {_mu_age / 60:.0f} min, no route found. "
+                                        f"Manual check required.\n"
+                                        f"mint: {_sp.token_address}"
+                                    )
+                                    _sp.notes = (_sp.notes or "") + "|migration_manual_alerted"
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                                except Exception:
+                                    pass
+
                     _retry_at = portfolio._sell_stuck_until.get(_sp.id, 0)
                     if time.time() >= _retry_at:
-                        log.info("SELL STUCK retry triggered for %s  pos=%s",
-                                 _sp.token_symbol, _sp.id)
+                        _retry_reason = (
+                            "migration_uncertain_retry"
+                            if "|migration_wait" in (_sp.notes or "")
+                            else (_sp.exit_reason or "sell_stuck_retry")
+                        )
+                        log.info(
+                            "SELL STUCK retry triggered for %s  pos=%s  reason=%s",
+                            _sp.token_symbol, _sp.id, _retry_reason,
+                        )
                         portfolio.close_position(
                             _sp.id,
-                            _sp.exit_reason or "sell_stuck_retry",
+                            _retry_reason,
                             _sp.current_price or _sp.entry_price,
                         )
 

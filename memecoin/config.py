@@ -97,6 +97,7 @@ EXECUTOR_BACKEND = "pumpportal"
 # Sell-stuck retry cooldown: seconds before retrying the full sell ladder
 # on a position that exhausted all sell attempts.
 SELL_STUCK_RETRY_SEC = 60
+MIGRATION_UNCERTAIN_MANUAL_TIMEOUT_SEC = 600  # 10 min before manual-check alert fires
 
 def _stage(capital: float) -> int:
     if capital < 1_000:  return 1

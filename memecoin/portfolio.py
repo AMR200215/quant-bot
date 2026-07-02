@@ -349,6 +349,57 @@ def _append_journal(pos: Position):
                 pass
 
 
+def is_rescue_eligible_error(
+    error_class: str = "",
+    exit_state: str = "",
+    reason: str = "",
+) -> bool:
+    """
+    Return True when the current sell context warrants a Jupiter rescue attempt.
+    Replaces the fragile ``"_er" in dir()`` pattern in close_position().
+
+    Parameters
+    ----------
+    error_class : str   error_class from the PumpSwap local path result
+    exit_state  : str   TokenExitState.value string from ExitRouter classification
+    reason      : str   reason string passed to close_position()
+    """
+    _RESCUE_EXIT_STATES = frozenset({
+        "GRADUATED_PUMPSWAP",
+        "GRADUATED_PUMPSWAP_SPL",
+        "GRADUATED_PUMPSWAP_T22",
+        "MIGRATION_UNCERTAIN",
+        "MIGRATION_UNCERTAIN_SPL",
+        "MIGRATION_UNCERTAIN_T22",
+    })
+    _RESCUE_ERROR_CLASSES = frozenset({
+        "pumpswap_no_pool",
+        "pumpswap_bad_pool_layout",
+        "pool_not_indexed",
+        "local_build_failed",
+        "local_sim_failed",
+        "pumpswap_simulation_failed",
+        "jupiter_no_route",          # retry after no-route (route may appear later)
+        "graduated_unsellable",      # pump-amm + Jupiter in executor both failed
+        "Custom:6005",               # BC graduation detected during sell
+        "Custom:6001",
+    })
+    _RESCUE_REASONS = frozenset({
+        "migration_uncertain_no_pool",
+        "migration_uncertain_retry",
+        "sell_stuck",
+        "graduated_exit",
+        "feed_blind",
+    })
+    if exit_state in _RESCUE_EXIT_STATES:
+        return True
+    if error_class in _RESCUE_ERROR_CLASSES:
+        return True
+    if reason in _RESCUE_REASONS:
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Portfolio manager
 # ---------------------------------------------------------------------------
@@ -1471,6 +1522,10 @@ class Portfolio:
                     # the executor escalation below doesn't miss it (pos.dex_id may still be
                     # "pumpfun" for Cat-2 tokens that graduated during the hold period).
                     _er_classified_graduated  = False
+                    # Initialized here so is_rescue_eligible_error() can safely read them
+                    # even if ExitRouter raises or EXIT_ROUTER_ENABLED=False.
+                    _exit_state = None
+                    _ps_result  = None
                     try:
                         from memecoin.config import EXIT_ROUTER_ENABLED as _er_enabled
                     except ImportError:
@@ -1523,24 +1578,16 @@ class Portfolio:
                         except Exception as _er_exc:
                             log.warning("ExitRouter error (non-fatal, falling through): %s", _er_exc)
 
-                    # ── Jupiter rescue: fire before executor if local PumpSwap failed with pool error ──
+                    # ── Jupiter rescue: fire before executor if local PumpSwap failed ──
                     _rescue_attempted = False
                     _rescue_succeeded = False
-                    _RESCUE_TRIGGER_CLASSES = frozenset({
-                        "pumpswap_no_pool", "pumpswap_bad_pool_layout", "pool_not_indexed",
-                        "local_build_failed", "local_sim_failed", "pumpswap_simulation_failed",
-                    })
-                    _er_rescue_eligible = (
-                        "_er" in dir() and "_exit_state" in dir()
-                        and _exit_state in (
-                            _er.TokenExitState.GRADUATED_PUMPSWAP,
-                            _er.TokenExitState.MIGRATION_UNCERTAIN,
-                        )
-                    )
-                    if not _pumpswap_local_succeeded and _er_rescue_eligible:
-                        _ps_ec = _ps_result.get("error_class", "") if "_ps_result" in dir() else ""
-                        _should_rescue = _ps_ec in _RESCUE_TRIGGER_CLASSES or not _ps_ec
-                        if _should_rescue:
+                    _ps_ec = _ps_result.get("error_class", "") if _ps_result is not None else ""
+                    if not _pumpswap_local_succeeded and is_rescue_eligible_error(
+                        error_class=_ps_ec,
+                        exit_state=_exit_state.value if _exit_state is not None else "",
+                        reason=reason,
+                    ):
+                        if True:
                             try:
                                 from memecoin.jupiter_rescue import force_jupiter_rescue_sell
                                 try:
@@ -1815,6 +1862,94 @@ class Portfolio:
         except Exception:
             pass
         return pos
+
+    def _finalize_rescue_sell(self, pos_id: str, rescue_result: dict) -> None:
+        """
+        Close a position whose sell was already executed by force_jupiter_rescue_sell()
+        from outside the normal close_position() path (e.g. scanner.py migration branch).
+
+        Never calls executor.sell() or close_position(). Sets status=closed, journals,
+        and sends the sell alert. Safe to call even if the position was concurrently
+        removed (no-ops in that case).
+        """
+        with self._close_locks_meta:
+            if pos_id not in self._close_locks:
+                self._close_locks[pos_id] = threading.Lock()
+            _lock = self._close_locks[pos_id]
+        with _lock:
+            pos = self._positions.get(pos_id)
+            if not pos or pos.status == "closed":
+                log.debug("_finalize_rescue_sell: pos %s already closed or missing — no-op", pos_id)
+                return
+
+            sig        = rescue_result.get("tx_sig", "")
+            sol_recv   = float(rescue_result.get("sol_received") or 0.0)
+            fill_price = rescue_result.get("fill_price") or pos.exit_price or 0.0
+
+            pos.status      = "closed"
+            pos.exit_reason = "jupiter_rescue"
+            pos.exit_time   = time.time()
+            pos.exit_price  = fill_price
+            pos.notes = (pos.notes or "") + (
+                f"|sell_tx:{sig}|route:JUPITER_RESCUE"
+                f"|sol_received:{sol_recv:.6f}"
+                + (f"|sell_fill:{fill_price:.10f}" if fill_price else "")
+            )
+
+            self._positions[pos_id] = pos
+            _append_journal(pos)
+            promote_to_winners(pos)
+            del self._positions[pos_id]
+            _save_positions(self._positions)
+            self._sell_stuck_until.pop(pos_id, None)
+            self._graduated_retry_count.pop(pos_id, None)
+
+            try:
+                from memecoin.pumpportal_monitor import monitor as _ppmon
+                _ppmon.clear_creator(pos.token_address)
+            except Exception:
+                pass
+            with self._presigned_lock:
+                self._presigned_exits.pop(pos.token_address, None)
+                self._presigned_ts.pop(pos.token_address, None)
+                self._graduated_mints.discard(pos.token_address)
+
+            log.info(
+                "_finalize_rescue_sell: closed %s  sig=%s  sol=%.6f  fill=%.10f",
+                pos.token_symbol, sig[:16] if sig else "", sol_recv, fill_price,
+            )
+            try:
+                from app.alerts import alert_live_sell
+                alert_live_sell(pos, sol_recv, sig)
+            except Exception:
+                pass
+            try:
+                alerts.alert_position_close(pos)
+            except Exception:
+                pass
+
+    def _arm_migration_retry(self, pos_id: str, retry_sec: float) -> None:
+        """
+        Arm a MIGRATION_UNCERTAIN + no-pool position for sell_stuck retry.
+        Sets sell_stuck status, records |migration_wait| + first-detection timestamp,
+        and sets the retry timer. Called from scanner.py no-pool branch only.
+        Never calls executor.sell().
+        """
+        pos = self._positions.get(pos_id)
+        if not pos:
+            return
+        if "|migration_wait" not in (pos.notes or ""):
+            pos.notes = (pos.notes or "") + f"|migration_wait|migration_uncertain_ts:{int(time.time())}"
+        elif "|migration_uncertain_ts:" not in (pos.notes or ""):
+            pos.notes = (pos.notes or "") + f"|migration_uncertain_ts:{int(time.time())}"
+        pos.status = "sell_stuck"
+        self._positions[pos_id] = pos
+        self._sell_stuck_until[pos_id] = time.time() + retry_sec
+        _save_positions(self._positions)
+
+    def _save(self) -> None:
+        """Persist current positions to disk (thin wrapper for scanner.py callers)."""
+        _save_positions(self._positions)
 
     # ---- update prices & evaluate exit conditions ----
 
