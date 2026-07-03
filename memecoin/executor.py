@@ -1390,29 +1390,77 @@ class MemeExecutor:
                 pass
 
             # ── Graduated-entry block ─────────────────────────────────────
-            # A graduated token = DexScreener dex_id=pumpswap (definitive), OR
-            # PP-silent + Jupiter-routable + dex_id NOT "pumpfun".
-            # Key guard: if dex_id="pumpfun" DexScreener confirms it's still on
-            # the bonding curve — never block even if PP is momentarily silent
-            # (reconnect gap, quiet bonding-curve period). Without this guard Fix A
-            # blocks every social_alert signal that arrives during a PP quiet window.
-            _is_graduated = False
-            if dex_id.lower() == "pumpswap":
-                _is_graduated = True
-            elif not _pp_active and jupiter_quote_price > 0 and (dex_id or "").lower() != "pumpfun":
-                _is_graduated = True
+            # INVARIANT: stale dex_id='pumpfun' alone is not trusted after PP silence.
+            # Block only with confirmed graduation evidence, unless tests prove current
+            # Jupiter cannot route fresh bonding-curve pump.fun tokens.
+            #
+            # Block immediately if dex_id=pumpswap (definitive — indexed post-migration).
+            # Otherwise, PP-silent + Jupiter-routable requires at least ONE confirmation:
+            #   1. dex_id is non-empty and not "pumpfun"
+            #   2. local PumpSwap pool exists for this mint (on-chain proof)
+            #   3. ExitRouter classifies as GRADUATED_PUMPSWAP or MIGRATION_UNCERTAIN
+            # (Jupiter route AMM metadata check deferred — not exposed in lite-api quote.)
+            _is_graduated   = False
+            _grad_evidence  = []
+            _dex_lower      = (dex_id or "").lower()
+
+            if _dex_lower == "pumpswap":
+                _is_graduated  = True
+                _grad_evidence = ["dex_id=pumpswap"]
+            elif not _pp_active and jupiter_quote_price > 0:
+                # Confirmation 1: dex_id is non-pumpfun and non-empty
+                if _dex_lower not in ("pumpfun", ""):
+                    _grad_evidence.append(f"dex_id={dex_id}")
+
+                # Confirmation 2: local PumpSwap pool exists (on-chain, no RPC if
+                # pumpfun dex_id alone — skip fetch when cheaper check failed first)
+                if not _grad_evidence:
+                    try:
+                        from memecoin.pumpswap_local import fetch_pool as _fp
+                        from memecoin.pumpswap_local import PumpSwapPoolError as _PPE
+                        _fp(token_address, SOLANA_RPC)
+                        _grad_evidence.append("local_pumpswap_pool")
+                    except Exception:
+                        pass  # PumpSwapPoolError or RPC failure → not confirmed
+
+                # Confirmation 3: ExitRouter sees graduated/migration state
+                if not _grad_evidence:
+                    try:
+                        from memecoin.exit_router import classify as _er_classify
+                        from memecoin.exit_router import TokenExitState as _TES
+                        from memecoin.pumpportal_monitor import monitor as _pp_mon
+                        _er_pos = type("_EP", (), {
+                            "token_address": token_address,
+                            "dex_id": dex_id or "",
+                        })()
+                        _er_state = _er_classify(_er_pos, _pp_mon)
+                        if _er_state in (
+                            _TES.GRADUATED_PUMPSWAP, _TES.GRADUATED_PUMPSWAP_SPL,
+                            _TES.GRADUATED_PUMPSWAP_T22,
+                            _TES.MIGRATION_UNCERTAIN, _TES.MIGRATION_UNCERTAIN_SPL,
+                            _TES.MIGRATION_UNCERTAIN_T22,
+                        ):
+                            _grad_evidence.append(f"exit_router={_er_state.value}")
+                    except Exception:
+                        pass
+
+                if _grad_evidence:
+                    _is_graduated = True
+
             if _is_graduated:
                 log.warning(
-                    "BUY blocked — graduated token (dex_id=%s PP-active=%s jup=$%.10f)  "
-                    "token=%s",
-                    dex_id or "n/a", _pp_active, jupiter_quote_price, token_address[:8],
+                    "BUY blocked — graduated token (dex_id=%s PP-active=%s jup=$%.10f "
+                    "evidence=%s)  token=%s",
+                    dex_id or "n/a", _pp_active, jupiter_quote_price,
+                    _grad_evidence, token_address[:8],
                 )
                 return {
-                    "success": False,
-                    "reason":  "blocked_graduated_entry",
-                    "dex_id":  dex_id,
-                    "pp_active": _pp_active,
+                    "success":            False,
+                    "reason":             "blocked_graduated_entry",
+                    "dex_id":             dex_id,
+                    "pp_active":          _pp_active,
                     "jupiter_quote_price": jupiter_quote_price,
+                    "grad_evidence":      _grad_evidence,
                 }
 
             if _pp_active and signal_price > 0 and jupiter_quote_price > 0:
@@ -1848,8 +1896,12 @@ class MemeExecutor:
             # If both fail: alert "graduated unsellable" and return — do NOT loop-retry
             # burning fees; caller (portfolio) will keep position open for manual exit.
             if escalate:
-                _grad_fee_level = "High" if urgent else "UnsafeMax"
-                _grad_fee_floor = 0.0005 if urgent else 0.005
+                # Non-urgent graduated sells start at High/0.0005 (same as urgent first
+                # attempt). Escalation to VeryHigh/UnsafeMax only on non-landing.
+                # Prior UnsafeMax/0.005 floor was applied on the first attempt even when
+                # the pool had ample liquidity — over-paying on routine graduated exits.
+                _grad_fee_level = "High"
+                _grad_fee_floor = 0.0005
                 _grad_fee = max(_helius_priority_fee(token_address, _grad_fee_level), _grad_fee_floor)
 
                 # ── T22 check: pump-amm cannot handle Token-2022 ATAs ────────────
@@ -1975,8 +2027,8 @@ class MemeExecutor:
                                 log.warning("SELL Jupiter price impact: %.1f%%  token=%s", _impact_pct, token_address[:8])
                         except (ImportError, KeyError, TypeError, ValueError):
                             pass
-                        _jup_fee_lvl  = "High" if urgent else "UnsafeMax"
-                        _jup_fee_flr  = 0.0005 if urgent else 0.005
+                        _jup_fee_lvl  = "High"    # start High for both urgent and non-urgent
+                        _jup_fee_flr  = 0.0005   # 0.0005 SOL floor; escalate only on non-landing
                         _jup_fee      = max(_helius_priority_fee(token_address, _jup_fee_lvl), _jup_fee_flr)
                         _jup_tx    = _jup_build_swap_tx(
                             _jup_quote, wallet,

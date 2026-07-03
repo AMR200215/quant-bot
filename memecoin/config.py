@@ -69,7 +69,7 @@ LIVE_DRY_RUN = False
 # When True:  signal_price baseline = PumpPortal live price captured after
 #             screening (~T+1-2s).  Eliminates DexScreener indexer lag
 #             (~15-30%) from PnL calculation and stop anchor.
-#             Preflight gate tightened to SLIPPAGE_GATE_RT_PCT (20%) since
+#             Preflight gate tightened to SLIPPAGE_GATE_RT_PCT (30%) since
 #             we're now measuring real movement only, not indexer artifact.
 #
 # When False: signal_price = stale DexScreener price (legacy behaviour).
