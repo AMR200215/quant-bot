@@ -25,6 +25,7 @@ from typing import Optional
 import requests
 
 from research.config import SUPABASE_URL, SUPABASE_KEY, TICK_PEAK_WINDOW_S, PP_WS_URL
+from research.spool.writer import spool_dropped_field
 
 log = logging.getLogger(__name__)
 
@@ -234,16 +235,37 @@ class PeakTracker:
             "pct_change_peak_3m":  round(pct_peak, 2) if pct_peak is not None else None,
             "t_peak_3m_s":         t_peak_s,
         }
-        try:
-            self._sb.table("research_tokens") \
-                .update(update) \
-                .eq("token_address", addr) \
-                .execute()
-            log.info("PeakTracker %s | tick_peak=%.2f%% at T+%ds",
-                     addr[:12], pct_peak or 0, t_peak_s or 0)
-        except Exception as e:
-            # Columns may not exist yet — log and move on
-            log.debug("PeakTracker write error for %s: %s", addr[:8], e)
+        import re as _re
+        _update = dict(update)
+        for _attempt in range(4):
+            try:
+                self._sb.table("research_tokens") \
+                    .update(_update) \
+                    .eq("token_address", addr) \
+                    .execute()
+                log.info("PeakTracker %s | tick_peak=%.2f%% at T+%ds",
+                         addr[:12], pct_peak or 0, t_peak_s or 0)
+                return
+            except Exception as e:
+                e_str = str(e).lower()
+                if "pgrst204" in e_str or "schema cache" in e_str:
+                    m       = _re.search(r"'(\w+)'\s+column", str(e))
+                    missing = m.group(1) if m else None
+                    if missing and missing in _update:
+                        spool_dropped_field(
+                            token_address=addr, symbol="",
+                            table="research_tokens", column=missing,
+                            value=_update[missing], source_file="peak_tracker.py",
+                            insert_context="peak_update",
+                        )
+                        _update = {k: v for k, v in _update.items() if k != missing}
+                    else:
+                        log.warning("PeakTracker schema error (unrecognised col) for %s: %s",
+                                    addr[:8], e)
+                        return
+                else:
+                    log.warning("PeakTracker write error for %s: %s", addr[:8], e)
+                    return
 
     def _run(self):
         self._init_supabase()

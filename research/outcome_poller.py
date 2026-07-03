@@ -25,6 +25,7 @@ from research.config import (
     POLLER_LOOKBACK_HOURS,
 )
 from research.snapshot import fetch_price
+from research.spool.writer import spool_dropped_field
 
 log = logging.getLogger(__name__)
 
@@ -309,23 +310,34 @@ class OutcomePoller:
                 "outcome_complete": True,
                 "data_partial":     data_partial,
             }
-            try:
-                self._sb.table("research_tokens") \
-                    .update(update) \
-                    .eq("token_address", token_address) \
-                    .execute()
-            except Exception as _upd_e:
-                _upd_s = str(_upd_e).lower()
-                if "pgrst204" in _upd_s or "column" in _upd_s:
-                    _safe = {k: v for k, v in update.items()
-                             if k not in ("pct_change_t1m", "pct_change_t3m",
-                                          "pct_change_t15m", "data_partial")}
+            import re as _re
+            _upd = dict(update)
+            for _fa in range(6):
+                try:
                     self._sb.table("research_tokens") \
-                        .update(_safe) \
+                        .update(_upd) \
                         .eq("token_address", token_address) \
                         .execute()
-                else:
-                    raise
+                    break
+                except Exception as _upd_e:
+                    _upd_s = str(_upd_e).lower()
+                    if "pgrst204" in _upd_s or "schema cache" in _upd_s:
+                        _m      = _re.search(r"'(\w+)'\s+column", str(_upd_e))
+                        _miss   = _m.group(1) if _m else None
+                        if _miss and _miss in _upd:
+                            spool_dropped_field(
+                                token_address=token_address, symbol="",
+                                table="research_tokens", column=_miss,
+                                value=_upd[_miss], source_file="outcome_poller.py",
+                                insert_context="finalize",
+                            )
+                            _upd = {k: v for k, v in _upd.items() if k != _miss}
+                        else:
+                            log.warning("Finalise schema error (unrecognised) for %s: %s",
+                                        token_address[:8], _upd_e)
+                            break
+                    else:
+                        raise
 
             log.info("Finalised %s | peak=%.1f%% at %s | partial=%s",
                      token_address[:12], peak_pct or 0, peak_label, data_partial)

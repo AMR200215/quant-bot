@@ -31,6 +31,7 @@ from research.config import (
     GRAD_VSOL_THRESHOLD,
 )
 from research.snapshot import fetch_snapshot_with_retry
+from research.spool.writer import spool_dropped_field, spool_failed_insert
 from research.tg_listener import TGAlert
 
 log = logging.getLogger(__name__)
@@ -166,11 +167,12 @@ class Tracker:
         poll_schedule_cb:  cb(token_address, category, alert_time, chain)
         peak_schedule_cb:  cb(token_address, alert_time, entry_price) — optional
         """
-        self._q        = in_queue
-        self._cb       = poll_schedule_cb
-        self._peak_cb  = peak_schedule_cb
-        self._sb       = None
+        self._q              = in_queue
+        self._cb             = poll_schedule_cb
+        self._peak_cb        = peak_schedule_cb
+        self._sb             = None
         self._thread: Optional[threading.Thread] = None
+        self._recent_inserts: list = []   # timestamps for channel_velocity_5m
 
     def start(self):
         self._thread = threading.Thread(
@@ -237,6 +239,7 @@ class Tracker:
             # context fields — point-in-time, can't reconstruct later
             "symbol":             snap.get("symbol"),
             "tg_message_text":    alert.raw_text[:500] if alert.raw_text else None,
+            "channel_velocity_5m": self._get_velocity(),
             "snapshot_ok":        snap.get("snapshot_ok", False),
             "snapshot_attempts":  attempts,
             # market fields (None if snapshot_ok=False; PP-enriched when DexScreener misses)
@@ -296,9 +299,11 @@ class Tracker:
             return None
 
         import re as _re
-        _base = dict(row)
+        _base  = dict(row)
         _extra = dict(_pp_extras)
-        # Retry loop: on PGRST204, strip the offending column and retry (up to 5 times)
+        _sym   = snap.get("symbol") or ""
+        # Retry loop: on PGRST204, strip the offending column, spool it, and retry.
+        # Stripped fields are written to spool/dropped_fields.jsonl — never silently lost.
         for _attempt in range(6):
             try:
                 return _do_insert(_base, _extra)
@@ -308,22 +313,47 @@ class Tracker:
                     log.debug("Dedup race for %s — already in DB", alert.token_address[:8])
                     return None
                 if "pgrst204" in e_str or "schema cache" in e_str:
-                    # Parse: "Could not find the 'col_name' column of 'research_tokens'"
-                    m = _re.search(r"'(\w+)'\s+column", str(e))
+                    m       = _re.search(r"'(\w+)'\s+column", str(e))
                     missing = m.group(1) if m else None
                     if missing and missing in _extra:
-                        log.debug("Extra column '%s' missing — dropping from retry", missing)
+                        spool_dropped_field(
+                            token_address=alert.token_address, symbol=_sym,
+                            table="research_tokens", column=missing,
+                            value=_extra[missing], source_file="tracker.py",
+                            insert_context="base_row",
+                        )
                         _extra = {k: v for k, v in _extra.items() if k != missing}
                     elif missing and missing in _base:
-                        log.debug("Base column '%s' missing in Supabase — dropping from retry", missing)
+                        spool_dropped_field(
+                            token_address=alert.token_address, symbol=_sym,
+                            table="research_tokens", column=missing,
+                            value=_base[missing], source_file="tracker.py",
+                            insert_context="base_row",
+                        )
                         _base = {k: v for k, v in _base.items() if k != missing}
                     else:
-                        log.error("Supabase INSERT failed for %s: %s", alert.token_address[:8], e)
+                        log.error("Supabase INSERT schema error (unrecognised) for %s: %s",
+                                  alert.token_address[:8], e)
+                        spool_failed_insert(
+                            token_address=alert.token_address, symbol=_sym,
+                            table="research_tokens", row={**_base, **_extra},
+                            error=str(e), source_file="tracker.py",
+                        )
                         return None
                 else:
                     log.error("Supabase INSERT failed for %s: %s", alert.token_address[:8], e)
+                    spool_failed_insert(
+                        token_address=alert.token_address, symbol=_sym,
+                        table="research_tokens", row={**_base, **_extra},
+                        error=str(e), source_file="tracker.py",
+                    )
                     return None
         log.error("Supabase INSERT gave up after retries for %s", alert.token_address[:8])
+        spool_failed_insert(
+            token_address=alert.token_address, symbol=_sym,
+            table="research_tokens", row={**_base, **_extra},
+            error="max_retries_exceeded", source_file="tracker.py",
+        )
         return None
 
     def _process(self, alert: TGAlert):
