@@ -315,12 +315,13 @@ class Tracker:
                 if "pgrst204" in e_str or "schema cache" in e_str:
                     m       = _re.search(r"'(\w+)'\s+column", str(e))
                     missing = m.group(1) if m else None
+                    _at     = alert.alert_time.isoformat()
                     if missing and missing in _extra:
                         spool_dropped_field(
                             token_address=alert.token_address, symbol=_sym,
                             table="research_tokens", column=missing,
                             value=_extra[missing], source_file="tracker.py",
-                            insert_context="base_row",
+                            insert_context="base_row", alert_time=_at,
                         )
                         _extra = {k: v for k, v in _extra.items() if k != missing}
                     elif missing and missing in _base:
@@ -328,7 +329,7 @@ class Tracker:
                             token_address=alert.token_address, symbol=_sym,
                             table="research_tokens", column=missing,
                             value=_base[missing], source_file="tracker.py",
-                            insert_context="base_row",
+                            insert_context="base_row", alert_time=_at,
                         )
                         _base = {k: v for k, v in _base.items() if k != missing}
                     else:
@@ -337,7 +338,7 @@ class Tracker:
                         spool_failed_insert(
                             token_address=alert.token_address, symbol=_sym,
                             table="research_tokens", row={**_base, **_extra},
-                            error=str(e), source_file="tracker.py",
+                            error=str(e), source_file="tracker.py", alert_time=_at,
                         )
                         return None
                 else:
@@ -346,6 +347,7 @@ class Tracker:
                         token_address=alert.token_address, symbol=_sym,
                         table="research_tokens", row={**_base, **_extra},
                         error=str(e), source_file="tracker.py",
+                        alert_time=alert.alert_time.isoformat(),
                     )
                     return None
         log.error("Supabase INSERT gave up after retries for %s", alert.token_address[:8])
@@ -353,6 +355,7 @@ class Tracker:
             token_address=alert.token_address, symbol=_sym,
             table="research_tokens", row={**_base, **_extra},
             error="max_retries_exceeded", source_file="tracker.py",
+            alert_time=alert.alert_time.isoformat(),
         )
         return None
 

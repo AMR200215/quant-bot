@@ -236,6 +236,8 @@ class PeakTracker:
             "t_peak_3m_s":         t_peak_s,
         }
         import re as _re
+        from datetime import datetime, timezone
+        _alert_time_iso = datetime.fromtimestamp(alert_ts, tz=timezone.utc).isoformat()
         _update = dict(update)
         for _attempt in range(4):
             try:
@@ -257,6 +259,7 @@ class PeakTracker:
                             table="research_tokens", column=missing,
                             value=_update[missing], source_file="peak_tracker.py",
                             insert_context="peak_update",
+                            alert_time=_alert_time_iso,
                         )
                         _update = {k: v for k, v in _update.items() if k != missing}
                     else:

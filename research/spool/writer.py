@@ -80,10 +80,16 @@ def spool_dropped_field(
     value,
     source_file: str,
     insert_context: str,   # 'base_row' | 'peak_update' | 'finalize' | 'outcome'
+    alert_time: str = "",  # ISO string; used by replay_spool to target exact row
+    row_id=None,           # Supabase row id; preferred over token+date for replay
 ):
     """
     Record one field that was stripped because the Supabase column didn't exist.
     Logs an immediate WARNING and appends to dropped_fields.jsonl.
+
+    alert_time and row_id are used by replay_spool.py to target the exact row.
+    Pass them where available — at minimum token_address + alert_time is required
+    for idempotent replay; row_id is preferred when known.
     """
     log.warning(
         "SPOOL dropped_field: table=%s col=%s token=%s ctx=%s  (will replay after schema fix)",
@@ -100,6 +106,8 @@ def spool_dropped_field(
         "source_file":    source_file,
         "code_version":   _CODE_VERSION,
         "insert_context": insert_context,
+        "alert_time":     alert_time,
+        "row_id":         row_id,
     })
 
 
@@ -112,6 +120,7 @@ def spool_failed_insert(
     error: str,
     source_file: str,
     insert_context: str = "base_row",
+    alert_time: str = "",
 ):
     """
     Record a full row that could not be inserted at all (after all retries).
@@ -131,6 +140,7 @@ def spool_failed_insert(
         "source_file":    source_file,
         "code_version":   _CODE_VERSION,
         "insert_context": insert_context,
+        "alert_time":     alert_time,
     })
 
 

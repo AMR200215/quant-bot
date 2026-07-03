@@ -25,7 +25,7 @@ from research.config import (
     POLLER_LOOKBACK_HOURS,
 )
 from research.snapshot import fetch_price
-from research.spool.writer import spool_dropped_field
+from research.spool.writer import spool_dropped_field, spool_failed_insert
 
 log = logging.getLogger(__name__)
 
@@ -81,13 +81,14 @@ class OutcomePoller:
         """Schedule all outcome polls for a token based on its category."""
         intervals = CATEGORY_INTERVALS.get(category, CATEGORY_INTERVALS["unknown"])
         now = time.time()
+        alert_time_iso = alert_time.isoformat()
         with self._lock:
             for label in intervals:
                 offset_min = INTERVAL_MINUTES[label]
                 fire_at    = alert_time.timestamp() + offset_min * 60
                 # If already past-due (e.g. restart recovery): fire immediately
                 fire_at    = max(fire_at, now + 1)
-                heapq.heappush(self._heap, (fire_at, token_address, label, chain))
+                heapq.heappush(self._heap, (fire_at, token_address, label, chain, alert_time_iso))
         self._wake.set()   # wake the poller loop if sleeping
 
     # ── Internal ──────────────────────────────────────────────────────────────
@@ -132,26 +133,29 @@ class OutcomePoller:
             now = time.time()
             with self._lock:
                 for row in rows:
-                    addr     = row["token_address"]
-                    cat      = row.get("category") or "unknown"
-                    chain    = row.get("chain", "solana")
+                    addr           = row["token_address"]
+                    cat            = row.get("category") or "unknown"
+                    chain          = row.get("chain", "solana")
+                    alert_time_str = row.get("alert_time", "")
                     try:
-                        alert_ts = datetime.fromisoformat(row["alert_time"]).timestamp()
+                        alert_ts = datetime.fromisoformat(alert_time_str).timestamp()
                     except Exception:
                         alert_ts = now
+                        alert_time_str = ""
                     intervals = CATEGORY_INTERVALS.get(cat, CATEGORY_INTERVALS["unknown"])
                     for label in intervals:
                         offset   = INTERVAL_MINUTES[label] * 60
                         fire_at  = alert_ts + offset
                         late     = fire_at < now
                         fire_at  = now + 2 if late else fire_at
-                        heapq.heappush(self._heap, (fire_at, addr, label, chain))
+                        heapq.heappush(self._heap, (fire_at, addr, label, chain, alert_time_str))
             if rows:
                 self._wake.set()
         except Exception as e:
             log.error("Outcome poller: DB rebuild failed: %s", e)
 
-    def _poll(self, token_address: str, label: str, chain: str, late: bool):
+    def _poll(self, token_address: str, label: str, chain: str, late: bool,
+              alert_time_iso: str = ""):
         """Fetch price and update Supabase."""
         price, mcap, liq = fetch_price(token_address)
         polled_at = datetime.now(timezone.utc).isoformat()
@@ -177,16 +181,52 @@ class OutcomePoller:
         if not col:
             return
 
-        # FIX: only write if price was found — leave column NULL if fetch failed.
-        # NULL = "polled, no price".  0.0 was a bug that produced fake -100% pct.
+        # Only write if price was found — NULL = "polled, no price" (not -100%).
+        # PGRST204 on missing column → spool for replay after schema migration.
+        # Any other failure → spool_failed_insert so price is not silently lost.
         if price is not None:
-            try:
-                self._sb.table("research_tokens") \
-                    .update({col: price}) \
-                    .eq("token_address", token_address) \
-                    .execute()
-            except Exception as e:
-                log.debug("research_tokens update error for %s/%s: %s", token_address[:8], label, e)
+            import re as _re
+            _upd = {col: price}
+            for _attempt in range(4):
+                try:
+                    self._sb.table("research_tokens") \
+                        .update(_upd) \
+                        .eq("token_address", token_address) \
+                        .execute()
+                    break
+                except Exception as e:
+                    _es = str(e).lower()
+                    if "pgrst204" in _es or "schema cache" in _es:
+                        _m    = _re.search(r"'(\w+)'\s+column", str(e))
+                        _miss = _m.group(1) if _m else None
+                        if _miss and _miss in _upd:
+                            spool_dropped_field(
+                                token_address=token_address, symbol="",
+                                table="research_tokens", column=_miss,
+                                value=_upd[_miss], source_file="outcome_poller.py",
+                                insert_context="outcome", alert_time=alert_time_iso,
+                            )
+                            _upd = {k: v for k, v in _upd.items() if k != _miss}
+                            if not _upd:
+                                break
+                        else:
+                            spool_failed_insert(
+                                token_address=token_address, symbol="",
+                                table="research_tokens",
+                                row={col: price, "interval_label": label},
+                                error=str(e)[:200], source_file="outcome_poller.py",
+                                insert_context="outcome_update", alert_time=alert_time_iso,
+                            )
+                            break
+                    else:
+                        spool_failed_insert(
+                            token_address=token_address, symbol="",
+                            table="research_tokens",
+                            row={col: price, "interval_label": label},
+                            error=str(e)[:200], source_file="outcome_poller.py",
+                            insert_context="outcome_update", alert_time=alert_time_iso,
+                        )
+                        break
 
         log.info("Poll %s %s → %s%s",
                  token_address[:12], label,
@@ -330,6 +370,7 @@ class OutcomePoller:
                                 table="research_tokens", column=_miss,
                                 value=_upd[_miss], source_file="outcome_poller.py",
                                 insert_context="finalize",
+                                alert_time=alert_time_str,
                             )
                             _upd = {k: v for k, v in _upd.items() if k != _miss}
                         else:
@@ -480,9 +521,9 @@ class OutcomePoller:
                 while self._heap and self._heap[0][0] <= now:
                     due.append(heapq.heappop(self._heap))
 
-            for fire_at, token_address, label, chain in due:
+            for fire_at, token_address, label, chain, alert_time_iso in due:
                 late = (now - fire_at) > 120   # >2 min late = restart-recovered
                 try:
-                    self._poll(token_address, label, chain, late)
+                    self._poll(token_address, label, chain, late, alert_time_iso)
                 except Exception as e:
                     log.error("Poll error %s/%s: %s", token_address[:8], label, e)

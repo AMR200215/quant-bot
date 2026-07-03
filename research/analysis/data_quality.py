@@ -44,51 +44,95 @@ TICK_PEAK = ["price_peak_3m", "pct_change_peak_3m", "t_peak_3m_s"]
 
 ALL_IMPORTANT = BASE_IDENTITY + ENTRY_FEATURES + OUTCOME_FEATURES + TICK_PEAK
 
+# Fields where at least one must be non-null for a completed row to count as having
+# real outcome data (outcome_complete=True but all of these NULL → excluded from cohorts)
+OUTCOME_PEAK_FIELDS = [
+    "pct_change_peak", "pct_change_peak_3m",
+    "pct_change_t1m", "pct_change_t3m", "pct_change_t5m",
+    "pct_change_t10m", "pct_change_t20m", "pct_change_t30m",
+]
+
 
 # ── Supabase loader ───────────────────────────────────────────────────────────
 
-def _load_rows(limit: int = 20000) -> list:
+_FULL_COLS = ",".join([
+    "id", "token_address", "symbol", "alert_time", "category", "chain",
+    "snapshot_ok", "price_usd", "mcap_usd", "liquidity_usd", "fdv",
+    "age_minutes", "volume_5m", "buy_sell_ratio_5m", "dex_id",
+    "pp_vsol", "pp_snapshot_ok", "channel_velocity_5m",
+    "has_twitter", "has_telegram", "has_website", "rugcheck_score",
+    "price_t1m", "price_t3m", "price_t5m", "price_t10m",
+    "price_t15m", "price_t20m", "price_t30m",
+    "price_peak_3m", "pct_change_peak_3m", "t_peak_3m_s",
+    "pct_change_t1m", "pct_change_t3m", "pct_change_t5m",
+    "pct_change_t10m", "pct_change_t20m", "pct_change_t30m",
+    "pct_change_peak", "peak_interval", "outcome_complete", "data_partial",
+    "v7_traded", "created_at",
+])
+
+_MINIMAL_COLS = "id,token_address,symbol,alert_time,category,snapshot_ok,price_usd,outcome_complete,created_at"
+
+
+def _load_rows(limit: int = 20000, allow_partial: bool = False) -> tuple:
+    """
+    Returns (rows, load_meta).
+
+    load_meta fields:
+      partial_schema_load      bool  — True if full select failed and fell back
+      missing_selected_columns list  — columns mentioned in the error (best-effort)
+
+    Default (allow_partial=False):
+      Full-select failure raises RuntimeError immediately.  The caller exits nonzero.
+      This ensures schema drift is caught rather than silently degraded.
+
+    --allow-partial mode:
+      Falls back to minimal select.  load_meta marks partial_schema_load=True.
+      build_clean_cohort() returns zero-count invalid cohorts when partial.
+    """
     from research.config import SUPABASE_URL, SUPABASE_KEY
     from supabase import create_client
     sb   = create_client(SUPABASE_URL, SUPABASE_KEY)
-    rows = []
-    offset = 0
-    batch  = 1000
-    cols   = ",".join([
-        "token_address", "symbol", "alert_time", "category", "chain",
-        "snapshot_ok", "price_usd", "mcap_usd", "liquidity_usd", "fdv",
-        "age_minutes", "volume_5m", "buy_sell_ratio_5m", "dex_id",
-        "pp_vsol", "pp_snapshot_ok", "channel_velocity_5m",
-        "has_twitter", "has_telegram", "has_website", "rugcheck_score",
-        "price_t1m", "price_t3m", "price_t5m", "price_t10m",
-        "price_t15m", "price_t20m", "price_t30m",
-        "price_peak_3m", "pct_change_peak_3m", "t_peak_3m_s",
-        "pct_change_t5m", "pct_change_t10m", "pct_change_t20m", "pct_change_t30m",
-        "pct_change_peak", "peak_interval", "outcome_complete", "data_partial",
-        "v7_traded", "created_at",
-    ])
-    while len(rows) < limit:
-        try:
+    load_meta = {"partial_schema_load": False, "missing_selected_columns": []}
+
+    def _paginate(cols_str: str) -> list:
+        rows   = []
+        offset = 0
+        batch  = 1000
+        while len(rows) < limit:
             resp = sb.table("research_tokens") \
-                .select(cols) \
+                .select(cols_str) \
                 .order("alert_time", desc=False) \
                 .range(offset, offset + batch - 1) \
                 .execute()
-        except Exception as e:
-            # Schema may lack some columns — fall back to minimal select
-            print(f"WARN: Full select failed ({e.__class__.__name__}), falling back to minimal")
-            resp = sb.table("research_tokens") \
-                .select("token_address,symbol,alert_time,category,snapshot_ok,"
-                        "price_usd,outcome_complete,created_at") \
-                .order("alert_time", desc=False) \
-                .range(offset, offset + batch - 1) \
-                .execute()
-        chunk = resp.data or []
-        rows.extend(chunk)
-        if len(chunk) < batch:
-            break
-        offset += batch
-    return rows
+            chunk = resp.data or []
+            rows.extend(chunk)
+            if len(chunk) < batch:
+                break
+            offset += batch
+        return rows
+
+    try:
+        return _paginate(_FULL_COLS), load_meta
+    except Exception as e:
+        if not allow_partial:
+            raise RuntimeError(
+                f"Full-select failed (schema drift?): {e.__class__.__name__}: {e}\n"
+                "Apply the ALTER TABLE migration in research/supabase_schema.sql,\n"
+                "then re-run.  Use --allow-partial to fall back to minimal columns\n"
+                "(clean cohorts will be disabled)."
+            ) from e
+
+        # Extract missing column names from PostgREST error message (best-effort)
+        import re as _re
+        missing = _re.findall(r"'(\w+)'\s+column", str(e))
+        load_meta["partial_schema_load"]      = True
+        load_meta["missing_selected_columns"] = missing or ["unknown — check schema"]
+        print(f"WARN: Full select failed ({e.__class__.__name__}: {e})")
+        print(f"      partial_schema_load=true")
+        print(f"      missing_selected_columns={load_meta['missing_selected_columns']}")
+        print(f"      Clean cohorts will not be generated (data is not trusted)")
+        rows = _paginate(_MINIMAL_COLS)
+        return rows, load_meta
 
 
 # ── Coverage helpers ──────────────────────────────────────────────────────────
@@ -272,8 +316,36 @@ def integrity_checks(rows: list, daily: list) -> list:
 
 # ── Clean cohort metadata ─────────────────────────────────────────────────────
 
-def build_clean_cohort(rows: list, era_boundaries: dict) -> dict:
-    # Earliest reliable date = latest first_reliable_date across essential outcome fields
+def build_clean_cohort(rows: list, era_boundaries: dict,
+                       partial_schema: bool = False) -> dict:
+    """
+    Build clean cohort metadata.
+
+    Invariants:
+    - outcomes_only and entry_features are built ONLY from outcome_complete=True rows.
+    - A completed row with all OUTCOME_PEAK_FIELDS null is excluded (no_outcome_data).
+    - tick_peaks requires pct_change_peak_3m AND t_peak_3m_s non-null.
+    - When partial_schema=True (--allow-partial fallback), all cohorts return
+      row_count=0 and trusted=False so callers cannot use them.
+    """
+    if partial_schema:
+        def _invalid(label):
+            return {
+                "label": label, "trusted": False,
+                "start_date": None, "end_date": None,
+                "row_count": 0, "excluded_rows_count": len(rows),
+                "required_fields": [], "coverage_by_field": {},
+                "exclusion_breakdown": {"partial_schema_load": len(rows)},
+            }
+        return {
+            "generated_at":       datetime.now(timezone.utc).isoformat(),
+            "partial_schema_load": True,
+            "outcomes_only":       _invalid("outcomes_only"),
+            "entry_features":      _invalid("entry_features"),
+            "tick_peaks":          _invalid("tick_peaks"),
+        }
+
+    # Era-aware start dates
     outcome_dates = [
         era_boundaries.get(f, {}).get("first_reliable_date", "2026-01-01")
         for f in ["pct_change_peak", "price_usd"]
@@ -287,66 +359,108 @@ def build_clean_cohort(rows: list, era_boundaries: dict) -> dict:
         for f in ["pct_change_peak_3m"]
     ]
 
-    def _cohort(required_cols, start_date, label):
-        cohort_rows = [
-            r for r in rows
-            if _date(r) >= start_date
-            and all(_is_nonnull(r, c) for c in required_cols)
-        ]
-        excluded = [
-            r for r in rows
-            if _date(r) >= start_date
-            and not all(_is_nonnull(r, c) for c in required_cols)
-        ]
+    outcomes_start = max(outcome_dates)  if outcome_dates  else "2026-01-01"
+    entry_start    = max(entry_dates + outcome_dates) if entry_dates else outcomes_start
+    tick_start     = max(tick_dates)     if tick_dates     else "2026-01-01"
+
+    # outcome_complete=True rows only — non-completed rows never enter outcome cohorts
+    completed          = [r for r in rows if r.get("outcome_complete") is True]
+    not_complete_count = len(rows) - len(completed)
+
+    def _has_outcome_data(r) -> bool:
+        """At least one pct/peak field must be non-null."""
+        return any(_is_nonnull(r, f) for f in OUTCOME_PEAK_FIELDS)
+
+    def _cohort(pool, required_cols, start_date, label, need_outcome_data=False):
+        """
+        pool          — pre-filtered input (e.g. completed rows only)
+        required_cols — all must be non-null
+        need_outcome_data — additionally require ≥1 OUTCOME_PEAK_FIELD non-null
+        """
+        breakdown: dict = {}
+        in_era    = [r for r in pool if _date(r) >= start_date]
+
+        # Step 1: outcome-data gate (for outcomes_only + entry_features)
+        if need_outcome_data:
+            has_data, no_data = [], []
+            for r in in_era:
+                (has_data if _has_outcome_data(r) else no_data).append(r)
+            if no_data:
+                breakdown["no_outcome_data"] = len(no_data)
+            in_era = has_data
+
+        # Step 2: required-field gate
+        cohort_rows, missing_fields = [], []
+        for r in in_era:
+            if all(_is_nonnull(r, c) for c in required_cols):
+                cohort_rows.append(r)
+            else:
+                missing_fields.append(r)
+        if missing_fields:
+            breakdown["required_fields_null"] = len(missing_fields)
+
+        excluded_total = len(pool) - len(cohort_rows)
+
         if not cohort_rows:
             return {
-                "label": label, "start_date": start_date, "end_date": None,
-                "row_count": 0, "excluded_rows_count": len(excluded),
-                "required_fields": required_cols,
-                "coverage_by_field": {},
-                "reason_for_exclusions": "required field(s) null",
+                "label": label, "trusted": True,
+                "start_date": start_date, "end_date": None,
+                "row_count": 0, "excluded_rows_count": excluded_total,
+                "required_fields": required_cols, "coverage_by_field": {},
+                "exclusion_breakdown": breakdown,
             }
+
         dates = sorted(_date(r) for r in cohort_rows)
-        cov   = {}
-        for col in required_cols:
-            nn  = sum(1 for r in cohort_rows if _is_nonnull(r, col))
-            cov[col] = round(nn / len(cohort_rows) * 100, 1)
+        cov   = {c: round(sum(1 for r in cohort_rows if _is_nonnull(r, c))
+                          / len(cohort_rows) * 100, 1)
+                 for c in required_cols}
         return {
             "label":               label,
+            "trusted":             True,
             "start_date":          dates[0],
             "end_date":            dates[-1],
             "row_count":           len(cohort_rows),
-            "excluded_rows_count": len(excluded),
+            "excluded_rows_count": excluded_total,
             "required_fields":     required_cols,
             "coverage_by_field":   cov,
-            "reason_for_exclusions": "one or more required fields null",
+            "exclusion_breakdown": breakdown,
         }
 
-    outcomes_start = max(outcome_dates) if outcome_dates else "2026-01-01"
-    entry_start    = max(entry_dates + outcome_dates) if entry_dates else outcomes_start
-    tick_start     = max(tick_dates) if tick_dates else "2026-01-01"
+    # outcomes_only: completed rows with ≥1 real outcome field
+    outcomes_only = _cohort(
+        completed,
+        ["token_address", "alert_time", "category"],
+        outcomes_start, "outcomes_only",
+        need_outcome_data=True,
+    )
 
-    outcomes_only_req = [
-        "token_address", "alert_time", "category",
-        "outcome_complete",
-    ]
-    entry_features_req = outcomes_only_req + [
-        "price_usd", "mcap_usd", "liquidity_usd", "volume_5m",
-        "buy_sell_ratio_5m", "age_minutes",
-    ]
-    tick_peaks_req = [
-        "token_address", "alert_time",
-        "pct_change_peak_3m", "t_peak_3m_s",
-    ]
+    # entry_features: completed rows with full entry snapshot + ≥1 outcome field
+    entry_features = _cohort(
+        completed,
+        ["token_address", "alert_time", "category",
+         "price_usd", "mcap_usd", "liquidity_usd", "volume_5m",
+         "buy_sell_ratio_5m", "age_minutes"],
+        entry_start, "entry_features",
+        need_outcome_data=True,
+    )
 
-    # Filter to completed rows only for outcome cohorts
-    completed = [r for r in rows if r.get("outcome_complete")]
+    # tick_peaks: any row (outcome_complete not required) with both tick-peak fields
+    tick_peaks = _cohort(
+        rows,
+        ["token_address", "alert_time", "pct_change_peak_3m", "t_peak_3m_s"],
+        tick_start, "tick_peaks",
+        need_outcome_data=False,
+    )
 
     return {
-        "generated_at":   datetime.now(timezone.utc).isoformat(),
-        "outcomes_only":  _cohort(outcomes_only_req, outcomes_start, "outcomes_only"),
-        "entry_features": _cohort(entry_features_req, entry_start, "entry_features"),
-        "tick_peaks":     _cohort(tick_peaks_req, tick_start, "tick_peaks"),
+        "generated_at":         datetime.now(timezone.utc).isoformat(),
+        "partial_schema_load":  False,
+        "total_rows":           len(rows),
+        "outcome_complete_total": len(completed),
+        "not_complete_excluded":  not_complete_count,
+        "outcomes_only":        outcomes_only,
+        "entry_features":       entry_features,
+        "tick_peaks":           tick_peaks,
     }
 
 
@@ -413,20 +527,33 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", action="store_true",
                         help="Print health summary only (fast)")
+    parser.add_argument("--allow-partial", action="store_true",
+                        help="Fall back to minimal columns if full select fails. "
+                             "Marks partial_schema_load=true and disables clean cohorts.")
     args = parser.parse_args()
 
     print("Loading rows from Supabase...")
     try:
-        rows = _load_rows()
+        rows, load_meta = _load_rows(allow_partial=args.allow_partial)
+    except RuntimeError as e:
+        print(f"\nFAIL — {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"FAIL — Cannot load data from Supabase: {e}")
         sys.exit(1)
+
+    partial = load_meta["partial_schema_load"]
+    if partial:
+        print(f"\nWARN: partial_schema_load=true")
+        print(f"      missing_selected_columns={load_meta['missing_selected_columns']}")
+        print(f"      Clean cohorts are DISABLED — apply schema migration first.\n")
+
     print(f"Loaded {len(rows):,} rows")
 
     daily   = per_day_coverage(rows)
     eras    = detect_era_boundaries(daily)
     checks  = integrity_checks(rows, daily)
-    cohort  = build_clean_cohort(rows, eras)
+    cohort  = build_clean_cohort(rows, eras, partial_schema=partial)
 
     # Save outputs
     (_OUT_DIR / "era_boundaries.json").write_text(json.dumps(eras, indent=2))
@@ -482,12 +609,22 @@ def main():
     print(f"\n{'='*60}")
     print("CLEAN COHORT METADATA")
     print(f"{'='*60}")
+    if cohort.get("partial_schema_load"):
+        print("  DISABLED — partial_schema_load=true (apply schema migration first)")
+    else:
+        print(f"  outcome_complete total : {cohort.get('outcome_complete_total', 0):,}")
+        print(f"  not_complete excluded  : {cohort.get('not_complete_excluded', 0):,}")
     for key in ["outcomes_only", "entry_features", "tick_peaks"]:
         c = cohort.get(key, {})
-        print(f"\n  {key}:")
+        trusted = c.get("trusted", True)
+        print(f"\n  {key}:{' [UNTRUSTED — partial schema]' if not trusted else ''}")
         print(f"    rows       : {c.get('row_count', 0):,}")
         print(f"    date range : {c.get('start_date')} → {c.get('end_date')}")
         print(f"    excluded   : {c.get('excluded_rows_count', 0):,}")
+        bd = c.get("exclusion_breakdown", {})
+        if bd:
+            for reason, n in sorted(bd.items()):
+                print(f"      {reason:<30} {n:,} rows")
         cov = c.get("coverage_by_field", {})
         if cov:
             for f, pct in cov.items():
