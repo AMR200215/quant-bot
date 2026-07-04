@@ -46,7 +46,7 @@ CAPITAL_USD = 8     # ← actual wallet balance (update as it grows)
 # Flip to True when wallet is funded and SOLANA_PRIVATE_KEY env var is set.
 # False = pure paper trade, nothing changes in existing behaviour.
 # ---------------------------------------------------------------------------
-LIVE_TRADING = False   # PAUSED 2026-06-30 — investigating BST graduated sell failure
+LIVE_TRADING = True    # re-enabled 2026-07-04 — BST was paper-only; graduated sell fee fixed
 
 # Focus mode: when True, only the social_alert (TG) path runs.
 # Disables wallet tracker, market scanner, pumpfun_listener, near-miss poller.
