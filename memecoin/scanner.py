@@ -1349,6 +1349,12 @@ def _portfolio_thread():
     # mint → timestamp when we last got a DexScreener price for it
     _dex_last_seen: dict[str, float] = {}
     _last_slow_run: float = 0.0   # timestamp of last 2s-cadence block
+    # FIX 4: curve account price feed for PP-silent bonding-curve positions
+    _curve_feed_last_seen:    dict[str, float] = {}   # mint → unix ts of last curve price
+    _curve_price_overrides:   dict[str, float] = {}   # mint → price_usd from curve feed
+    _curve_feed_last_polled:  dict[str, float] = {}   # mint → unix ts of last poll attempt
+    _CURVE_POLL_INTERVAL = 1.0    # seconds between curve fetches per mint
+    _CURVE_FEED_VALID_SEC = 10.0  # curve price considered fresh for this long
 
     while True:
         try:
@@ -1419,6 +1425,55 @@ def _portfolio_thread():
                                     _dex_last_seen[mint] = now
                             except Exception:
                                 pass
+
+            # ── FIX 4: curve account feed for PP-silent bonding-curve positions ─
+            # For each open live position where PP has been silent >5s and the
+            # token is not already in price_overrides, poll the bonding curve
+            # account for a live price. Rate-limited to once per second per mint.
+            try:
+                from memecoin.executor import get_pumpfun_curve_price as _gcp
+                for _cp_pos in list(portfolio._positions.values()):
+                    if _cp_pos.status != "open" or _cp_pos.chain != "solana":
+                        continue
+                    if not getattr(_cp_pos, "is_live", False):
+                        continue
+                    _cp_mint = _cp_pos.token_address
+                    if _cp_mint in price_overrides:
+                        continue  # PP or Dex already has a fresh price
+                    _cp_pp_age = _pp_monitor.get_last_seen(_cp_mint)
+                    if _cp_pp_age <= 5.0:
+                        continue  # PP is active, no need for curve feed
+                    # Rate-limit: only poll once per _CURVE_POLL_INTERVAL per mint
+                    _cp_last = _curve_feed_last_polled.get(_cp_mint, 0)
+                    if now - _cp_last < _CURVE_POLL_INTERVAL:
+                        # Use cached curve price if still fresh
+                        if _cp_mint in _curve_price_overrides:
+                            _cp_age = now - _curve_feed_last_seen.get(_cp_mint, 0)
+                            if _cp_age < _CURVE_FEED_VALID_SEC:
+                                price_overrides[_cp_mint] = _curve_price_overrides[_cp_mint]
+                        continue
+                    _curve_feed_last_polled[_cp_mint] = now
+                    _cp_result = _gcp(_cp_mint)
+                    if _cp_result.get("ok") and _cp_result.get("price_usd"):
+                        _cp_price = _cp_result["price_usd"]
+                        _curve_price_overrides[_cp_mint] = _cp_price
+                        _curve_feed_last_seen[_cp_mint]  = now
+                        price_overrides[_cp_mint]         = _cp_price
+                        log.info(
+                            "CURVE FEED  token=%s  price=$%.10f  complete=%s",
+                            _cp_pos.token_symbol, _cp_price, _cp_result.get("complete"),
+                        )
+                        # If curve says complete=True, stop polling and let normal
+                        # MIGRATION_UNCERTAIN / graduated logic take over
+                        if _cp_result.get("complete") is True:
+                            _curve_price_overrides.pop(_cp_mint, None)
+                            _curve_feed_last_seen.pop(_cp_mint, None)
+                    elif _cp_result.get("complete") is None:
+                        # account_missing → curve closed, stop polling
+                        _curve_price_overrides.pop(_cp_mint, None)
+                        _curve_feed_last_seen.pop(_cp_mint, None)
+            except Exception as _cf_e:
+                log.debug("curve feed error: %s", _cf_e)
 
             exits = portfolio.update_prices(
                 whale_sells=whale_sells_snapshot,
@@ -1555,6 +1610,13 @@ def _portfolio_thread():
                         )
                         continue
 
+                    # FIX 4: if curve feed is live, we have price visibility — skip all
+                    # MIGRATION_UNCERTAIN and feed_blind logic for this tick.
+                    _cf_age = now - _curve_feed_last_seen.get(mint, 0) if _curve_feed_last_seen.get(mint) else float("inf")
+                    if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC and _cf_age < _CURVE_FEED_VALID_SEC:
+                        # Curve feed alive — normal TP/stop monitoring is handling it
+                        continue
+
                     # GAP 2: if PP never saw migration (mig_age=inf) AND both feeds
                     # are silent, do NOT blindly market-sell — the token may be mid-migration.
                     # Try to discover route before firing feed_blind.
@@ -1589,6 +1651,58 @@ def _portfolio_thread():
                                 pos.notes = pos.notes.replace("|cohort:bonding_curve", "|cohort:graduated")
                             portfolio.close_position(pos.id, "migration_uncertain_graduated", pos.current_price)
                         else:
+                            # ── FIX 3: oracle check before rescue dispatch ────
+                            # If the bonding curve says complete=False the token is
+                            # still live — PP being silent is normal for T22 tokens.
+                            # Never rescue a bonding-curve position prematurely.
+                            _bc_oracle = {"ok": False, "complete": None, "reason": "not_checked"}
+                            try:
+                                from memecoin.executor import get_pumpfun_curve_complete as _gpc
+                                _bc_oracle = _gpc(mint)
+                            except Exception as _oe:
+                                log.warning(
+                                    "rescue oracle check failed  token=%s: %s",
+                                    pos.token_symbol, _oe,
+                                )
+                            if _bc_oracle.get("complete") is False:
+                                # Still on bonding curve — suppress rescue entirely
+                                log.info(
+                                    "rescue_suppressed_bonding_curve  token=%s  "
+                                    "oracle=%s  pp_age=%.0fs  dex_age=%.0fs",
+                                    pos.token_symbol, _bc_oracle.get("reason"),
+                                    pp_age, dex_age,
+                                )
+                                import time as _time
+                                _bc_ts = int(_time.time())
+                                if pos.notes is not None:
+                                    pos.notes = pos.notes + f"|rescue_suppressed_bc:{_bc_ts}|"
+                                continue  # do not arm retry, do not dispatch rescue
+
+                            elif not _bc_oracle.get("ok") and _bc_oracle.get("complete") is None:
+                                # Oracle error — check if we have a recent suppression
+                                import re as _re_bc, time as _time_bc
+                                _recent = _re_bc.findall(
+                                    r'rescue_suppressed_bc:(\d+)', pos.notes or ""
+                                )
+                                if _recent:
+                                    _last_suppress_age = _time_bc.time() - int(_recent[-1])
+                                    if _last_suppress_age < 300:  # within 5 min
+                                        log.warning(
+                                            "grad_oracle_retry_deferred  token=%s  "
+                                            "last_suppress_age=%.0fs",
+                                            pos.token_symbol, _last_suppress_age,
+                                        )
+                                        continue  # defer once
+
+                                log.warning(
+                                    "grad_oracle_rpc_fail_rescue_allowed  token=%s  "
+                                    "reason=%s — proceeding with rescue",
+                                    pos.token_symbol, _bc_oracle.get("reason"),
+                                )
+                                # fall through to rescue dispatch below
+
+                            # complete=True / account_missing / repeated oracle error:
+                            # proceed with existing rescue dispatch
                             # No pool found — arm migration retry immediately (non-blocking),
                             # then dispatch a daemon thread to probe Jupiter. The confirmation
                             # window can take up to 45s; we must not block the monitor loop.
@@ -1674,7 +1788,16 @@ def _portfolio_thread():
                                 )
                         continue  # do NOT fire feed_blind regardless of outcome
 
-                    if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC:
+                    # FIX 4: curve feed counts as an independent live source.
+                    # If curve account was readable recently, do not fire feed_blind.
+                    _curve_age = now - _curve_feed_last_seen.get(mint, 0) if _curve_feed_last_seen.get(mint) else float("inf")
+                    if pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC and _curve_age < _CURVE_FEED_VALID_SEC:
+                        log.info(
+                            "feed_blind suppressed by curve feed  token=%s  "
+                            "pp_age=%.0fs  dex_age=%.0fs  curve_age=%.1fs",
+                            pos.token_symbol, pp_age, dex_age, _curve_age,
+                        )
+                    elif pp_age > _FEED_BLIND_SEC and dex_age > _FEED_BLIND_SEC:
                         log.error(
                             "FEED BLIND — both PP (%.0fs) and DexScreener (%.0fs) silent "
                             "for live position %s (%s). Triggering market-sell.",

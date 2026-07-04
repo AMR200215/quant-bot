@@ -1281,10 +1281,61 @@ def _get_pumpfun_curve_complete_uncached(mint: str) -> dict:
             return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
         complete = bool(raw[48])
         reason   = "complete_true" if complete else "complete_false"
-        return {"ok": True, "complete": complete, "reason": reason, "bc_pda": bc_pda, "rpc_ms": 0}
+        import struct as _struct
+        vtr = _struct.unpack_from("<Q", raw, 8)[0]   # virtual_token_reserves
+        vsr = _struct.unpack_from("<Q", raw, 16)[0]  # virtual_sol_reserves
+        return {
+            "ok": True, "complete": complete, "reason": reason, "bc_pda": bc_pda, "rpc_ms": 0,
+            "virtual_token_reserves": vtr,
+            "virtual_sol_reserves":   vsr,
+        }
     except Exception as e:
         log.error("GRAD ORACLE parse error for %s: %s", mint[:8], e)
         return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
+
+
+def get_pumpfun_curve_price(mint: str) -> dict:
+    """
+    Fetch the pump.fun bonding curve account and compute a live price.
+
+    Used by Fix 4 (curve feed) as a price source for PP-silent positions.
+    Bypasses the 5s TTL cache intentionally — this IS the fallback feed.
+
+    Returns
+    -------
+    {
+        "ok":        bool,
+        "price_usd": float | None,
+        "price_sol": float | None,
+        "complete":  bool | None,
+        "reason":    str,
+    }
+    """
+    try:
+        result = _get_pumpfun_curve_complete_uncached(mint)
+        if not result.get("ok"):
+            return {"ok": False, "price_usd": None, "price_sol": None,
+                    "complete": result.get("complete"), "reason": result.get("reason", "oracle_error")}
+        if result.get("complete") is None:
+            return {"ok": True, "price_usd": None, "price_sol": None,
+                    "complete": None, "reason": "account_missing"}
+        vtr = result.get("virtual_token_reserves", 0)
+        vsr = result.get("virtual_sol_reserves", 0)
+        if vtr == 0:
+            return {"ok": False, "price_usd": None, "price_sol": None,
+                    "complete": result.get("complete"), "reason": "zero_token_reserves"}
+        price_sol = (vsr / 1e9) / (vtr / 1e6)   # SOL per token (6-decimal pump.fun tokens)
+        price_usd = price_sol * _sol_price_usd()
+        return {
+            "ok":        True,
+            "price_usd": price_usd,
+            "price_sol": price_sol,
+            "complete":  result.get("complete"),
+            "reason":    result.get("reason", "ok"),
+        }
+    except Exception as e:
+        log.debug("get_pumpfun_curve_price error for %s: %s", mint[:8], e)
+        return {"ok": False, "price_usd": None, "price_sol": None, "complete": None, "reason": str(e)}
 
 
 # ---------------------------------------------------------------------------

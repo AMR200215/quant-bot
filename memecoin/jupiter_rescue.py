@@ -313,34 +313,15 @@ def _get_token_balance(wallet: str, mint: str) -> int:
     return bal
 
 
-# ── Sol received from confirmed tx ─────────────────────────────────────────────
+# ── Sol received from confirmed tx (delegated to tx_meta.read_sol_delta) ──────
 
 def _sol_received_from_tx(sig: str, wallet: str) -> float:
-    try:
-        payload = {
-            "jsonrpc": "2.0", "id": 1,
-            "method": "getTransaction",
-            "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
-        }
-        data = _rpc_post(payload, timeout=15)
-        tx   = data.get("result")
-        if not tx:
-            return 0.0
-        meta          = tx.get("meta", {})
-        pre_balances  = meta.get("preBalances", [])
-        post_balances = meta.get("postBalances", [])
-        account_keys  = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
-        for i, ak in enumerate(account_keys):
-            addr = ak if isinstance(ak, str) else ak.get("pubkey", "")
-            if addr == wallet:
-                pre   = pre_balances[i]  if i < len(pre_balances)  else 0
-                post  = post_balances[i] if i < len(post_balances) else 0
-                delta = (post - pre) / 1e9
-                return delta if delta > 0 else 0.0
-        return 0.0
-    except Exception as exc:
-        log.debug("jupiter_rescue: getTransaction parse failed: %s", exc)
-        return 0.0
+    """Legacy wrapper — delegates to tx_meta.read_sol_delta with retry."""
+    from memecoin.tx_meta import read_sol_delta
+    result = read_sol_delta(sig, wallet)
+    if result["ok"] and result["sol_delta"] is not None:
+        return max(0.0, result["sol_delta"])
+    return 0.0  # caller must check via read_sol_delta directly for null-safety
 
 
 # ── Note field extractor ──────────────────────────────────────────────────────
@@ -393,6 +374,99 @@ def _build_log_row(pos_id: str, symbol: str, mint: str, trigger_reason: str,
             "success" if result.get("success") else result.get("reason", "failed")
         ),
     }
+
+
+# ── Journal correction (self-healing for sol_parse_failed rows) ───────────────
+
+def _correct_journal_row(sig: str, pos_id: str, real_sol: float, token_balance_raw: int) -> None:
+    """
+    Rewrite a live journal row that was closed with fill_estimated=True.
+
+    Finds the row by sell_tx sig + position_id, updates sol_received, pnl fields,
+    and adds |fill_corrected_from_tx_meta to notes. Idempotent.
+    """
+    import csv as _csv
+    import io  as _io
+    try:
+        from memecoin.config import LIVE_JOURNAL_FILE as _LJF, LOGS_DIR as _LOGS_DIR
+        from memecoin.config import SOCIAL_JOURNAL_FILE as _SJF
+    except Exception as _ce:
+        log.warning("_correct_journal_row: cannot import config: %s", _ce)
+        return
+
+    _sol_price = 0.0
+    try:
+        from memecoin.executor import _sol_price_usd
+        _sol_price = _sol_price_usd()
+    except Exception:
+        pass
+
+    for _jpath in (_LJF, _SJF):
+        try:
+            if not _jpath.exists():
+                continue
+            _text = _jpath.read_text()
+            _rows = list(_csv.DictReader(_io.StringIO(_text)))
+            _changed = False
+            for _row in _rows:
+                _notes = _row.get("notes", "")
+                # Match by sell_tx sig OR pos_id
+                _sig_match = (f"sell_tx:{sig}" in _notes or f"jupiter_rescue_pending:{sig}" in _notes)
+                _id_match  = (_row.get("pos_id", "") == pos_id or
+                              _row.get("position_id", "") == pos_id)
+                if not (_sig_match or _id_match):
+                    continue
+                # Skip already-corrected rows (idempotent)
+                if "fill_corrected_from_tx_meta" in _notes:
+                    log.debug("_correct_journal_row: already corrected  sig=%s", sig[:16])
+                    return
+
+                # Compute corrected values
+                _entry_price = float(_row.get("fill_price") or _row.get("entry_price") or 0)
+                _size_usd    = float(_row.get("size_usd") or 0)
+                _tokens      = token_balance_raw
+                _exit_price  = 0.0
+                if _tokens > 0 and _sol_price > 0:
+                    _exit_price = (real_sol / (_tokens / 1e6)) * _sol_price
+                _pnl_usd = real_sol * _sol_price - _size_usd if _size_usd > 0 else 0.0
+                _pnl_pct = ((_exit_price / _entry_price) - 1) * 100 if _entry_price > 0 else 0.0
+
+                # Update fields
+                if "pnl_usd" in _row:
+                    _row["pnl_usd"] = round(_pnl_usd, 4)
+                if "pnl_pct" in _row:
+                    _row["pnl_pct"] = round(_pnl_pct, 2)
+                if "exit_price" in _row:
+                    _row["exit_price"] = _exit_price
+                if "sol_rcvd" in _row:
+                    _row["sol_rcvd"] = real_sol
+
+                # Update notes
+                _new_notes = _notes
+                import re as _re2
+                _new_notes = _re2.sub(r'sol_received:[0-9.]+', f'sol_received:{real_sol:.6f}', _new_notes)
+                _new_notes = _new_notes.replace("|sol_parse_failed|fill_estimated", "")
+                _new_notes += "|fill_corrected_from_tx_meta"
+                _row["notes"] = _new_notes
+
+                _changed = True
+                log.info(
+                    "_correct_journal_row: corrected  sig=%s  pos=%s  "
+                    "real_sol=%.6f  pnl_pct=%.1f%%",
+                    sig[:16], pos_id, real_sol, _pnl_pct,
+                )
+                break
+
+            if _changed:
+                _fieldnames = list(_rows[0].keys()) if _rows else []
+                _out = _io.StringIO()
+                _w = _csv.DictWriter(_out, fieldnames=_fieldnames)
+                _w.writeheader()
+                _w.writerows(_rows)
+                _jpath.write_text(_out.getvalue())
+
+        except Exception as _je:
+            log.warning("_correct_journal_row: error for %s: %s", _jpath, _je)
 
 
 # ── Config startup warning ────────────────────────────────────────────────────
@@ -964,18 +1038,84 @@ def force_jupiter_rescue_sell(pos, reason: str, purpose: str = "EXIT") -> dict: 
             _log_rescue(_build_log_row(pos_id, symbol, mint, reason, result, pos_notes))
             return result
 
-        # ── (n) Sol received ──────────────────────────────────────────────────
-        sol_recv = _sol_received_from_tx(sig, wallet)
-        result["sol_received"] = sol_recv
-        result["fill_price"]   = None   # portfolio caller uses pos.exit_price if None
+        # ── (n) Sol received — with retry and contradiction guard ────────────
+        from memecoin.tx_meta import read_sol_delta as _read_sol_delta
+        _meta_result = _read_sol_delta(sig, wallet)
 
-        # ── (o) Success ───────────────────────────────────────────────────────
-        result["success"] = True
-        result["reason"]  = "jupiter_rescue_ok"
-        log.info(
-            "jupiter_rescue: SUCCESS  mint=%s  sig=%s  sol=%.6f  impact=%.1f%%  rb=%d",
-            mint[:8], sig[:16], sol_recv, impact_pct, rb_count,
-        )
+        if _meta_result["ok"] and _meta_result["sol_delta"] is not None:
+            sol_recv = max(0.0, _meta_result["sol_delta"])
+            result["sol_received"] = sol_recv
+            result["fill_price"]   = None   # portfolio caller uses pos.exit_price if None
+            result["success"]      = True
+            result["reason"]       = "jupiter_rescue_ok"
+            log.info(
+                "jupiter_rescue: SUCCESS  mint=%s  sig=%s  sol=%.6f  impact=%.1f%%  rb=%d  meta_attempts=%d",
+                mint[:8], sig[:16], sol_recv, impact_pct, rb_count, _meta_result["attempts"],
+            )
+        else:
+            # ── Contradiction guard: confirmed tx but no sol_delta ────────────
+            # NEVER journal at fill=0 — use quote estimate as fallback
+            _estimated_sol = 0.0
+            if quote and quote.get("outAmount"):
+                _estimated_sol = int(quote["outAmount"]) / 1e9
+            if _estimated_sol > 0:
+                sol_recv = _estimated_sol
+                result["sol_received"]    = sol_recv
+                result["fill_price"]      = None
+                result["success"]         = True
+                result["reason"]          = "jupiter_rescue_ok"
+                result["fill_estimated"]  = True
+                result["manual_review"]   = True
+                pos.notes = (pos.notes or "") + "|sol_parse_failed|fill_estimated"
+                log.warning(
+                    "jupiter_rescue: FILL ESTIMATED (sol_parse_failed)  mint=%s  sig=%s  "
+                    "estimated_sol=%.6f  meta_source=%s  meta_reason=%s",
+                    mint[:8], sig[:16], _estimated_sol,
+                    _meta_result["source"], _meta_result["reason"],
+                )
+                # Enqueue reconcile: retry read_sol_delta at +30s and +60s
+                import threading as _thr
+                def _reconcile_task(
+                    _sig=sig, _wallet=wallet, _pos_id=pos_id,
+                    _est=_estimated_sol, _balance_raw=balance,
+                ):
+                    for _delay in (30, 60):
+                        time.sleep(_delay if _delay == 30 else 30)
+                        _retry = _read_sol_delta(_sig, _wallet)
+                        if _retry["ok"] and _retry["sol_delta"] is not None:
+                            _real_sol = max(0.0, _retry["sol_delta"])
+                            log.info(
+                                "jupiter_rescue: RECONCILE SUCCESS  sig=%s  "
+                                "real_sol=%.6f  was_estimated=%.6f",
+                                _sig[:16], _real_sol, _est,
+                            )
+                            _correct_journal_row(
+                                _sig, _pos_id, _real_sol, _balance_raw,
+                            )
+                            return
+                    log.warning(
+                        "jupiter_rescue: RECONCILE FAILED after 60s  sig=%s  "
+                        "keeping estimated fill",
+                        _sig[:16],
+                    )
+                _thr.Thread(
+                    target=_reconcile_task, daemon=True,
+                    name=f"reconcile-{sig[:8]}",
+                ).start()
+            else:
+                # No quote estimate AND no tx meta — do NOT close at fill=0
+                result["sol_received"]     = 0.0
+                result["fill_price"]       = None
+                result["success"]          = False
+                result["reason"]           = "sol_parse_failed_no_estimate"
+                result["error_class"]      = "sol_parse_failed"
+                result["needs_reconcile"]  = True
+                pos.notes = (pos.notes or "") + "|sol_parse_failed|needs_reconcile"
+                log.error(
+                    "jupiter_rescue: CONFIRMED but cannot determine fill — "
+                    "NOT closing at fill=0  mint=%s  sig=%s  meta_reason=%s",
+                    mint[:8], sig[:16], _meta_result["reason"],
+                )
 
     except Exception as outer_exc:
         result["reason"]      = "rescue_exception"
