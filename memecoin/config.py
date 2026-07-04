@@ -1,5 +1,6 @@
 """Memecoin module configuration — all tunable constants in one place."""
 
+import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -46,7 +47,7 @@ CAPITAL_USD = 8     # ← actual wallet balance (update as it grows)
 # Flip to True when wallet is funded and SOLANA_PRIVATE_KEY env var is set.
 # False = pure paper trade, nothing changes in existing behaviour.
 # ---------------------------------------------------------------------------
-LIVE_TRADING = True    # re-enabled 2026-07-04 — BST was paper-only; graduated sell fee fixed
+LIVE_TRADING = os.getenv("LIVE_TRADING", "true").lower() == "true"
 
 # Focus mode: when True, only the social_alert (TG) path runs.
 # Disables wallet tracker, market scanner, pumpfun_listener, near-miss poller.
