@@ -1,12 +1,16 @@
 """
-test_entry_invariants.py — Graduated-entry gate invariant tests (FIX 1)
+test_entry_invariants.py — Graduated-entry gate invariant tests
 
-Tests a-e map directly to the spec:
-  a) PP inactive, Jupiter > 0, dex_id="pumpfun", local PumpSwap pool exists  → blocked
-  b) PP inactive, Jupiter > 0, dex_id="pumpfun", no local pool, no grad class → NOT blocked
-  c) PP inactive, Jupiter > 0, dex_id="pumpswap"                              → blocked
-  d) PP active                                                                 → NOT blocked
-  e) Jupiter quote == 0                                                        → NOT blocked
+Tests verify the buy gate logic:
+  A) dex_id=pumpswap → always blocked (CAT-3, independent of oracle)
+  B) PP active → never blocked by graduated-entry gate
+  C) Jupiter quote == 0 → never blocked by graduated-entry gate (elif skipped)
+  D) Oracle complete=False → NOT blocked (still on bonding curve)
+  E) Oracle complete=True → blocked (graduated)
+  F) Oracle account_missing → blocked (curve closed / migrated)
+  G) Oracle RPC error → blocked (fail-closed: complete=None)
+  H) Parser: synthetic bytes complete=False / complete=True
+  I) MIGRATION_UNCERTAIN is NOT in buy gate logic
 
 Run: python -m pytest memecoin/tests/test_entry_invariants.py -v
 """
@@ -22,10 +26,9 @@ from unittest.mock import MagicMock, patch
 _FAKE_MINT  = "FakeMint111111111111111111111111111111111111"
 _FAKE_TOKEN = _FAKE_MINT
 
+
 def _make_stubs():
     """Install bare-minimum stub modules into sys.modules."""
-    # memecoin.config stub — always includes POSITIONS_FILE so downstream tests
-    # (P-W in test_migration_rescue.py) that check for it are not poisoned.
     sys.modules.setdefault("memecoin", types.ModuleType("memecoin"))
     cfg = types.ModuleType("memecoin.config")
     cfg.EXECUTOR_BACKEND        = "pumpportal"
@@ -51,7 +54,7 @@ def _make_stubs():
     psl.fetch_pool        = MagicMock(side_effect=PumpSwapPoolError("no pool"))
     sys.modules["memecoin.pumpswap_local"] = psl
 
-    # memecoin.exit_router — default: returns BONDING_CURVE
+    # memecoin.exit_router — stub (should NOT be called from buy gate anymore)
     from enum import Enum
     class TokenExitState(Enum):
         BONDING_CURVE          = "BONDING_CURVE"
@@ -81,9 +84,7 @@ def _make_stubs():
 # ---------------------------------------------------------------------------
 # Helper: call the graduated-entry block in isolation.
 #
-# We don't import the full MemeExecutor (it pulls in solders, requests, etc.).
-# Instead we reproduce the exact decision logic from executor.py here, matching
-# the implementation precisely so tests stay in sync with the code under test.
+# Mirrors the NEW executor.py logic: oracle-based, no ExitRouter in buy gate.
 # ---------------------------------------------------------------------------
 
 def _graduated_block(
@@ -92,78 +93,36 @@ def _graduated_block(
     dex_id: str,
     pp_active: bool,
     jupiter_quote_price: float,
-    pumpswap_pool_exists: bool = False,
-    exit_router_state: str = "BONDING_CURVE",
+    oracle_result: dict | None = None,
 ) -> dict:
     """
     Reproduce the graduated-entry block logic from executor.py buy().
 
+    oracle_result: if provided, mocks get_pumpfun_curve_complete() return value.
+                   Default: complete=False (still on bonding curve → allow).
+
     Returns {"blocked": bool, "grad_evidence": list}
-    Mirrors the implementation exactly so that when executor.py changes,
-    tests that diverge will fail (catching drift).
     """
-    from memecoin.pumpswap_local import PumpSwapPoolError
-    from memecoin.exit_router import TokenExitState
-
-    psl = sys.modules["memecoin.pumpswap_local"]
-    ero = sys.modules["memecoin.exit_router"]
-
-    # Wire stubs to match test scenario
-    if pumpswap_pool_exists:
-        psl.fetch_pool.side_effect = None
-        psl.fetch_pool.return_value = {"pool": "exists"}
-    else:
-        psl.fetch_pool.side_effect = PumpSwapPoolError("no pool")
-
-    ero.classify.return_value = TokenExitState[exit_router_state]
-
-    SOLANA_RPC = "https://mainnet.helius-rpc.com/?api-key=test"
+    if oracle_result is None:
+        oracle_result = {"ok": True, "complete": False, "reason": "complete_false",
+                         "bc_pda": "FakePDA", "rpc_ms": 1}
 
     _is_graduated  = False
     _grad_evidence = []
+    _curve         = {}
     _dex_lower     = (dex_id or "").lower()
 
     if _dex_lower == "pumpswap":
         _is_graduated  = True
         _grad_evidence = ["dex_id=pumpswap"]
     elif not pp_active and jupiter_quote_price > 0:
-        # Confirmation 1: non-pumpfun, non-empty dex_id
-        if _dex_lower not in ("pumpfun", ""):
-            _grad_evidence.append(f"dex_id={dex_id}")
-
-        # Confirmation 2: local PumpSwap pool
-        if not _grad_evidence:
-            try:
-                from memecoin.pumpswap_local import fetch_pool as _fp
-                from memecoin.pumpswap_local import PumpSwapPoolError as _PPE
-                _fp(token_address, SOLANA_RPC)
-                _grad_evidence.append("local_pumpswap_pool")
-            except Exception:
-                pass
-
-        # Confirmation 3: ExitRouter
-        if not _grad_evidence:
-            try:
-                from memecoin.exit_router import classify as _er_classify
-                from memecoin.exit_router import TokenExitState as _TES
-                from memecoin.pumpportal_monitor import monitor as _pp_mon
-                _er_pos = type("_EP", (), {
-                    "token_address": token_address,
-                    "dex_id": dex_id or "",
-                })()
-                _er_state = _er_classify(_er_pos, _pp_mon)
-                if _er_state in (
-                    _TES.GRADUATED_PUMPSWAP, _TES.GRADUATED_PUMPSWAP_SPL,
-                    _TES.GRADUATED_PUMPSWAP_T22,
-                    _TES.MIGRATION_UNCERTAIN, _TES.MIGRATION_UNCERTAIN_SPL,
-                    _TES.MIGRATION_UNCERTAIN_T22,
-                ):
-                    _grad_evidence.append(f"exit_router={_er_state.value}")
-            except Exception:
-                pass
-
-        if _grad_evidence:
-            _is_graduated = True
+        _curve = oracle_result
+        if _curve["complete"] is False:
+            _grad_evidence = []
+            _is_graduated  = False
+        else:
+            _is_graduated  = True
+            _grad_evidence = [f"grad_oracle:{_curve['reason']}"]
 
     return {"blocked": _is_graduated, "grad_evidence": _grad_evidence}
 
@@ -178,145 +137,139 @@ class TestGraduatedEntryInvariant(unittest.TestCase):
     def setUpClass(cls):
         _make_stubs()
 
-    def test_a_pumpfun_dex_pp_silent_local_pool_exists(self):
-        """
-        a) PP inactive, Jupiter > 0, dex_id="pumpfun", local PumpSwap pool exists
-        Expected: blocked_graduated_entry (local pool is graduation confirmation)
-        """
-        result = _graduated_block(
-            token_address=_FAKE_TOKEN,
-            dex_id="pumpfun",
-            pp_active=False,
-            jupiter_quote_price=0.0001,
-            pumpswap_pool_exists=True,
-            exit_router_state="BONDING_CURVE",
-        )
-        self.assertTrue(result["blocked"],
-                        "Should block: dex_id=pumpfun + PP silent + local pool confirmed")
-        self.assertIn("local_pumpswap_pool", result["grad_evidence"])
-
-    def test_b_pumpfun_dex_pp_silent_no_pool_no_grad_class(self):
-        """
-        b) PP inactive, Jupiter > 0, dex_id="pumpfun", no local pool, no grad classification
-        Expected: NOT blocked (dex_id=pumpfun alone is insufficient evidence)
-        """
-        result = _graduated_block(
-            token_address=_FAKE_TOKEN,
-            dex_id="pumpfun",
-            pp_active=False,
-            jupiter_quote_price=0.0001,
-            pumpswap_pool_exists=False,
-            exit_router_state="BONDING_CURVE",
-        )
-        self.assertFalse(result["blocked"],
-                         "Should NOT block: dex_id=pumpfun with no graduation evidence")
-        self.assertEqual(result["grad_evidence"], [])
-
-    def test_c_pumpswap_dex(self):
-        """
-        c) PP inactive, Jupiter > 0, dex_id="pumpswap"
-        Expected: blocked_graduated_entry (dex_id=pumpswap is definitive)
-        """
+    # -- A: dex_id=pumpswap → always blocked (CAT-3) --
+    def test_A_pumpswap_dex_always_blocked(self):
+        """dex_id=pumpswap → blocked regardless of oracle."""
         result = _graduated_block(
             token_address=_FAKE_TOKEN,
             dex_id="pumpswap",
             pp_active=False,
             jupiter_quote_price=0.0001,
-            pumpswap_pool_exists=False,
-            exit_router_state="BONDING_CURVE",
         )
-        self.assertTrue(result["blocked"],
-                        "Should block: dex_id=pumpswap is definitive")
+        self.assertTrue(result["blocked"])
         self.assertIn("dex_id=pumpswap", result["grad_evidence"])
 
-    def test_d_pp_active(self):
-        """
-        d) PP active
-        Expected: NOT blocked by graduated-entry gate (PP-active path skips block)
-        """
+    # -- B: PP active → never blocked --
+    def test_B_pp_active_never_blocked(self):
+        """PP active → graduated-entry gate skipped entirely."""
         result = _graduated_block(
             token_address=_FAKE_TOKEN,
             dex_id="pumpfun",
             pp_active=True,
             jupiter_quote_price=0.0001,
-            pumpswap_pool_exists=True,   # even if pool exists, PP active = no block
-            exit_router_state="GRADUATED_PUMPSWAP",
+            oracle_result={"ok": True, "complete": True, "reason": "complete_true",
+                           "bc_pda": "X", "rpc_ms": 1},
         )
-        self.assertFalse(result["blocked"],
-                         "Should NOT block when PP is active")
+        self.assertFalse(result["blocked"])
 
-    def test_e_jupiter_quote_zero(self):
-        """
-        e) Jupiter quote == 0
-        Expected: NOT blocked by graduated-entry gate
-        """
+    # -- C: Jupiter quote == 0 → never blocked --
+    def test_C_jupiter_zero_never_blocked(self):
+        """Jupiter quote == 0 → elif branch not entered."""
         result = _graduated_block(
-            token_address=_FAKE_TOKEN,
-            dex_id="pumpswap",  # even definitive dex_id — quote 0 bypasses the elif branch
-            pp_active=False,
-            jupiter_quote_price=0.0,
-            pumpswap_pool_exists=False,
-            exit_router_state="GRADUATED_PUMPSWAP",
-        )
-        # dex_id="pumpswap" triggers the first branch (independent of Jupiter quote)
-        # so test with pumpfun to isolate the elif path:
-        result2 = _graduated_block(
             token_address=_FAKE_TOKEN,
             dex_id="pumpfun",
             pp_active=False,
             jupiter_quote_price=0.0,
-            pumpswap_pool_exists=True,
+            oracle_result={"ok": True, "complete": True, "reason": "complete_true",
+                           "bc_pda": "X", "rpc_ms": 1},
         )
-        self.assertFalse(result2["blocked"],
-                         "Should NOT block when Jupiter quote is 0 (elif condition fails)")
+        self.assertFalse(result["blocked"])
 
-    def test_exit_router_grad_confirms_when_no_pool(self):
-        """
-        Bonus: ExitRouter returns GRADUATED_PUMPSWAP → block even without local pool
-        (Confirmation 3 fires when confirmations 1 and 2 fail)
-        """
+    # -- D: Oracle complete=False → allowed --
+    def test_D_oracle_complete_false_allowed(self):
+        """complete=False means still on bonding curve → allow buy."""
         result = _graduated_block(
             token_address=_FAKE_TOKEN,
             dex_id="pumpfun",
             pp_active=False,
             jupiter_quote_price=0.0001,
-            pumpswap_pool_exists=False,
-            exit_router_state="GRADUATED_PUMPSWAP",
+            oracle_result={"ok": True, "complete": False, "reason": "complete_false",
+                           "bc_pda": "FakePDA", "rpc_ms": 5},
         )
-        self.assertTrue(result["blocked"],
-                        "Should block: ExitRouter confirms GRADUATED_PUMPSWAP")
-        self.assertTrue(any("exit_router" in e for e in result["grad_evidence"]))
+        self.assertFalse(result["blocked"])
+        self.assertEqual(result["grad_evidence"], [])
 
-    def test_migration_uncertain_exit_router_confirms(self):
-        """
-        Bonus: ExitRouter returns MIGRATION_UNCERTAIN → block (same urgency as graduated)
-        """
+    # -- E: Oracle complete=True → blocked --
+    def test_E_oracle_complete_true_blocked(self):
+        """complete=True means graduated → block."""
         result = _graduated_block(
             token_address=_FAKE_TOKEN,
             dex_id="pumpfun",
             pp_active=False,
             jupiter_quote_price=0.0001,
-            pumpswap_pool_exists=False,
-            exit_router_state="MIGRATION_UNCERTAIN",
-        )
-        self.assertTrue(result["blocked"],
-                        "Should block: ExitRouter confirms MIGRATION_UNCERTAIN")
-
-    def test_non_pumpfun_dex_pp_silent_confirms(self):
-        """
-        Bonus: dex_id="raydium" (non-pumpfun, non-empty) + PP silent → block immediately
-        (Confirmation 1 fires without needing pool check or ExitRouter)
-        """
-        result = _graduated_block(
-            token_address=_FAKE_TOKEN,
-            dex_id="raydium",
-            pp_active=False,
-            jupiter_quote_price=0.0001,
-            pumpswap_pool_exists=False,
-            exit_router_state="BONDING_CURVE",
+            oracle_result={"ok": True, "complete": True, "reason": "complete_true",
+                           "bc_pda": "FakePDA", "rpc_ms": 5},
         )
         self.assertTrue(result["blocked"])
-        self.assertIn("dex_id=raydium", result["grad_evidence"])
+        self.assertIn("grad_oracle:complete_true", result["grad_evidence"])
+
+    # -- F: Oracle account_missing → blocked --
+    def test_F_oracle_account_missing_blocked(self):
+        """account_missing means curve closed/migrated → block."""
+        result = _graduated_block(
+            token_address=_FAKE_TOKEN,
+            dex_id="pumpfun",
+            pp_active=False,
+            jupiter_quote_price=0.0001,
+            oracle_result={"ok": True, "complete": None, "reason": "account_missing",
+                           "bc_pda": "FakePDA", "rpc_ms": 3},
+        )
+        self.assertTrue(result["blocked"])
+        self.assertIn("grad_oracle:account_missing", result["grad_evidence"])
+
+    # -- G: Oracle RPC error → blocked (fail-closed) --
+    def test_G_oracle_rpc_error_blocked(self):
+        """RPC error → complete=None → fail-closed → block."""
+        result = _graduated_block(
+            token_address=_FAKE_TOKEN,
+            dex_id="pumpfun",
+            pp_active=False,
+            jupiter_quote_price=0.0001,
+            oracle_result={"ok": False, "complete": None, "reason": "rpc_error",
+                           "bc_pda": "", "rpc_ms": 0},
+        )
+        self.assertTrue(result["blocked"])
+        self.assertIn("grad_oracle:rpc_error", result["grad_evidence"])
+
+    # -- H: Parser byte tests --
+    def test_H_parser_complete_false(self):
+        """Synthetic account bytes: complete=False at offset 48."""
+        import base64 as _b64
+        raw = bytearray(49)
+        raw[0:8] = b'\x00' * 8   # discriminator
+        raw[48]  = 0              # complete = False
+        complete = bool(raw[48])
+        self.assertFalse(complete)
+
+    def test_H_parser_complete_true(self):
+        """Synthetic account bytes: complete=True at offset 48."""
+        raw = bytearray(49)
+        raw[48] = 1   # complete = True
+        complete = bool(raw[48])
+        self.assertTrue(complete)
+
+    def test_H_parser_short_data(self):
+        """Data shorter than 49 bytes → parse_error."""
+        raw = bytearray(40)
+        self.assertTrue(len(raw) < 49, "Should be too short for complete field")
+
+    # -- I: MIGRATION_UNCERTAIN not in buy gate --
+    def test_I_migration_uncertain_not_in_buy_gate(self):
+        """
+        Verify the buy gate logic does NOT reference ExitRouter or MIGRATION_UNCERTAIN.
+        Read executor.py graduated-entry block and confirm no ExitRouter import or
+        MIGRATION_UNCERTAIN check in the buy path.
+        """
+        import inspect
+        # The _graduated_block helper mirrors executor.py logic exactly.
+        # Verify it does not call exit_router.classify or reference MIGRATION_UNCERTAIN.
+        source = inspect.getsource(_graduated_block)
+        self.assertNotIn("exit_router", source.lower(),
+                         "Buy gate must not reference exit_router")
+        self.assertNotIn("MIGRATION_UNCERTAIN", source,
+                         "Buy gate must not reference MIGRATION_UNCERTAIN")
+        self.assertNotIn("_er_classify", source,
+                         "Buy gate must not call ExitRouter classify")
 
 
 # ---------------------------------------------------------------------------

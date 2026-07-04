@@ -1149,6 +1149,145 @@ def _jup_build_swap_tx(quote: dict, wallet_pubkey: str,
 
 
 # ---------------------------------------------------------------------------
+# Buy gate daily counters (PART 5)
+# ---------------------------------------------------------------------------
+
+_BUY_GATE_LOCK   = threading.Lock()
+_BUY_GATE_DATE   = ""
+_BUY_GATE_COUNTS: dict = {}  # {reason: count} + "candidates_seen", "buys_allowed"
+
+
+def _record_buy_gate(action: str, reason: str):
+    """Record buy gate decision for daily summary."""
+    global _BUY_GATE_DATE, _BUY_GATE_COUNTS
+    from datetime import date as _dt
+    today = str(_dt.today())
+    with _BUY_GATE_LOCK:
+        if today != _BUY_GATE_DATE:
+            if _BUY_GATE_COUNTS:
+                log.info("BUY GATE DAILY SUMMARY %s: %s", _BUY_GATE_DATE,
+                         {k: v for k, v in sorted(_BUY_GATE_COUNTS.items())})
+            _BUY_GATE_DATE   = today
+            _BUY_GATE_COUNTS = {}
+        _BUY_GATE_COUNTS["candidates_seen"] = _BUY_GATE_COUNTS.get("candidates_seen", 0) + 1
+        if action == "allow":
+            _BUY_GATE_COUNTS["buys_allowed"] = _BUY_GATE_COUNTS.get("buys_allowed", 0) + 1
+        else:
+            key = f"blocked_{reason}"
+            _BUY_GATE_COUNTS[key] = _BUY_GATE_COUNTS.get(key, 0) + 1
+
+
+# ---------------------------------------------------------------------------
+# Pump.fun graduation oracle — single source of truth for buy-side
+# ---------------------------------------------------------------------------
+
+_GRAD_ORACLE_CACHE: dict = {}   # mint → (timestamp, result_dict)
+_GRAD_ORACLE_TTL = 5.0          # seconds
+
+
+def get_pumpfun_curve_complete(mint: str) -> dict:
+    """
+    Query the pump.fun bonding curve account to determine if the token has graduated.
+
+    Returns:
+      {
+        "ok":      bool,               # False on RPC/parse errors
+        "complete": bool | None,       # True=graduated, False=still on curve, None=unknown
+        "reason":  str,                # complete_false|complete_true|account_missing|rpc_error|parse_error
+        "bc_pda":  str,                # base58 bonding curve PDA
+        "rpc_ms":  int,
+      }
+
+    BUY INVARIANT: MIGRATION_UNCERTAIN is not graduation proof. This oracle is the
+    single source of truth for buy-side graduation detection. Do not re-add ExitRouter
+    states (MIGRATION_UNCERTAIN etc.) as buy blockers. They are sell-side routing only.
+    """
+    # Check cache
+    now = time.monotonic()
+    cached = _GRAD_ORACLE_CACHE.get(mint)
+    if cached:
+        ts, result = cached
+        if now - ts < _GRAD_ORACLE_TTL:
+            return result
+
+    t0 = time.monotonic()
+    result = _get_pumpfun_curve_complete_uncached(mint)
+    result["rpc_ms"] = int((time.monotonic() - t0) * 1000)
+
+    # Cache successful reads and account_missing; do not cache transient RPC errors
+    if result["reason"] not in ("rpc_error",):
+        _GRAD_ORACLE_CACHE[mint] = (time.monotonic(), result)
+
+    action = "block" if (result["complete"] is not False) else "allow"
+    log.info(
+        "GRAD ORACLE %s complete=%s reason=%s action=%s rpc_ms=%d",
+        mint[:8], result["complete"], result["reason"], action, result["rpc_ms"],
+    )
+    return result
+
+
+def _get_pumpfun_curve_complete_uncached(mint: str) -> dict:
+    """Inner uncached implementation. See get_pumpfun_curve_complete()."""
+    import base64 as _b64
+
+    # Derive bonding curve PDA: seeds=[b"bonding-curve", mint_pubkey_bytes]
+    # Same pattern as _pumpfun_local_build_tx (line 344)
+    try:
+        from solders.pubkey import Pubkey
+        mint_pubkey = Pubkey.from_string(mint)
+        prog        = Pubkey.from_string(_PUMPFUN_PROGRAM)
+        bc_pda_pubkey, _ = Pubkey.find_program_address(
+            [b"bonding-curve", bytes(mint_pubkey)], prog,
+        )
+        bc_pda = str(bc_pda_pubkey)
+    except Exception as e:
+        log.error("GRAD ORACLE PDA derivation failed for %s: %s", mint[:8], e)
+        return {"ok": False, "complete": None, "reason": "rpc_error", "bc_pda": "", "rpc_ms": 0}
+
+    # Fetch account via getAccountInfo using existing _rpc_post fallback chain
+    try:
+        resp = _rpc_post({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getAccountInfo",
+            "params": [bc_pda, {"encoding": "base64", "commitment": "confirmed"}],
+        })
+        result_field = resp.json().get("result", {})
+        value = result_field.get("value") if isinstance(result_field, dict) else None
+    except Exception as e:
+        log.warning("GRAD ORACLE RPC error for %s: %s", mint[:8], e)
+        return {"ok": False, "complete": None, "reason": "rpc_error", "bc_pda": bc_pda, "rpc_ms": 0}
+
+    # Account missing / null = curve closed or migrated
+    if value is None:
+        return {"ok": True, "complete": None, "reason": "account_missing", "bc_pda": bc_pda, "rpc_ms": 0}
+
+    # Parse account data
+    try:
+        data_list = value.get("data", [])
+        if not data_list:
+            return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
+        data_b64  = data_list[0]
+        raw       = _b64.b64decode(data_b64)
+        # Layout:
+        #   [0:8]  8-byte Anchor discriminator
+        #   [8:16] u64 virtual_token_reserves
+        #   [16:24] u64 virtual_sol_reserves
+        #   [24:32] u64 real_token_reserves
+        #   [32:40] u64 real_sol_reserves
+        #   [40:48] u64 token_total_supply
+        #   [48]   bool complete
+        if len(raw) < 49:
+            log.error("GRAD ORACLE short account data len=%d for %s", len(raw), mint[:8])
+            return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
+        complete = bool(raw[48])
+        reason   = "complete_true" if complete else "complete_false"
+        return {"ok": True, "complete": complete, "reason": reason, "bc_pda": bc_pda, "rpc_ms": 0}
+    except Exception as e:
+        log.error("GRAD ORACLE parse error for %s: %s", mint[:8], e)
+        return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
+
+
+# ---------------------------------------------------------------------------
 # MemeExecutor — public interface used by portfolio.py
 # ---------------------------------------------------------------------------
 
@@ -1390,62 +1529,43 @@ class MemeExecutor:
                 pass
 
             # ── Graduated-entry block ─────────────────────────────────────
-            # INVARIANT: stale dex_id='pumpfun' alone is not trusted after PP silence.
-            # Block only with confirmed graduation evidence, unless tests prove current
-            # Jupiter cannot route fresh bonding-curve pump.fun tokens.
-            #
-            # Block immediately if dex_id=pumpswap (definitive — indexed post-migration).
-            # Otherwise, PP-silent + Jupiter-routable requires at least ONE confirmation:
-            #   1. dex_id is non-empty and not "pumpfun"
-            #   2. local PumpSwap pool exists for this mint (on-chain proof)
-            #   3. ExitRouter classifies as GRADUATED_PUMPSWAP or MIGRATION_UNCERTAIN
-            # (Jupiter route AMM metadata check deferred — not exposed in lite-api quote.)
+            # BUY INVARIANT: ExitRouter / MIGRATION_UNCERTAIN is a sell-side routing state only.
+            # It is NOT graduation proof. Do not re-add it as a buy blocker.
+            # Graduation proof comes exclusively from: dex_id=pumpswap/raydium/orca (CAT-3),
+            # or get_pumpfun_curve_complete() returning complete=True / account_missing.
             _is_graduated   = False
             _grad_evidence  = []
+            _curve          = {}          # populated by oracle in elif branch
             _dex_lower      = (dex_id or "").lower()
 
             if _dex_lower == "pumpswap":
                 _is_graduated  = True
                 _grad_evidence = ["dex_id=pumpswap"]
             elif not _pp_active and jupiter_quote_price > 0:
-                # Confirmation 1: dex_id is non-pumpfun and non-empty
-                if _dex_lower not in ("pumpfun", ""):
-                    _grad_evidence.append(f"dex_id={dex_id}")
+                # PP is silent and Jupiter can quote this token.
+                # Use pump.fun bonding curve oracle as the single source of truth.
+                # BUY INVARIANT: MIGRATION_UNCERTAIN is not graduation proof.
+                # It is a sell-side routing state only. Do not re-add it as a buy blocker.
+                # Graduation proof comes exclusively from curve.complete or account_missing.
+                _curve = get_pumpfun_curve_complete(token_address)
+                if _curve["complete"] is False:
+                    # Still on bonding curve — not graduated. Allow buy through normal gates.
+                    _grad_evidence = []
+                    _is_graduated  = False
+                else:
+                    # complete=True (graduated), None/account_missing, or oracle error
+                    _is_graduated  = True
+                    _grad_evidence = [f"grad_oracle:{_curve['reason']}"]
 
-                # Confirmation 2: local PumpSwap pool exists (on-chain, no RPC if
-                # pumpfun dex_id alone — skip fetch when cheaper check failed first)
-                if not _grad_evidence:
-                    try:
-                        from memecoin.pumpswap_local import fetch_pool as _fp
-                        from memecoin.pumpswap_local import PumpSwapPoolError as _PPE
-                        _fp(token_address, SOLANA_RPC)
-                        _grad_evidence.append("local_pumpswap_pool")
-                    except Exception:
-                        pass  # PumpSwapPoolError or RPC failure → not confirmed
-
-                # Confirmation 3: ExitRouter sees graduated/migration state
-                if not _grad_evidence:
-                    try:
-                        from memecoin.exit_router import classify as _er_classify
-                        from memecoin.exit_router import TokenExitState as _TES
-                        from memecoin.pumpportal_monitor import monitor as _pp_mon
-                        _er_pos = type("_EP", (), {
-                            "token_address": token_address,
-                            "dex_id": dex_id or "",
-                        })()
-                        _er_state = _er_classify(_er_pos, _pp_mon)
-                        if _er_state in (
-                            _TES.GRADUATED_PUMPSWAP, _TES.GRADUATED_PUMPSWAP_SPL,
-                            _TES.GRADUATED_PUMPSWAP_T22,
-                            _TES.MIGRATION_UNCERTAIN, _TES.MIGRATION_UNCERTAIN_SPL,
-                            _TES.MIGRATION_UNCERTAIN_T22,
-                        ):
-                            _grad_evidence.append(f"exit_router={_er_state.value}")
-                    except Exception:
-                        pass
-
-                if _grad_evidence:
-                    _is_graduated = True
+            _curve_reason = _curve.get("reason", "n/a")
+            log.info(
+                "BUY GATE token=%s live=True gate=graduated_entry action=%s reason=%s details=%s",
+                token_address[:8], "block" if _is_graduated else "allow",
+                _grad_evidence[0] if _grad_evidence else "none",
+                {"oracle": _curve_reason},
+            )
+            _record_buy_gate("block" if _is_graduated else "allow",
+                             _grad_evidence[0] if _grad_evidence else "graduated_entry")
 
             if _is_graduated:
                 log.warning(
