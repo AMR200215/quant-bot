@@ -2339,10 +2339,11 @@ class MemeExecutor:
                             try:
                                 from memecoin.bonding_curve_t22 import run_bc_t22_sell as _run_bc_t22
                                 from memecoin.exit_router import TokenExitState as _TES, _log_route_attempt as _lra
+                                # executor.sell() has no `pos` param — use token_address as fallback
                                 _fake_pos = type("P", (), {
-                                    "token_address": token_address, "token_symbol": getattr(pos, "token_symbol", "?"),
-                                    "id": getattr(pos, "id", "?"), "tokens_held": _tokens_to_sell_local,
-                                    "notes": getattr(pos, "notes", ""),
+                                    "token_address": token_address, "token_symbol": token_address[:8],
+                                    "id": token_address, "tokens_held": _tokens_to_sell_local,
+                                    "notes": "",
                                 })()
                                 _bc_t22_result = _run_bc_t22(_fake_pos, reason, rpc_url=CHAINS.get("solana", {}).get("rpc", "https://api.mainnet-beta.solana.com"))
                                 _lra(_bc_t22_result, _fake_pos, _TES.BONDING_CURVE_T22)

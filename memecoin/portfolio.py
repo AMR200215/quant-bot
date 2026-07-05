@@ -1744,7 +1744,10 @@ class Portfolio:
                         })
                         result = ex.sell(
                             pos.token_address, pos.size_usd, pos.entry_price, pos.chain,
-                            escalate=_is_retry or _is_graduated,
+                            # Never escalate oracle-confirmed bonding curve tokens (T22).
+                            # Escalation assumes PumpSwap graduation — BC tokens must always
+                            # stay on PumpPortal path, even on retry (retry only ups slippage).
+                            escalate=(False if _oracle_bc else (_is_retry or _is_graduated)),
                             urgent=(reason in _URGENT_REASONS),
                             # Pass tokens_held so local build can use exact count without RPC.
                             # Only valid for full exits (fraction=1.0 default); partial TPs
@@ -1780,6 +1783,27 @@ class Portfolio:
                         log.warning("Live sell %s — zero balance, tokens already sold. Closing.",
                                     pos.token_symbol)
                         pos.notes = (pos.notes or "") + "|sell_already_gone"
+                        # Close immediately — do not fall through to retry handler.
+                        # Retrying a zero-balance sell produces graduated_unsellable which
+                        # triggers a 3-cycle loss write-off at $0 with misleading alerts.
+                        pos.status      = "closed"
+                        pos.exit_price  = pos.exit_price or 0.0
+                        pos.exit_time   = time.time()
+                        pos.exit_reason = "zero_balance"
+                        self._positions[pos_id] = pos
+                        _append_journal(pos)
+                        del self._positions[pos_id]
+                        _save_positions(self._positions)
+                        with self._presigned_lock:
+                            self._presigned_exits.pop(pos.token_address, None)
+                            self._presigned_ts.pop(pos.token_address, None)
+                            self._graduated_mints.discard(pos.token_address)
+                        try:
+                            from app.alerts import alert_position_close
+                            alert_position_close(pos)
+                        except Exception:
+                            pass
+                        return pos
                     elif not _pumpswap_local_succeeded and result.get("reason") == "graduated_unsellable":
                         # pump-amm + Jupiter both failed — token is mid-migration or pool is empty.
                         # 3 retries covers genuine migration lag (~2-3 min to settle).
