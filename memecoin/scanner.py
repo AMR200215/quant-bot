@@ -1345,6 +1345,15 @@ def _portfolio_thread():
     cadence is unchanged. No new network calls in the fast path.
     """
     log.info("Portfolio monitor started")
+    # Fix D2: assert EXIT_ROUTER_ENABLED on startup
+    try:
+        from memecoin.config import EXIT_ROUTER_ENABLED as _er_check
+        if not _er_check:
+            log.critical("EXIT_ROUTER_ENABLED=False — oracle routing bypassed. Live buys blocked.")
+            from memecoin.kill_switch import disable_live_buys
+            disable_live_buys("EXIT_ROUTER_ENABLED=False")
+    except ImportError:
+        pass
     _subscribed_mints: set[str] = set()
     # mint → timestamp when we last got a DexScreener price for it
     _dex_last_seen: dict[str, float] = {}
@@ -2143,6 +2152,19 @@ def start(daemon: bool = True):
         _start_reconcile()
     except Exception as _rec_err:
         log.warning("Could not start wallet reconcile thread: %s", _rec_err)
+
+    # Journal reconciler — fixes rows written with exit_price=0 when on-chain sell
+    # succeeded (sell_unconf txs, fill_estimated rows, graduated_loss false-zeros).
+    try:
+        from memecoin.journal_reconciler import start_reconciler_thread as _start_jr
+        from memecoin.config import WALLET_PUBKEY as _jr_wallet
+        if _jr_wallet:
+            _start_jr(_jr_wallet)
+            log.info("Journal reconciler thread started (wallet=%s…)", _jr_wallet[:8])
+        else:
+            log.warning("Journal reconciler: WALLET_PUBKEY not set — skipping")
+    except Exception as _jr_err:
+        log.warning("Could not start journal reconciler thread: %s", _jr_err)
 
     # Telegram monitor — start if credentials are configured
     tg_api_id   = os.getenv("TELEGRAM_API_ID")

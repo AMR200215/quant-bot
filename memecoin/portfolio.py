@@ -1556,7 +1556,9 @@ class Portfolio:
                             from memecoin import exit_router as _er
                             from memecoin import pumpportal_monitor as _ppm_mod
                             _exit_state = _er.classify(pos, _ppm_mod.monitor)
-                            pos.notes = (pos.notes or "") + f"|exit_state:{_exit_state.value}"
+                            _exit_state_tag = f"|exit_state:{_exit_state.value}"
+                            if _exit_state_tag not in (pos.notes or ""):
+                                pos.notes = (pos.notes or "") + _exit_state_tag
                             # Flag graduated/uncertain so executor uses escalate=True on first attempt.
                             # Without this, Cat-2 tokens that graduated during the hold would hit the
                             # BC path → 6005 → graduated_unsellable → waste a full 60s retry cycle.
@@ -1594,7 +1596,9 @@ class Portfolio:
                                     "rpc", "https://api.mainnet-beta.solana.com"
                                 )
                                 _ps_result = _er.run_pumpswap_local_path(pos, reason, _rpc_url_er)
-                                pos.notes  = (pos.notes or "") + f"|exit_route:{_ps_result.get('route', '?')}"
+                                _exit_route_tag = f"|exit_route:{_ps_result.get('route', '?')}"
+                                if _exit_route_tag not in (pos.notes or ""):
+                                    pos.notes = (pos.notes or "") + _exit_route_tag
                                 if _ps_result.get("sim_error"):
                                     pos.notes = (pos.notes or "") + f"|sim_err:{_ps_result['sim_error']}"
                                 # Only skip executor when local sell was truly sent + confirmed.
@@ -1812,6 +1816,65 @@ class Portfolio:
                         _grad_attempts = self._graduated_retry_count.get(pos_id, 0) + 1
                         self._graduated_retry_count[pos_id] = _grad_attempts
                         if _grad_attempts >= MAX_GRADUATED_RETRIES:
+                            # ── Fix B: check sigs + on-chain balance before writing $0 ──
+                            import re as _re_gl
+                            from memecoin.tx_meta import read_sol_delta as _rsd_gl
+                            try:
+                                from memecoin.config import WALLET_PUBKEY as _gl_wallet
+                            except ImportError:
+                                _gl_wallet = ""
+                            _gl_recovered = False
+                            if _gl_wallet:
+                                _gl_sigs = _re_gl.findall(
+                                    r'(?:sell_tx|sell_unconf|jupiter_rescue_pending|sell_pending):([A-Za-z0-9]+)',
+                                    pos.notes or "",
+                                )
+                                for _gl_sig in reversed(_gl_sigs):
+                                    _gl_res = _rsd_gl(_gl_sig, _gl_wallet)
+                                    if _gl_res.get("ok") and (_gl_res.get("sol_delta") or 0) > 0:
+                                        log.warning(
+                                            "graduated_recovered: sig confirmed sol_delta=%.6f  "
+                                            "sig=%s  pos=%s",
+                                            _gl_res["sol_delta"], _gl_sig[:16], pos_id,
+                                        )
+                                        pos.exit_price  = _gl_res["sol_delta"]
+                                        pos.exit_reason = "graduated_recovered"
+                                        pos.notes = (pos.notes or "") + f"|graduated_recovered:{_gl_sig[:8]}"
+                                        _gl_recovered = True
+                                        break
+
+                                if not _gl_recovered:
+                                    # Check on-chain balance — if tokens still held, defer
+                                    try:
+                                        from memecoin.executor import _token_balance as _gl_tb
+                                        _gl_bal = _gl_tb(_gl_wallet, pos.token_address)
+                                    except Exception:
+                                        _gl_bal = -1
+                                    if _gl_bal > 0:
+                                        log.warning(
+                                            "graduated_loss DEFERRED — tokens still on-chain (%d)  "
+                                            "pos=%s  mint=%s",
+                                            _gl_bal, pos_id, pos.token_address[:8],
+                                        )
+                                        self._arm_migration_retry(pos.id, 60)
+                                        return pos
+
+                            if _gl_recovered:
+                                # Fall through to normal close with real fill
+                                self._graduated_retry_count.pop(pos_id, None)
+                                self._sell_stuck_until.pop(pos_id, None)
+                                pos.status    = "closed"
+                                pos.exit_time = time.time()
+                                self._positions[pos_id] = pos
+                                _append_journal(pos)
+                                del self._positions[pos_id]
+                                _save_positions(self._positions)
+                                with self._presigned_lock:
+                                    self._presigned_exits.pop(pos.token_address, None)
+                                    self._presigned_ts.pop(pos.token_address, None)
+                                    self._graduated_mints.discard(pos.token_address)
+                                return pos
+
                             # Migration never settled or pool is permanently empty.
                             # Write off as total loss — no more Helius/RPC burn.
                             self._graduated_retry_count.pop(pos_id, None)

@@ -427,3 +427,13 @@ JUPITER_RESCUE_PENDING_TTL_SEC = 30
 JUPITER_RESCUE_REBROADCAST_ENABLED      = True
 JUPITER_RESCUE_REBROADCAST_INTERVAL_MS  = 500   # delay between rebroadcast attempts (ms)
 JUPITER_RESCUE_REBROADCAST_MAX_RPC      = 3     # max extra RPCs to broadcast to
+
+# ---------------------------------------------------------------------------
+# Bot wallet pubkey (base58) — used by journal_reconciler and reconcile.py.
+# Read from env so it can be set without code changes.
+# Falls back to the known trading wallet; override with WALLET_PUBKEY env var.
+# ---------------------------------------------------------------------------
+WALLET_PUBKEY: str = os.getenv(
+    "WALLET_PUBKEY",
+    "8PNHvFWeMT7CqpUvJjAwVgAK545t5KV3uCPd8DUfaTiM",
+)
