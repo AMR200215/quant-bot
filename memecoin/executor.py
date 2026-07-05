@@ -1890,6 +1890,10 @@ class MemeExecutor:
                 "tx_sig":              sig,
                 "jupiter_quote_price": jupiter_quote_price,
                 "pp_silent":           not _pp_active,
+                # True when bonding curve oracle confirmed complete=False at buy time.
+                # Used by portfolio.py to tag cohort:bonding_curve even when PP is silent
+                # (T22 tokens are always PP-silent but may still be on bonding curve).
+                "oracle_bonding_curve": _curve.get("complete") is False,
                 "timing": {
                     "t_quote":   round(_t_quoted    - _t0, 3),
                     "t_submit":  round(_t_submitted - _t0, 3),

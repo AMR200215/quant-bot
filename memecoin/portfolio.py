@@ -353,6 +353,7 @@ def is_rescue_eligible_error(
     error_class: str = "",
     exit_state: str = "",
     reason: str = "",
+    oracle_bonding_curve: bool = False,
 ) -> bool:
     """
     Return True when the current sell context warrants a Jupiter rescue attempt.
@@ -360,10 +361,18 @@ def is_rescue_eligible_error(
 
     Parameters
     ----------
-    error_class : str   error_class from the PumpSwap local path result
-    exit_state  : str   TokenExitState.value string from ExitRouter classification
-    reason      : str   reason string passed to close_position()
+    error_class          : str   error_class from the PumpSwap local path result
+    exit_state           : str   TokenExitState.value string from ExitRouter classification
+    reason               : str   reason string passed to close_position()
+    oracle_bonding_curve : bool  True when bonding curve oracle confirmed complete=False at
+                                 buy time. MIGRATION_UNCERTAIN is PP-silence-based and fires
+                                 for T22 tokens that are still on the bonding curve — Jupiter
+                                 rescue has no route for them. Route via PumpPortal instead.
     """
+    # Oracle-confirmed bonding curve + MIGRATION_UNCERTAIN = T22 token still on BC.
+    # Jupiter cannot route these. Skip rescue and let executor.sell use PumpPortal.
+    if oracle_bonding_curve and exit_state == "MIGRATION_UNCERTAIN":
+        return False
     _RESCUE_EXIT_STATES = frozenset({
         "GRADUATED_PUMPSWAP",
         "GRADUATED_PUMPSWAP_SPL",
@@ -1229,7 +1238,14 @@ class Portfolio:
                 _dry_tag     = "DRY_RUN|" if result.get("dry_run") else ""
                 _est_tag     = "|entry_estimated" if result.get("entry_estimated") else ""
                 _slip_tag    = f"|slip:{result['entry_slippage_pct']:+.1f}%" if result.get("entry_slippage_pct") is not None else ""
-                _cohort_tag  = "|cohort:graduated" if result.get("pp_silent") else "|cohort:bonding_curve"
+                # cohort tag: oracle result is authoritative.
+                # pp_silent alone is NOT graduation proof — T22 tokens are always
+                # PP-silent but can be on bonding curve (oracle_bonding_curve=True).
+                _cohort_tag  = (
+                    "|cohort:bonding_curve"
+                    if result.get("oracle_bonding_curve")
+                    else ("|cohort:graduated" if result.get("pp_silent") else "|cohort:bonding_curve")
+                )
                 _canary_tag  = f"|canary_cap:{_canary_max}" if _canary_capped else ""
                 live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}"
                 # ── Paper twin: mirror live fill price for honest P&L comparison ──
@@ -1530,6 +1546,11 @@ class Portfolio:
                         from memecoin.config import EXIT_ROUTER_ENABLED as _er_enabled
                     except ImportError:
                         _er_enabled = False
+                    # True when bonding curve oracle confirmed complete=False at buy time.
+                    # T22 tokens are always PP-silent but not graduated — they must use
+                    # PumpPortal (escalate=False), not PumpSwap/Jupiter rescue.
+                    _oracle_bc = "|cohort:bonding_curve" in (pos.notes or "")
+
                     if _er_enabled:
                         try:
                             from memecoin import exit_router as _er
@@ -1539,21 +1560,34 @@ class Portfolio:
                             # Flag graduated/uncertain so executor uses escalate=True on first attempt.
                             # Without this, Cat-2 tokens that graduated during the hold would hit the
                             # BC path → 6005 → graduated_unsellable → waste a full 60s retry cycle.
+                            # Exception: oracle-confirmed bonding curve + MIGRATION_UNCERTAIN =
+                            # T22 token still on BC (PP is always silent for T22). Do NOT escalate;
+                            # PumpPortal handles these via the normal bonding-curve sell path.
                             if _exit_state in (
                                 _er.TokenExitState.GRADUATED_PUMPSWAP,
                                 _er.TokenExitState.MIGRATION_UNCERTAIN,
                             ):
-                                _er_classified_graduated = True
+                                if _oracle_bc and _exit_state == _er.TokenExitState.MIGRATION_UNCERTAIN:
+                                    # Oracle says bonding curve — PP silence is normal for T22.
+                                    # Skip escalation and PumpSwap/Jupiter; executor.sell handles it.
+                                    log.info(
+                                        "ExitRouter: MIGRATION_UNCERTAIN suppressed — "
+                                        "oracle-confirmed bonding curve (T22)  token=%s",
+                                        pos.token_address[:8],
+                                    )
+                                else:
+                                    _er_classified_graduated = True
                             # Run pumpswap_local for GRADUATED_PUMPSWAP and MIGRATION_UNCERTAIN.
                             # MIGRATION_UNCERTAIN = Cat-2 token that graduated during hold but PP
                             # migration event was missed. Pool RPC lookup at sell time is the
                             # source of truth — if the pool exists, local sell can succeed.
                             # pumpswap_no_pool error class means token is still on BC → executor
                             # handles it normally.
+                            # Skip for oracle-confirmed bonding curve — no pool will ever be found.
                             if _exit_state in (
                                 _er.TokenExitState.GRADUATED_PUMPSWAP,
                                 _er.TokenExitState.MIGRATION_UNCERTAIN,
-                            ):
+                            ) and not (_oracle_bc and _exit_state == _er.TokenExitState.MIGRATION_UNCERTAIN):
                                 from memecoin.config import CHAINS as _CHAINS_er
                                 _chain_cfg_er = _CHAINS_er.get(pos.chain, {})
                                 _rpc_url_er   = _chain_cfg_er.get(
@@ -1587,6 +1621,7 @@ class Portfolio:
                         error_class=_ps_ec,
                         exit_state=_exit_state.value if _exit_state is not None else "",
                         reason=reason,
+                        oracle_bonding_curve=_oracle_bc,
                     ):
                         try:
                             from memecoin.jupiter_rescue import (

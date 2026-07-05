@@ -1712,15 +1712,17 @@ def _portfolio_thread():
                                 pos.token_symbol,
                             )
                             portfolio._arm_migration_retry(pos.id, SELL_STUCK_RETRY_SEC)
-                            try:
-                                from app.alerts import _send
-                                _send(
-                                    f"⚡ MIGRATION UNCERTAIN {pos.token_symbol} — "
-                                    f"no Jupiter route yet, auto-recovery armed, "
-                                    f"probing every {SELL_STUCK_RETRY_SEC}s."
-                                )
-                            except Exception:
-                                pass
+                            if pos.id not in _mu_alerted:
+                                _mu_alerted.add(pos.id)
+                                try:
+                                    from app.alerts import _send
+                                    _send(
+                                        f"⚡ MIGRATION UNCERTAIN {pos.token_symbol} — "
+                                        f"no Jupiter route yet, auto-recovery armed, "
+                                        f"probing every {SELL_STUCK_RETRY_SEC}s."
+                                    )
+                                except Exception:
+                                    pass
 
                             # One rescue worker per position — guard with inflight set
                             if pos.id not in _migration_rescue_inflight:
@@ -1893,6 +1895,9 @@ _exit_queue: queue.Queue = queue.Queue()
 # In-flight guard: prevents spawning a second migration rescue worker for the
 # same position while a daemon rescue thread is already running.
 _migration_rescue_inflight: set = set()
+
+# Alert-sent guard: prevent TG spam — MU no-pool alert fires at most once per position.
+_mu_alerted: set = set()
 
 
 def _on_pp_price_tick(mint: str, price_usd: float) -> None:
