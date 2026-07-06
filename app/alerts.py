@@ -4,10 +4,21 @@ Sends Telegram messages to the user's personal chat via a bot.
 Credentials are read from env vars:
   TELEGRAM_BOT_TOKEN — from @BotFather
   TELEGRAM_CHAT_ID   — your personal chat ID (run get_chat_id() to find it)
+
+Supported bot commands (send to the bot in Telegram):
+  /sells_off              — disable all live on-chain sells (positions keep tracking)
+  /sells_on               — re-enable live sells
+  /buys_off               — disable live buys (same as kill switch)
+  /buys_on                — re-enable live buys
+  /manual_sold SYMBOL     — close an open live position without an on-chain sell
+  /manual_sold SYMBOL 0.000045  — same, with explicit exit price
+  /status                 — show open positions + kill switch state
 """
 
 import logging
 import os
+import threading
+import time
 
 import requests
 
@@ -15,6 +26,7 @@ log = logging.getLogger(__name__)
 
 _BOT_TOKEN = ""
 _CHAT_ID   = ""
+_cmd_listener_started = False
 
 
 def init():
@@ -24,6 +36,7 @@ def init():
     _CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
     if _BOT_TOKEN and _CHAT_ID:
         log.info("Telegram alerts enabled (chat_id=%s)", _CHAT_ID)
+        _start_command_listener()
     else:
         log.info("Telegram alerts disabled — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
 
@@ -132,6 +145,152 @@ def alert_tp_hit(pos, tp_pct: float, locked_usd: float) -> bool:
         f"Remaining: {pos.remaining_fraction*100:.0f}% of position",
     ]
     return _send("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Telegram bot command listener
+# ---------------------------------------------------------------------------
+
+def _dispatch_command(text: str) -> str:
+    """
+    Parse and execute one bot command. Returns a reply string.
+    Accepted commands (case-insensitive):
+      /sells_off, /sells_on, /buys_off, /buys_on
+      /manual_sold SYMBOL [price]
+      /status
+    """
+    text = text.strip()
+    parts = text.split()
+    if not parts:
+        return "Empty command."
+    cmd = parts[0].lower().lstrip("/")
+    args = parts[1:]
+
+    if cmd == "sells_off":
+        try:
+            from memecoin.kill_switch import disable_live_sells
+            disable_live_sells("telegram_command")
+        except Exception as e:
+            return f"Error: {e}"
+        return "🔴 Live sells DISABLED. Positions still track. /sells_on to re-enable."
+
+    elif cmd == "sells_on":
+        try:
+            from memecoin.kill_switch import enable_live_sells
+            enable_live_sells("telegram_command")
+        except Exception as e:
+            return f"Error: {e}"
+        return "✅ Live sells RE-ENABLED."
+
+    elif cmd == "buys_off":
+        try:
+            from memecoin.kill_switch import disable_live_buys
+            disable_live_buys("telegram_command")
+        except Exception as e:
+            return f"Error: {e}"
+        return "🔴 Live buys DISABLED. /buys_on to re-enable."
+
+    elif cmd == "buys_on":
+        try:
+            from memecoin.kill_switch import enable_live_buys
+            enable_live_buys("telegram_command")
+        except Exception as e:
+            return f"Error: {e}"
+        return "✅ Live buys RE-ENABLED."
+
+    elif cmd == "manual_sold":
+        if not args:
+            return "Usage: /manual_sold SYMBOL [price]\nExample: /manual_sold ESCAPE 0.000045"
+        symbol = args[0]
+        price = 0.0
+        if len(args) >= 2:
+            try:
+                price = float(args[1])
+            except ValueError:
+                return f"Invalid price '{args[1]}'. Usage: /manual_sold SYMBOL [price]"
+        try:
+            from memecoin.scanner import portfolio as _pf
+            result = _pf.manual_close_live(symbol, price)
+        except Exception as e:
+            return f"Error closing {symbol}: {e}"
+        if result.get("ok"):
+            return (
+                f"✅ {result['symbol']} closed as manual_sell\n"
+                f"pos_id: {result['pos_id']}\n"
+                f"Journaled — bot will no longer retry sell for this position."
+            )
+        else:
+            return f"❌ {result.get('msg', 'Unknown error')}"
+
+    elif cmd == "status":
+        try:
+            from memecoin.scanner import portfolio as _pf
+            from memecoin.kill_switch import live_buys_enabled, live_sells_enabled
+            open_live = [p for p in _pf._positions.values()
+                         if p.status in ("open", "sell_stuck") and p.notes and "live|tx:" in p.notes]
+            lines = [
+                f"Buys: {'ON' if live_buys_enabled() else 'OFF'}  "
+                f"Sells: {'ON' if live_sells_enabled() else 'OFF'}",
+                f"Open live positions: {len(open_live)}",
+            ]
+            for p in open_live[:5]:
+                pnl = (p.current_price / p.entry_price - 1) * 100 if p.entry_price else 0
+                lines.append(f"  {p.token_symbol} {pnl:+.1f}% [{p.status}]")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Status error: {e}"
+
+    else:
+        return (
+            "Unknown command. Available:\n"
+            "/sells_off  /sells_on\n"
+            "/buys_off   /buys_on\n"
+            "/manual_sold SYMBOL [price]\n"
+            "/status"
+        )
+
+
+def _start_command_listener() -> None:
+    """Start background thread that polls Telegram for bot commands."""
+    global _cmd_listener_started
+    if _cmd_listener_started:
+        return
+    _cmd_listener_started = True
+
+    def _listener():
+        offset = 0
+        log.info("Telegram command listener started")
+        while True:
+            try:
+                url  = f"https://api.telegram.org/bot{_BOT_TOKEN}/getUpdates"
+                resp = requests.get(
+                    url,
+                    params={"offset": offset, "timeout": 30, "allowed_updates": ["message"]},
+                    timeout=35,
+                )
+                if resp.status_code != 200:
+                    time.sleep(5)
+                    continue
+                data = resp.json()
+                for update in data.get("result", []):
+                    offset = update["update_id"] + 1
+                    msg    = update.get("message", {})
+                    chat   = msg.get("chat", {})
+                    text   = msg.get("text", "")
+                    # Only accept commands from the configured chat (security)
+                    if str(chat.get("id")) != str(_CHAT_ID):
+                        continue
+                    if not text.startswith("/"):
+                        continue
+                    log.info("TG command: %r", text)
+                    reply = _dispatch_command(text)
+                    _send(reply)
+            except Exception as e:
+                log.debug("Command listener error: %s", e)
+                time.sleep(5)
+
+    t = threading.Thread(target=_listener, daemon=True, name="tg-cmd-listener")
+    t.start()
 
 
 # ---------------------------------------------------------------------------

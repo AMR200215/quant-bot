@@ -1570,12 +1570,23 @@ class Portfolio:
         _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
         MAX_SELL_RETRIES = 5
 
-        # reconciled_gone means the on-chain balance is already 0 (verified by the
-        # reconciler thread). Attempting a sell would always fail (nothing to sell)
-        # and re-arm sell_stuck, creating an infinite loop. Skip the on-chain sell
-        # entirely — just write to the journal below.
-        # manual_sell means the user sold outside the bot; same logic applies.
+        # reconciled_gone: balance already 0 on-chain — sell would fail and re-arm loop.
+        # manual_sell: user sold outside the bot — nothing to sell on-chain.
         _skip_chain_sell = reason in ("reconciled_gone", "manual_sell")
+
+        # Sell kill switch: /sells_off Telegram command disables on-chain sells.
+        # Positions keep tracking, exits just don't fire the executor.
+        if not _skip_chain_sell:
+            try:
+                from memecoin.kill_switch import live_sells_enabled as _lse
+                if not _lse():
+                    log.warning(
+                        "SELL KILL SWITCH active — skipping on-chain sell for %s  reason=%s",
+                        pos.token_symbol, reason,
+                    )
+                    _skip_chain_sell = True
+            except Exception:
+                pass
 
         if LIVE_TRADING and _was_live_buy and not _skip_chain_sell:
             from memecoin.executor import MemeExecutor
@@ -2721,6 +2732,54 @@ class Portfolio:
         if not pos:
             return None
         return self.close_position(pos_id, "manual", pos.current_price)
+
+    def manual_close_live(self, symbol: str, exit_price: float = 0.0) -> dict:
+        """
+        Close an open live position by symbol without attempting an on-chain sell.
+
+        Use this when the user has already sold the position manually (e.g. on Phantom)
+        and wants the bot to acknowledge the close, journal it, and stop looping.
+
+        Called by the Telegram /manual_sold command.
+
+        Returns {"ok": bool, "pos_id": str, "symbol": str, "exit_reason": str, "msg": str}
+        """
+        # Find the open live position by symbol (case-insensitive, match first found)
+        sym_upper = symbol.strip().upper()
+        target = None
+        for pos in self._positions.values():
+            if pos.status in ("open", "sell_stuck") and pos.notes and "live|tx:" in pos.notes:
+                if pos.token_symbol.upper() == sym_upper:
+                    target = pos
+                    break
+
+        if target is None:
+            # Try partial match as fallback
+            for pos in self._positions.values():
+                if pos.status in ("open", "sell_stuck") and pos.notes and "live|tx:" in pos.notes:
+                    if sym_upper in pos.token_symbol.upper():
+                        target = pos
+                        break
+
+        if target is None:
+            return {"ok": False, "msg": f"No open live position found for symbol '{symbol}'"}
+
+        price = exit_price or target.current_price or target.entry_price
+        target.notes = (target.notes or "") + "|manual_sold_via_tg"
+        # Clear sell_stuck so close_position doesn't throttle
+        self._sell_stuck_until.pop(target.id, None)
+        self.close_position(target.id, "manual_sell", price)
+        log.warning(
+            "MANUAL SELL via Telegram: %s  pos=%s  price=%.10f",
+            target.token_symbol, target.id, price,
+        )
+        return {
+            "ok":    True,
+            "pos_id": target.id,
+            "symbol": target.token_symbol,
+            "exit_reason": "manual_sell",
+            "msg": f"Closed {target.token_symbol} as manual_sell at ${price:.8g}",
+        }
 
     # ---- queries ----
 
