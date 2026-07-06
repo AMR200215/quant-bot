@@ -170,9 +170,11 @@ With this flag True, only the Telegram social feed drives signals. Whale wallet 
 
 - **SAM** (April 2026) — best trade. New launch +839%, copy trade +216%. Deployer: `CAUbSmiNuj16phNiskMdwWZEAUXCfXaUSamDFyf7pAa6`
 - **STOCK BULL** (July 2026) — hard stop at −46%, sell confirmed on-chain. Correct behaviour.
-- **ESCAPE** (July 2026) — live buy, manual sell in Phantom, infinite loop bug (now fixed).
-- **BULL** (July 2026) — abort tripwire at +48% slippage, auto-sold, −$0.58 net.
-- Social alert overall: live trading started June 2026 at $5/trade.
+- **LEAN** (July 5 2026) — last confirmed live trade before ESCAPE/BULL. Entry fill +76.8% above signal. Immediately hit `MIGRATION_UNCERTAIN` loop — 20+ failed `PUMPSWAP_LOCAL` sell attempts over 28 minutes while token crashed. Eventually sold at −87.82% (−$2.63). Root cause: migration retry loop had no escalation path (no Jupiter fallback, no timeout) so the bot kept retrying a broken route while the token bled out. Sell DID confirm (`sell_tx:5mqkMBkc...`, `sell_fill:0.0000034690`).
+- **ESCAPE** (July 2026) — live buy, manual sell in Phantom. `reconciled_gone` loop bug (now fixed — `_skip_chain_sell` gate).
+- **BULL** (July 2026) — abort tripwire at +48% slippage vs jup_quote, auto-sold, −$0.58 net. T22 NameError in sell path also fixed.
+- **CONFIG_TAG**: `v7_entry_filters_2026-06-06` — tagged on every live trade row (field: `memecoin/portfolio.py:87`).
+- Social alert overall: live trading started June 2026 at $3–5/trade.
 
 ---
 
