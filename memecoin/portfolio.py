@@ -2516,12 +2516,12 @@ class Portfolio:
             _trail_tiers = _exit_cfg.get("trail_tiers", None)
             _peak_gain   = ((pos.peak_price / pos.entry_price) - 1) if pos.entry_price > 0 else 0
 
-            # 1. Hard stop — signal-anchored when fill > signal price.
-            #    Only governs the sub-+30% region (before any trail tier activates).
+            # 1. Hard stop — always anchored to entry_price (fill price for live,
+            #    signal price for paper). Signal-anchoring was removed: when live
+            #    fill > signal due to slippage, anchoring to signal_price placed the
+            #    stop 70%+ below fill, allowing far larger losses than configured.
             if not reason:
                 _stop_lvl = pos.entry_price * (1 + pos.hard_stop_pct)
-                if pos.signal_price > 0 and pos.entry_price > pos.signal_price:
-                    _stop_lvl = pos.signal_price * (1 + pos.hard_stop_pct)
                 if pos.current_price <= _stop_lvl:
                     reason = "hard_stop"
 
