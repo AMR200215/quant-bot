@@ -39,6 +39,7 @@ _logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 _logging.getLogger("memecoin").setLevel(_logging.INFO)
+_logging.getLogger("app").setLevel(_logging.INFO)
 
 # ---------------------------------------------------------------------------
 # Memecoin scanner — start background threads on first import
