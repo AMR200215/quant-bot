@@ -45,6 +45,20 @@ from app import alerts
 
 log = logging.getLogger(__name__)
 
+
+def effective_hard_stop_level(signal_price: float, entry_price: float, hard_stop_pct: float) -> float:
+    """Compute effective hard-stop level = max(signal-anchored stop, fill-loss floor).
+
+    Prevents TROONCH-style losses when slippage is high, while preserving
+    signal structure when fill is close to signal.
+    Paper behaviour unchanged: paper entry_price == signal_price.
+    """
+    from memecoin.config import MAX_LOSS_FROM_FILL_PCT
+    _sa = signal_price * (1 + hard_stop_pct) if signal_price > 0 else 0.0
+    _fl = entry_price * (1 - MAX_LOSS_FROM_FILL_PCT)
+    return max(_sa, _fl)
+
+
 JOURNAL_FIELDS = [
     # identity
     "id", "signal_id", "chain", "token_address", "token_symbol",
@@ -1253,20 +1267,21 @@ class Portfolio:
             #   size_mult = 0.35/0.48 = 0.73  →  73% of base size
             _base_stop_pct = abs(paper_pos.hard_stop_pct)
             if _sig_price and _pp_price > 0:
-                _sa_stop_level = _sig_price * (1 + paper_pos.hard_stop_pct)
-                if _pp_price > _sa_stop_level > 0:
-                    _stop_dist_fill = (_pp_price - _sa_stop_level) / _pp_price
-                    if _stop_dist_fill > 0:
-                        _size_mult = _base_stop_pct / _stop_dist_fill
-                        _size_mult = max(0.5, min(1.0, _size_mult))
-                        _orig_size = _live_size
-                        _live_size = round(_live_size * _size_mult, 2)
-                        log.info(
-                            "SIZE NORM %s: pp=%.8f stop=%.8f dist=%.1f%% "
-                            "mult=%.2f  size $%.2f→$%.2f",
-                            live_pos.token_symbol, _pp_price, _sa_stop_level,
-                            _stop_dist_fill * 100, _size_mult, _orig_size, _live_size,
-                        )
+                _eff_stop = effective_hard_stop_level(
+                    _sig_price, _pp_price, paper_pos.hard_stop_pct
+                )
+                _stop_dist = abs(_pp_price - _eff_stop) / _pp_price if _pp_price > 0 else abs(paper_pos.hard_stop_pct)
+                if _stop_dist > 0:
+                    _size_mult = _base_stop_pct / _stop_dist
+                    _size_mult = max(0.5, min(1.0, _size_mult))
+                    _orig_size = _live_size
+                    _live_size = round(_live_size * _size_mult, 2)
+                    log.info(
+                        "SIZE NORM %s: pp=%.8f stop=%.8f dist=%.1f%% "
+                        "mult=%.2f  size $%.2f→$%.2f",
+                        live_pos.token_symbol, _pp_price, _eff_stop,
+                        _stop_dist * 100, _size_mult, _orig_size, _live_size,
+                    )
 
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
@@ -2516,12 +2531,26 @@ class Portfolio:
             _trail_tiers = _exit_cfg.get("trail_tiers", None)
             _peak_gain   = ((pos.peak_price / pos.entry_price) - 1) if pos.entry_price > 0 else 0
 
-            # 1. Hard stop — always anchored to entry_price (fill price for live,
-            #    signal price for paper). Signal-anchoring was removed: when live
-            #    fill > signal due to slippage, anchoring to signal_price placed the
-            #    stop 70%+ below fill, allowing far larger losses than configured.
+            # 1. Hard stop — effective level = max(signal-anchored stop, fill-loss floor).
+            #    Prevents TROONCH-style -70% losses when slippage is high, while preserving
+            #    signal structure when fill is close to signal.
+            #    MAX_LOSS_FROM_FILL_PCT=50% caps max fill-anchored loss.
+            #    Paper behavior unchanged: paper entry_price == signal_price.
+            #
+            #    Example A (high slippage):
+            #      signal=1.00  fill=2.17  hard_stop=-35%  MAX_LOSS=50%
+            #      signal_stop = 1.00*0.65 = 0.65
+            #      fill_floor  = 2.17*0.50 = 1.085
+            #      effective   = max(0.65, 1.085) = 1.085  → -50% from fill
+            #
+            #    Example B (low slippage):
+            #      signal=1.00  fill=1.10
+            #      signal_stop = 0.65   fill_floor = 0.55
+            #      effective   = max(0.65, 0.55) = 0.65  → signal anchor wins
             if not reason:
-                _stop_lvl = pos.entry_price * (1 + pos.hard_stop_pct)
+                _stop_lvl = effective_hard_stop_level(
+                    pos.signal_price, pos.entry_price, pos.hard_stop_pct
+                )
                 if pos.current_price <= _stop_lvl:
                     reason = "hard_stop"
 

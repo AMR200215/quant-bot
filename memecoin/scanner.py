@@ -1889,20 +1889,241 @@ def _portfolio_thread():
 
                     _retry_at = portfolio._sell_stuck_until.get(_sp.id, 0)
                     if time.time() >= _retry_at:
+                        _is_mu = "|migration_wait" in (_sp.notes or "")
                         _retry_reason = (
                             "migration_uncertain_retry"
-                            if "|migration_wait" in (_sp.notes or "")
+                            if _is_mu
                             else (_sp.exit_reason or "sell_stuck_retry")
                         )
-                        log.info(
-                            "SELL STUCK retry triggered for %s  pos=%s  reason=%s",
-                            _sp.token_symbol, _sp.id, _retry_reason,
-                        )
-                        portfolio.close_position(
-                            _sp.id,
-                            _retry_reason,
-                            _sp.current_price or _sp.entry_price,
-                        )
+
+                        # ── MU retry escalation ladder ──
+                        if _is_mu:
+                            # Extract / increment mu_retries from notes
+                            _mu_n_match = _re_mu.search(r'\|mu_retries:(\d+)\|', _sp.notes or "")
+                            _mu_n = int(_mu_n_match.group(1)) if _mu_n_match else 0
+                            _mu_n += 1
+                            # Persist updated counter
+                            if _mu_n_match:
+                                _sp.notes = _re_mu.sub(
+                                    r'\|mu_retries:\d+\|',
+                                    f"|mu_retries:{_mu_n}|",
+                                    _sp.notes or "",
+                                    count=1,
+                                )
+                            else:
+                                _sp.notes = (_sp.notes or "") + f"|mu_retries:{_mu_n}|"
+                            if not _re_mu.search(r'\|mu_first_ts:\d+\|', _sp.notes or ""):
+                                _sp.notes = (_sp.notes or "") + f"|mu_first_ts:{int(time.time())}|"
+
+                            # Oracle check (shared across all attempts)
+                            _mu_oracle = {"ok": False, "complete": None, "reason": "not_checked"}
+                            try:
+                                from memecoin.executor import get_pumpfun_curve_complete as _mu_gpc
+                                _mu_oracle = _mu_gpc(_sp.token_address)
+                            except Exception as _mu_oe:
+                                log.debug("MU retry oracle error %s: %s", _sp.token_symbol, _mu_oe)
+
+                            _mu_complete = _mu_oracle.get("complete")
+                            _mu_acct_missing = _mu_oracle.get("reason") == "account_missing"
+
+                            # Check PumpSwap pool exists
+                            _mu_ps_pool = False
+                            try:
+                                from memecoin.pumpswap_local import fetch_pool as _mu_fp, PumpSwapPoolError as _mu_PSE
+                                _mu_fp(_sp.token_address, CHAINS.get("solana", {}).get("rpc", "https://api.mainnet-beta.solana.com"))
+                                _mu_ps_pool = True
+                            except Exception:
+                                pass
+
+                            _mu_route = "unknown"
+                            _mu_last_err = ""
+                            _mu_err_match = _re_mu.search(r'\|mu_last_error:([^|]*)\|', _sp.notes or "")
+                            if _mu_err_match:
+                                _mu_last_err = _mu_err_match.group(1)
+
+                            log.warning("MU RETRY %d/8  token=%s  route=%s  state=%s  last_error=%s",
+                                        _mu_n, _sp.token_symbol, _mu_route, _mu_complete, _mu_last_err)
+
+                            if _mu_n <= 3:
+                                # ── Attempts 1–3: oracle-gated, existing behavior ──
+                                log.info("SELL STUCK retry triggered for %s  pos=%s  reason=%s  attempt=%d",
+                                         _sp.token_symbol, _sp.id, _retry_reason, _mu_n)
+                                portfolio._positions[_sp.id] = _sp
+                                portfolio._save()
+                                portfolio.close_position(
+                                    _sp.id,
+                                    _retry_reason,
+                                    _sp.current_price or _sp.entry_price,
+                                )
+                            elif _mu_n <= 7:
+                                # ── Attempts 4–7: Jupiter escalation ──
+                                if _mu_complete is True or _mu_acct_missing or _mu_ps_pool:
+                                    # Force Jupiter rescue path
+                                    # Guard: do not send duplicate if mu_last_sig present and unconfirmed
+                                    _mu_sig_match = _re_mu.search(r'\|mu_last_sig:([A-Za-z0-9]+)\|', _sp.notes or "")
+                                    _mu_has_pending = False
+                                    if _mu_sig_match:
+                                        _mu_pending_sig = _mu_sig_match.group(1)
+                                        try:
+                                            from memecoin.tx_meta import read_sol_delta as _mu_rsd
+                                            from memecoin.config import WALLET_PUBKEY as _mu_wallet
+                                            _mu_sig_res = _mu_rsd(_mu_pending_sig, _mu_wallet)
+                                            if not _mu_sig_res.get("ok"):
+                                                _mu_has_pending = True
+                                                log.info("MU RETRY %d — pending sig %s still unconfirmed, skipping duplicate",
+                                                         _mu_n, _mu_pending_sig[:16])
+                                            elif (_mu_sig_res.get("sol_delta") or 0) > 0:
+                                                # Late-confirmed positive sig → finalize as recovered
+                                                log.warning("MU RETRY %d — pending sig %s confirmed positive! Finalizing as recovered",
+                                                            _mu_n, _mu_pending_sig[:16])
+                                                _sp.notes = (_sp.notes or "") + f"|mu_last_route:jupiter_rescue_confirmed|"
+                                                portfolio._positions[_sp.id] = _sp
+                                                portfolio._save()
+                                                portfolio._finalize_rescue_sell(_sp.id, {
+                                                    "tx_sig": _mu_pending_sig,
+                                                    "sol_received": _mu_sig_res["sol_delta"],
+                                                })
+                                                continue
+                                        except Exception:
+                                            pass
+
+                                    if not _mu_has_pending:
+                                        log.info("MU RETRY %d — forcing Jupiter rescue for %s", _mu_n, _sp.token_symbol)
+                                        _sp.notes = _re_mu.sub(r'\|mu_last_route:[^|]*\|', '', _sp.notes or "")
+                                        _sp.notes = (_sp.notes or "") + "|mu_last_route:jupiter_rescue|"
+                                        portfolio._positions[_sp.id] = _sp
+                                        portfolio._save()
+
+                                        def _mu_jup_worker(_snap=_sp, _pid=_sp.id, _pf=portfolio, _sym=_sp.token_symbol, _n=_mu_n):
+                                            try:
+                                                from memecoin.jupiter_rescue import (
+                                                    force_jupiter_rescue_sell as _fmu,
+                                                    classify_rescue_result as _cmu,
+                                                )
+                                                _res = _fmu(_snap, f"mu_retry_{_n}")
+                                                _cls = _cmu(_res)
+                                                _full_sig = _res.get("tx_sig", "")
+                                                if _full_sig:
+                                                    # Persist full sig
+                                                    _snap_in = _pf._positions.get(_pid)
+                                                    if _snap_in:
+                                                        import re as _re_sig
+                                                        _snap_in.notes = _re_sig.sub(r'\|mu_last_sig:[^|]*\|', '', _snap_in.notes or "")
+                                                        _snap_in.notes = (_snap_in.notes or "") + f"|mu_last_sig:{_full_sig}|"
+                                                        _err_cls = type(_res.get("error", "")).__name__ if _res.get("error") else ""
+                                                        _snap_in.notes = _re_sig.sub(r'\|mu_last_error:[^|]*\|', '', _snap_in.notes or "")
+                                                        _snap_in.notes = (_snap_in.notes or "") + f"|mu_last_error:{_err_cls}|"
+                                                        _pf._positions[_pid] = _snap_in
+                                                        _pf._save()
+                                                if _cls in ("sold", "already_sold"):
+                                                    _pf._finalize_rescue_sell(_pid, _res)
+                                                elif _cls == "pending":
+                                                    log.info("MU RETRY %d Jupiter: tx pending  token=%s", _n, _sym)
+                                                else:
+                                                    log.info("MU RETRY %d Jupiter: %s  token=%s", _n, _cls, _sym)
+                                            except Exception as _exc:
+                                                log.warning("MU RETRY %d Jupiter exception  token=%s: %s", _n, _sym, _exc)
+
+                                        _jup_t = threading.Thread(target=_mu_jup_worker, daemon=True,
+                                                                   name=f"mu-jup-{_sp.id[:8]}")
+                                        _jup_t.start()
+                                    else:
+                                        portfolio._positions[_sp.id] = _sp
+                                        portfolio._save()
+                                else:
+                                    # complete=False → stay on bonding curve path
+                                    log.info("MU RETRY %d — complete=False, using BC path for %s", _mu_n, _sp.token_symbol)
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                                    portfolio.close_position(
+                                        _sp.id,
+                                        _retry_reason,
+                                        _sp.current_price or _sp.entry_price,
+                                    )
+                            elif _mu_n == 8:
+                                # ── Attempt 8: final gate ──
+                                log.warning("MU RETRY 8 (FINAL) — running graduated_loss gate for %s", _sp.token_symbol)
+                                _sp.notes = (_sp.notes or "") + "|mu_final_gate|"
+
+                                # Check pending sigs first
+                                _mu8_recovered = False
+                                try:
+                                    import re as _re8
+                                    from memecoin.tx_meta import read_sol_delta as _rsd8
+                                    from memecoin.config import WALLET_PUBKEY as _w8
+                                    _mu8_sigs = _re8.findall(
+                                        r'(?:sell_tx|sell_unconf|jupiter_rescue_pending|sell_pending|pending_sig|mu_last_sig):([A-Za-z0-9]+)',
+                                        _sp.notes or "",
+                                    )
+                                    for _s8 in reversed(_mu8_sigs):
+                                        _r8 = _rsd8(_s8, _w8)
+                                        if _r8.get("ok") and (_r8.get("sol_delta") or 0) > 0:
+                                            log.warning("MU RETRY 8 — confirmed positive sig %s  sol=%.6f → recovered", _s8[:16], _r8["sol_delta"])
+                                            portfolio._positions[_sp.id] = _sp
+                                            portfolio._save()
+                                            portfolio._finalize_rescue_sell(_sp.id, {
+                                                "tx_sig": _s8,
+                                                "sol_received": _r8["sol_delta"],
+                                            })
+                                            _mu8_recovered = True
+                                            break
+                                except Exception as _e8:
+                                    log.debug("MU RETRY 8 sig sweep error: %s", _e8)
+
+                                if _mu8_recovered:
+                                    continue
+
+                                # Check on-chain balance
+                                _mu8_bal = -1
+                                try:
+                                    from memecoin.executor import _get_keypair as _gk8, _token_balance as _tb8
+                                    _mu8_wallet = str(_gk8().pubkey())
+                                    _mu8_bal = _tb8(_mu8_wallet, _sp.token_address)
+                                except Exception:
+                                    pass
+
+                                if _mu8_bal == 0:
+                                    # No confirmed sig AND balance == 0 → close as reconciled_gone
+                                    log.warning("MU RETRY 8 — balance=0 + no confirmed sig → reconciled_gone  token=%s", _sp.token_symbol)
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                                    portfolio.close_position(_sp.id, "reconciled_gone", _sp.current_price or _sp.entry_price)
+                                elif _mu8_bal > 0:
+                                    # Balance still present → manual required, do NOT write graduated_loss
+                                    _sp.notes = (_sp.notes or "") + "|migration_manual_required|"
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                                    log.error("MU RETRY 8 — balance=%d still present, manual check required  token=%s", _mu8_bal, _sp.token_symbol)
+                                    try:
+                                        from app.alerts import _send
+                                        _send(
+                                            f"⚠️ MANUAL CHECK REQUIRED: {_sp.token_symbol} — "
+                                            f"8 MU retries, balance still present, cannot sell automatically.\n"
+                                            f"mint: {_sp.token_address}"
+                                        )
+                                    except Exception:
+                                        pass
+                                else:
+                                    # Balance check failed — keep as sell_stuck for manual
+                                    _sp.notes = (_sp.notes or "") + "|migration_manual_required|mu_balance_check_failed|"
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                            else:
+                                # Past attempt 8 — stop auto-retry
+                                log.debug("MU RETRY %d > 8 — no more auto-retries for %s", _mu_n, _sp.token_symbol)
+                                portfolio._positions[_sp.id] = _sp
+                                portfolio._save()
+                        else:
+                            # Non-MU sell_stuck retry
+                            log.info(
+                                "SELL STUCK retry triggered for %s  pos=%s  reason=%s",
+                                _sp.token_symbol, _sp.id, _retry_reason,
+                            )
+                            portfolio.close_position(
+                                _sp.id,
+                                _retry_reason,
+                                _sp.current_price or _sp.entry_price,
+                            )
 
         except Exception as e:
             log.warning("Portfolio monitor error: %s", e)
@@ -1951,14 +2172,11 @@ def _on_pp_price_tick(mint: str, price_usd: float) -> None:
         # Update peak price on every PP tick — catches sub-0.5s pumps the poll loop misses
         pos.peak_price = max(pos.peak_price, price_usd)
 
-        # Hard stop — signal-anchored when fill > signal price.
-        # If fill slipped above signal, anchor stop level to signal structure so
-        # a normal post-signal dip (e.g. -18% from signal = -35% from fill) doesn't
-        # stop us out prematurely.  For paper positions entry_price == signal_price
-        # so the fallback is identical to the old fill-anchored behaviour.
-        _stop_level = pos.entry_price * (1 + pos.hard_stop_pct)
-        if pos.signal_price > 0 and pos.entry_price > pos.signal_price:
-            _stop_level = pos.signal_price * (1 + pos.hard_stop_pct)
+        # Hard stop — uses same effective_hard_stop_level as portfolio.update_prices.
+        from memecoin.portfolio import effective_hard_stop_level
+        _stop_level = effective_hard_stop_level(
+            pos.signal_price, pos.entry_price, pos.hard_stop_pct
+        )
         if price_usd <= _stop_level:
             _exit_queue.put_nowait((pos.id, "hard_stop_pp", price_usd))
             return
@@ -2088,6 +2306,80 @@ def _reconciler_thread() -> None:
                             break
 
                 if on_chain == 0:
+                    # ── Guard 1: Two consecutive zero reads ≥30s apart ──
+                    _first_zero_key = "|reconciler_zero_first_ts:"
+                    _now_ts = int(time.time())
+                    if _first_zero_key not in (pos.notes or ""):
+                        pos.notes = (pos.notes or "") + f"|reconciler_zero_first_ts:{_now_ts}|"
+                        log.info("RECONCILER %s — first zero balance read, waiting 30s before close  pos=%s", pos.token_symbol, pos.id)
+                        portfolio._positions[pos.id] = pos
+                        portfolio._save()
+                        continue  # do not close yet
+
+                    import re as _re
+                    _fz_match = _re.search(r'\|reconciler_zero_first_ts:(\d+)\|', pos.notes or "")
+                    _first_zero_ts = int(_fz_match.group(1)) if _fz_match else _now_ts
+                    if (_now_ts - _first_zero_ts) < 30:
+                        log.info("RECONCILER %s — second zero read but <30s since first, waiting  pos=%s", pos.token_symbol, pos.id)
+                        continue
+
+                    # ── Guard 2: No pending sell signatures in notes ──
+                    _pending_markers = ("|sell_pending:", "|sell_unconf:", "|jupiter_rescue_pending:", "|rescue_pending:", "|pending_sig:")
+                    if any(m in (pos.notes or "") for m in _pending_markers):
+                        log.info("RECONCILER %s — zero balance but pending sell sig in notes, skipping  pos=%s", pos.token_symbol, pos.id)
+                        continue
+
+                    # ── Guard 3: Graduation transit guard ──
+                    try:
+                        from memecoin.executor import get_pumpfun_curve_complete as _gcc
+                        _curve_res = _gcc(pos.token_address)
+                        if _curve_res.get("complete") is True:
+                            _cct_key = "|curve_complete_first_ts:"
+                            if _cct_key not in (pos.notes or ""):
+                                pos.notes = (pos.notes or "") + f"|curve_complete_first_ts:{_now_ts}|migration_transit:{_now_ts}|"
+                                log.warning("RECONCILER %s — curve complete=True just observed, waiting 60s for migration  pos=%s", pos.token_symbol, pos.id)
+                                portfolio._positions[pos.id] = pos
+                                portfolio._save()
+                                continue
+                            _cct_match = _re.search(r'\|curve_complete_first_ts:(\d+)\|', pos.notes or "")
+                            _cct_ts = int(_cct_match.group(1)) if _cct_match else _now_ts
+                            if (_now_ts - _cct_ts) < 60:
+                                log.info("RECONCILER %s — migration_transit guard active (%ds), not closing  pos=%s", pos.token_symbol, pos.id, _now_ts - _cct_ts)
+                                continue
+                    except Exception as _gc_err:
+                        log.debug("RECONCILER curve check failed for %s: %s", pos.token_symbol, _gc_err)
+
+                    # ── Guard 4: Sig sweep before close ──
+                    # Check any known sell sigs for positive SOL delta
+                    _rec_recovered = False
+                    try:
+                        import re as _re_sweep
+                        from memecoin.tx_meta import read_sol_delta as _rsd_rec
+                        from memecoin.config import WALLET_PUBKEY as _rec_wallet
+                        _rec_sigs = _re_sweep.findall(
+                            r'(?:sell_tx|sell_unconf|jupiter_rescue_pending|sell_pending|pending_sig):([A-Za-z0-9]+)',
+                            pos.notes or "",
+                        )
+                        for _rec_sig in reversed(_rec_sigs):
+                            _rec_res = _rsd_rec(_rec_sig, _rec_wallet)
+                            if _rec_res.get("ok") and (_rec_res.get("sol_delta") or 0) > 0:
+                                _rec_sol = _rec_res["sol_delta"]
+                                pos.sol_received = _rec_sol
+                                pos.exit_reason = "reconciled_recovered"
+                                pos.notes = (pos.notes or "") + f"|reconciled_recovered:{_rec_sig[:8]}|sol_received:{_rec_sol:.8f}"
+                                log.warning(
+                                    "RECONCILER %s — sig sweep found confirmed sell: sol=%.6f sig=%s — closing as recovered",
+                                    pos.token_symbol, _rec_sol, _rec_sig[:16],
+                                )
+                                _rec_recovered = True
+                                break
+                    except Exception as _sw_err:
+                        log.debug("RECONCILER sig sweep error for %s: %s", pos.token_symbol, _sw_err)
+
+                    if _rec_recovered:
+                        portfolio.close_position(pos.id, "reconciled_recovered", pos.current_price)
+                        continue
+
                     log.warning(
                         "RECONCILER: zero on-chain balance for open live position %s (%s) — "
                         "closing as reconciled_gone",

@@ -202,6 +202,7 @@ PREGRAD_TRIGGER_PCT = 0.85   # exit when vSol/GRAD_SOL_UI >= this (default 85%)
 # Exit logic
 # ---------------------------------------------------------------------------
 HARD_STOP_PCT        = -0.35   # -35% from entry → immediate exit
+MAX_LOSS_FROM_FILL_PCT = 0.50  # max loss from fill price (caps fill-anchored stop floor)
 TRAILING_STOP_PCT    = -0.40   # -40% from peak once in profit
 TRAIL_ACTIVATES_PCT  =  0.75   # trailing stop activates at +75% (was +100%)
 TIME_STOP_MINUTES    =  90     # exit if flat >90 min with < +30% gain (was 45)
