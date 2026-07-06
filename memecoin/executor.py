@@ -2394,7 +2394,7 @@ class MemeExecutor:
                                     "id": token_address, "tokens_held": _tokens_to_sell_local,
                                     "notes": "",
                                 })()
-                                _bc_t22_result = _run_bc_t22(_fake_pos, reason, rpc_url=CHAINS.get("solana", {}).get("rpc", "https://api.mainnet-beta.solana.com"))
+                                _bc_t22_result = _run_bc_t22(_fake_pos, "auto_sell", rpc_url=CHAINS.get("solana", {}).get("rpc", "https://api.mainnet-beta.solana.com"))
                                 _lra(_bc_t22_result, _fake_pos, _TES.BONDING_CURVE_T22)
                             except Exception as _t22_err:
                                 log.warning("BC T22 sell call failed (%s) — PumpPortal fallback  token=%s",
