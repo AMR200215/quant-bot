@@ -1569,7 +1569,15 @@ class Portfolio:
         # Live execution gate — only sell on-chain if this position was a live buy
         _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
         MAX_SELL_RETRIES = 5
-        if LIVE_TRADING and _was_live_buy:
+
+        # reconciled_gone means the on-chain balance is already 0 (verified by the
+        # reconciler thread). Attempting a sell would always fail (nothing to sell)
+        # and re-arm sell_stuck, creating an infinite loop. Skip the on-chain sell
+        # entirely — just write to the journal below.
+        # manual_sell means the user sold outside the bot; same logic applies.
+        _skip_chain_sell = reason in ("reconciled_gone", "manual_sell")
+
+        if LIVE_TRADING and _was_live_buy and not _skip_chain_sell:
             from memecoin.executor import MemeExecutor
             try:
                 # ── Rug-path: pre-signed emergency exit ──────────────────────────
