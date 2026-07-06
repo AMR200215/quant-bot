@@ -1472,15 +1472,37 @@ def _portfolio_thread():
                             "CURVE FEED  token=%s  price=$%.10f  complete=%s",
                             _cp_pos.token_symbol, _cp_price, _cp_result.get("complete"),
                         )
-                        # If curve says complete=True, stop polling and let normal
-                        # MIGRATION_UNCERTAIN / graduated logic take over
+                        # If curve says complete=True, stop polling and trigger
+                        # graduation handover — same path as account_missing below.
                         if _cp_result.get("complete") is True:
                             _curve_price_overrides.pop(_cp_mint, None)
                             _curve_feed_last_seen.pop(_cp_mint, None)
+                            # Trigger graduation handover: swap cohort tag so close_position
+                            # routes via pump-amm. Mirrors the graduated_exit path above.
+                            if _cp_pos.notes and "|cohort:bonding_curve" in _cp_pos.notes:
+                                _cp_pos.notes = _cp_pos.notes.replace(
+                                    "|cohort:bonding_curve", "|cohort:graduated"
+                                )
+                            log.warning(
+                                "CURVE FEED GRADUATED %s — curve complete=True mid-hold; "
+                                "handing over to graduated exit path",
+                                _cp_pos.token_symbol,
+                            )
                     elif _cp_result.get("complete") is None:
-                        # account_missing → curve closed, stop polling
+                        # account_missing → curve closed / migrated. Treat exactly like
+                        # complete=True: stop polling and trigger graduation handover.
+                        # Do not silently drop — the position still holds tokens.
                         _curve_price_overrides.pop(_cp_mint, None)
                         _curve_feed_last_seen.pop(_cp_mint, None)
+                        if _cp_pos.notes and "|cohort:bonding_curve" in _cp_pos.notes:
+                            _cp_pos.notes = _cp_pos.notes.replace(
+                                "|cohort:bonding_curve", "|cohort:graduated"
+                            )
+                        log.warning(
+                            "CURVE FEED ACCOUNT_MISSING %s — curve account closed mid-hold; "
+                            "handing over to graduated exit path (account_missing → treat as graduated)",
+                            _cp_pos.token_symbol,
+                        )
             except Exception as _cf_e:
                 log.debug("curve feed error: %s", _cf_e)
 

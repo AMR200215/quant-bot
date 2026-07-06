@@ -1338,6 +1338,44 @@ def get_pumpfun_curve_price(mint: str) -> dict:
         return {"ok": False, "price_usd": None, "price_sol": None, "complete": None, "reason": str(e)}
 
 
+def get_pumpfun_curve_snapshot(mint: str) -> dict:
+    """
+    Query the pump.fun bonding curve: completion status + live price in one call.
+
+    Shares the same 5-second _GRAD_ORACLE_CACHE as get_pumpfun_curve_complete(),
+    so portfolio.py preflight and the executor buy gate never duplicate the RPC —
+    whichever fires first populates the cache; the other gets a cache hit.
+
+    Returns
+    -------
+    {
+        "ok":                     bool,
+        "complete":               bool | None,   # False=on curve, True=graduated, None=missing
+        "price_usd":              float | None,  # set only when complete=False and reserves ok
+        "price_sol":              float | None,
+        "virtual_token_reserves": int | None,
+        "virtual_sol_reserves":   int | None,
+        "reason":                 str,           # complete_false|complete_true|account_missing|rpc_error|parse_error
+        "bc_pda":                 str,
+        "rpc_ms":                 int,
+    }
+    """
+    result = get_pumpfun_curve_complete(mint)   # uses / populates _GRAD_ORACLE_CACHE
+    out = dict(result)
+    out.setdefault("price_usd", None)
+    out.setdefault("price_sol", None)
+    vtr = result.get("virtual_token_reserves") or 0
+    vsr = result.get("virtual_sol_reserves") or 0
+    if result.get("ok") and result.get("complete") is False and vtr > 0:
+        try:
+            price_sol = (vsr / 1e9) / (vtr / 1e6)
+            out["price_sol"] = price_sol
+            out["price_usd"] = price_sol * _sol_price_usd()
+        except Exception:
+            pass
+    return out
+
+
 # ---------------------------------------------------------------------------
 # MemeExecutor — public interface used by portfolio.py
 # ---------------------------------------------------------------------------
@@ -1584,6 +1622,11 @@ class MemeExecutor:
             # It is NOT graduation proof. Do not re-add it as a buy blocker.
             # Graduation proof comes exclusively from: dex_id=pumpswap/raydium/orca (CAT-3),
             # or get_pumpfun_curve_complete() returning complete=True / account_missing.
+            #
+            # Graduated-cohort exclusion: complete=True means the bonding curve is sealed.
+            # account_missing means the curve account was closed (token migrated).
+            # Both block buy. The preflight in portfolio.py runs get_pumpfun_curve_snapshot()
+            # first; this oracle re-uses the same 5s cache so no duplicate RPC is issued.
             _is_graduated   = False
             _grad_evidence  = []
             _curve          = {}          # populated by oracle in elif branch
@@ -1698,6 +1741,12 @@ class MemeExecutor:
             #   RPC error, bonding-curve not found, Token-2022, etc.).
             # FALLBACK: PumpPortal trade-local (handles all cases via pool="auto").
             # ALTERNATE backend: Jupiter (unchanged).
+            #
+            # T22 venue harness (Token-2022): buy = inventory acquisition only
+            #   (local build skipped → PumpPortal fallback is the real buy).
+            #   Sell legs for T22 positions are experimental: the exit router tests
+            #   Jupiter sell then pump-amm sell and logs which venue clears. This
+            #   buy block acquires real inventory; sell routing is data collection.
             if EXECUTOR_BACKEND == "pumpportal":
                 _sig_sent = False
                 # Check token program — local build only works for classic SPL Token mints

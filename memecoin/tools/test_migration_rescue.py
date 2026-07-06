@@ -28,10 +28,14 @@ from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch, call
 
 # ── Guard: if a prior test file installed a stub memecoin.config without the
-# full attribute set (e.g. test_jupiter_retry.py), portfolio.py will fail to
-# import. Clear the stub so the real module loads instead. ───────────────────
+# full attribute set, portfolio.py will fail to import. Clear both so the real
+# modules load instead.
+#
+# Checked attribute: JOURNAL_FILE (the attribute most likely to be missing from
+# minimal stubs — test_sol_delta_fixes.py has POSITIONS_FILE but not JOURNAL_FILE).
+# ───────────────────────────────────────────────────────────────────────────────
 _cfg_stub = sys.modules.get("memecoin.config")
-if _cfg_stub is not None and not hasattr(_cfg_stub, "POSITIONS_FILE"):
+if _cfg_stub is not None and not hasattr(_cfg_stub, "JOURNAL_FILE"):
     sys.modules.pop("memecoin.config", None)
     sys.modules.pop("memecoin.portfolio", None)
 
@@ -94,6 +98,16 @@ def _make_portfolio():
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
 class TestMigrationRescue(unittest.TestCase):
+
+    def setUp(self):
+        # Hardening tests (A, D, ...) each install their own config stubs that
+        # lack JOURNAL_FILE. If one ran before us, portfolio.py will fail to
+        # import when the next test calls `from memecoin import portfolio`.
+        # Clear both modules so the real config loads fresh.
+        _cfg = sys.modules.get("memecoin.config")
+        if _cfg is not None and not hasattr(_cfg, "JOURNAL_FILE"):
+            sys.modules.pop("memecoin.config", None)
+            sys.modules.pop("memecoin.portfolio", None)
 
     # ── Test P: rescue SUCCESS → finalize closes pos, journal written once ──
 
@@ -351,14 +365,16 @@ class TestHardeningA_FullPendingSig(unittest.TestCase):
         cfg.EXECUTION_RPC_FALLBACK_URLS          = []
         sys.modules["memecoin.config"] = cfg
 
-        # Governor
+        # Governor — include outAmount so estimate-fallback path also works
+        _wallet_a = "Wallet" + "1" * 37
         class _FakeGov:
             def request(self, purpose, endpoint, fn, mint="", **kwargs):
                 r = MagicMock()
                 r.status_code = 200
                 if endpoint == "quote":
                     r.json.return_value = {"priceImpactPct": "0.01", "inputMint": "X",
-                                           "outputMint": "Y", "inAmount": "1000000"}
+                                           "outputMint": "Y", "inAmount": "1000000",
+                                           "outAmount": "41726044"}
                     r.raise_for_status.return_value = None
                 elif endpoint == "swap":
                     r.json.return_value = {"swapTransaction": base64.b64encode(b"\x00"*128).decode()}
@@ -371,7 +387,7 @@ class TestHardeningA_FullPendingSig(unittest.TestCase):
         sys.modules["memecoin.jupiter_governor"] = gov_mod
 
         # Executor keypair
-        kp = MagicMock(); kp.pubkey.return_value = "Wallet" + "1" * 37
+        kp = MagicMock(); kp.pubkey.return_value = _wallet_a
         ex_mod = types.ModuleType("memecoin.executor")
         ex_mod._get_keypair = lambda: kp
         sys.modules["memecoin.executor"] = ex_mod
@@ -399,10 +415,21 @@ class TestHardeningA_FullPendingSig(unittest.TestCase):
             if m == "getSignatureStatuses":
                 return {"result": {"value": [{"confirmationStatus": "confirmed", "err": None}]}}
             if m == "getTransaction":
-                return {"result": {"meta": {"preBalances": [0], "postBalances": [0]},
-                                   "transaction": {"message": {"accountKeys": []}}}}
+                # wallet receives 0.05 SOL: preBalances[1]=0, postBalances[1]=50_000_000 lamports
+                return {"result": {"meta": {
+                    "preBalances":  [0, 0],
+                    "postBalances": [0, 50_000_000],
+                }, "transaction": {"message": {"accountKeys": [
+                    {"pubkey": "SomeProgramAccount", "signer": False, "writable": False},
+                    {"pubkey": _wallet_a,             "signer": True,  "writable": True},
+                ]}}}}
             return {}
-        jr._rpc_post = _fake_rpc
+
+        # Patch BOTH jupiter_rescue._rpc_post and tx_meta._rpc_post.
+        # read_sol_delta (in tx_meta) calls its own module-level _rpc_post, not jr._rpc_post.
+        import memecoin.tx_meta as _tm
+        _tm._rpc_post = _fake_rpc
+        jr._rpc_post   = _fake_rpc
 
         @dataclass
         class _P2:
@@ -601,6 +628,7 @@ class TestHardeningD_MigrationHighImpactUrgent(unittest.TestCase):
         cfg.EXECUTION_RPC_FALLBACK_URLS          = []
         sys.modules["memecoin.config"] = cfg
 
+        _wallet_d = "Wallet" + "1" * 37
         class _FakeGov:
             def request(self, purpose, endpoint, fn, mint="", **kwargs):
                 r = MagicMock()
@@ -608,7 +636,7 @@ class TestHardeningD_MigrationHighImpactUrgent(unittest.TestCase):
                 if endpoint == "quote":
                     r.json.return_value = {"priceImpactPct": "0.85",   # 85% > 50% max
                                            "inputMint": "X", "outputMint": "Y",
-                                           "inAmount": "1000000"}
+                                           "inAmount": "1000000", "outAmount": "50000000"}
                 elif endpoint == "swap":
                     r.json.return_value = {"swapTransaction": base64.b64encode(b"\x00"*128).decode()}
                 return r
@@ -618,7 +646,7 @@ class TestHardeningD_MigrationHighImpactUrgent(unittest.TestCase):
         gov.Purpose = _Pu
         sys.modules["memecoin.jupiter_governor"] = gov
 
-        kp = MagicMock(); kp.pubkey.return_value = "Wallet" + "1" * 37
+        kp = MagicMock(); kp.pubkey.return_value = _wallet_d
         ex = types.ModuleType("memecoin.executor")
         ex._get_keypair = lambda: kp
         sys.modules["memecoin.executor"] = ex
@@ -643,10 +671,16 @@ class TestHardeningD_MigrationHighImpactUrgent(unittest.TestCase):
             if m == "getSignatureStatuses":
                 return {"result": {"value": [{"confirmationStatus": "confirmed", "err": None}]}}
             if m == "getTransaction":
-                return {"result": {"meta": {"preBalances": [0], "postBalances": [50000000]},
-                                   "transaction": {"message": {"accountKeys": ["Wallet" + "1"*37]}}}}
+                # wallet receives 0.05 SOL at index 0 (string key form is handled by read_sol_delta)
+                return {"result": {"meta": {"preBalances": [0], "postBalances": [50_000_000]},
+                                   "transaction": {"message": {"accountKeys": [_wallet_d]}}}}
             return {}
-        jr._rpc_post = _fake_rpc
+
+        # Patch BOTH jupiter_rescue._rpc_post and tx_meta._rpc_post.
+        # read_sol_delta (in tx_meta) calls tx_meta._rpc_post, not jr._rpc_post.
+        import memecoin.tx_meta as _tm
+        _tm._rpc_post = _fake_rpc
+        jr._rpc_post   = _fake_rpc
 
         @dataclass
         class _P:

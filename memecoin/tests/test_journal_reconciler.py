@@ -31,6 +31,7 @@ def _install_stubs():
     cfg = types.ModuleType("memecoin.config")
     cfg.LIVE_JOURNAL_FILE    = Path("/tmp/reconciler_test_live.csv")
     cfg.SOCIAL_JOURNAL_FILE  = Path("/tmp/reconciler_test_social.csv")
+    cfg.JOURNAL_FILE         = Path("/tmp/reconciler_test_main.csv")
     cfg.WALLET_PUBKEY        = "8PNHvFWeMT7CqpUvJjAwVgAK545t5KV3uCPd8DUfaTiM"
     cfg.EXIT_ROUTER_ENABLED  = True
     cfg.LIVE_TRADING         = False
@@ -39,10 +40,29 @@ def _install_stubs():
     cfg.LOGS_DIR             = Path("/tmp")
     sys.modules["memecoin.config"] = cfg
 
-    # tx_meta stub — real module, but _rpc_post must be mockable
-    tx_meta = types.ModuleType("memecoin.tx_meta")
-    # Provide real read_sol_delta; tests will patch _rpc_post or read_sol_delta directly.
-    sys.modules.setdefault("memecoin.tx_meta", tx_meta)
+    # journal_io stub — provides JOURNAL_LOCK without importing full memecoin
+    journal_io = types.ModuleType("memecoin.journal_io")
+    import threading as _threading
+    journal_io.JOURNAL_LOCK = _threading.Lock()
+    sys.modules["memecoin.journal_io"] = journal_io
+
+    # execution_rpc stub must be installed BEFORE loading real tx_meta,
+    # because tx_meta._rpc_post lazily imports it on first call.
+    erpc = types.ModuleType("memecoin.execution_rpc")
+    erpc.rpc_post = MagicMock(return_value={"result": None})
+    sys.modules["memecoin.execution_rpc"] = erpc
+
+    # Load the REAL tx_meta module so its _rpc_post attribute exists and is
+    # patchable by test_sol_delta_fixes.py (which runs after this file alphabetically).
+    # An empty ModuleType stub (the previous approach) leaves _rpc_post absent, which
+    # causes AttributeError in patch.object(tm, "_rpc_post", ...) in the other test file.
+    if "memecoin.tx_meta" not in sys.modules:
+        import importlib.util as _ilu
+        _tm_path = Path(__file__).parent.parent / "tx_meta.py"
+        _tm_spec = _ilu.spec_from_file_location("memecoin.tx_meta", _tm_path)
+        _tm_mod = _ilu.module_from_spec(_tm_spec)
+        sys.modules["memecoin.tx_meta"] = _tm_mod
+        _tm_spec.loader.exec_module(_tm_mod)
 
     # executor stub (for _token_balance + _sol_price_usd)
     executor = types.ModuleType("memecoin.executor")
@@ -50,11 +70,6 @@ def _install_stubs():
     executor._sol_price_usd = MagicMock(return_value=150.0)
     executor._get_keypair   = MagicMock()
     sys.modules["memecoin.executor"] = executor
-
-    # execution_rpc stub (imported by tx_meta)
-    erpc = types.ModuleType("memecoin.execution_rpc")
-    erpc.rpc_post = MagicMock(return_value={"result": None})
-    sys.modules["memecoin.execution_rpc"] = erpc
 
 
 _install_stubs()
@@ -83,7 +98,8 @@ _FIELDS = [
     "rugcheck_score", "buy_tax", "sell_tax",
     "notes",
     "config_tag",
-    "tp_levels_hit", "realized_partial_usd", "remaining_fraction", "accounting_epoch",
+    "tp_levels_hit", "realized_partial_usd", "remaining_fraction",
+    "sol_received", "accounting_epoch",
 ]
 
 _FAKE_SIG = "FAKESIG0000000000000000000000000000000000000000000000000000000000000000000000000000000"
@@ -163,6 +179,7 @@ class TestReconcilerCorrects(unittest.TestCase):
                     "8PNHvFWeMT7CqpUvJjAwVgAK545t5KV3uCPd8DUfaTiM",
                     _live_path=live_path,
                     _social_path=social_path,
+                    _main_path=Path("/tmp/rec_test_A_main.csv"),
                 )
 
         self.assertEqual(result["rows_checked"], 1, "Should have checked 1 row")
@@ -344,12 +361,113 @@ class TestReconcilerIdempotent(unittest.TestCase):
                     "8PNHvFWeMT7CqpUvJjAwVgAK545t5KV3uCPd8DUfaTiM",
                     _live_path=live_path,
                     _social_path=social_path,
+                    _main_path=Path("/tmp/rec_test_D_main.csv"),
                 )
 
         mock_rsd.assert_not_called()
         self.assertEqual(result["rows_checked"], 0,
                          "Already-tagged row should not be checked")
         self.assertEqual(result["rows_corrected"], 0)
+
+
+# ---------------------------------------------------------------------------
+# Test E: Race — append during slow reconciler pass must not be erased
+# ---------------------------------------------------------------------------
+
+class TestReconcilerRaceAppendPreserved(unittest.TestCase):
+
+    def test_E_append_mid_pass_survives_rewrite(self):
+        """
+        Simulates a lost-update race:
+          1. Reconciler Phase 1 snapshot-reads the journal (1 existing row).
+          2. While RPC is 'slow', a new row is appended via JOURNAL_LOCK
+             (simulated by writing directly to the file under the same lock).
+          3. Reconciler Phase 2 re-reads fresh and rewrites.
+          4. Assert the new row appended mid-pass still exists after rewrite.
+        """
+        import threading
+        import memecoin.journal_reconciler as jr
+        from memecoin.journal_io import JOURNAL_LOCK
+
+        live_path   = Path("/tmp/rec_test_E_live.csv")
+        social_path = Path("/tmp/rec_test_E_social.csv")
+        main_path   = Path("/tmp/rec_test_E_main.csv")
+        new_row_id  = "NewRowMidPass"
+
+        # Start with one existing target row
+        existing_row = _make_row(
+            id="ExistingPos01",
+            exit_price="0",
+            pnl_pct="-100",
+            notes=f"live|tx:BUYTX|sell_tx:{_FAKE_SIG}",
+        )
+        _write_csv(live_path, [existing_row])
+        _write_csv(social_path, [])
+        _write_csv(main_path, [])
+
+        append_done = threading.Event()
+        new_row_written = []
+
+        def slow_read_sol_delta(sig, wallet):
+            """
+            First call: mimic slow RPC by appending a new row under JOURNAL_LOCK
+            before returning.  This simulates portfolio._append_journal() running
+            during Phase 1.
+            """
+            if not append_done.is_set():
+                with JOURNAL_LOCK:
+                    new_row = _make_row(
+                        id=new_row_id,
+                        exit_price="0.000050",
+                        pnl_pct="25.0",
+                        exit_reason="hard_stop",
+                        notes="live|tx:BUYTXNEW",
+                    )
+                    new_row_written.append(new_row)
+                    with open(live_path, "a", newline="") as f:
+                        w = csv.DictWriter(f, fieldnames=_FIELDS)
+                        w.writerow(new_row)
+                append_done.set()
+
+            return {
+                "ok": True,
+                "sol_delta": 0.030000,
+                "source": "native_lamports",
+                "attempts": 1,
+                "reason": "success",
+            }
+
+        with patch("memecoin.journal_reconciler.read_sol_delta", side_effect=slow_read_sol_delta):
+            with patch("memecoin.journal_reconciler._get_sol_price", return_value=150.0):
+                result = jr.run_reconciler_pass(
+                    "8PNHvFWeMT7CqpUvJjAwVgAK545t5KV3uCPd8DUfaTiM",
+                    _live_path=live_path,
+                    _social_path=social_path,
+                    _main_path=main_path,
+                )
+
+        rows_after = _read_csv(live_path)
+        ids_after = [r["id"] for r in rows_after]
+
+        self.assertIn("ExistingPos01", ids_after,
+                      "Original row must survive the reconciler rewrite")
+        self.assertIn(new_row_id, ids_after,
+                      "Row appended mid-pass must survive the reconciler rewrite")
+        self.assertEqual(len(rows_after), 2,
+                         f"Expected 2 rows, got {len(rows_after)}: {ids_after}")
+
+        # Original row should have been corrected
+        orig = next(r for r in rows_after if r["id"] == "ExistingPos01")
+        self.assertIn("journal_reconciled:", orig["notes"],
+                      "Original row should be tagged as reconciled")
+
+        # New row must be untouched (not a target row — no loss tag)
+        new = next(r for r in rows_after if r["id"] == new_row_id)
+        self.assertNotIn("journal_reconciled:", new["notes"],
+                         "Mid-pass appended row must not have been modified")
+
+        self.assertEqual(result["rows_corrected"], 1,
+                         "Only the original row should be corrected")
 
 
 if __name__ == "__main__":

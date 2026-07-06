@@ -40,6 +40,7 @@ from memecoin.config import (
 )
 from memecoin.data_client import dex_get_token
 from memecoin.candidate_log import promote_to_winners
+from memecoin.journal_io import JOURNAL_LOCK
 from app import alerts
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,8 @@ JOURNAL_FIELDS = [
     "tp_levels_hit",         # comma-joined list of TP keys hit before close, e.g. "tp_100,tp_300"
     "realized_partial_usd",  # USD locked in from partial TP sells (before final close)
     "remaining_fraction",    # fraction of original position closed at exit_price
+    # accounting v3 fields (added 2026-07-06)
+    "sol_received",          # raw SOL received from chain at exit (from tx_meta / reconciler)
     "accounting_epoch",      # which accounting logic produced this row
 ]
 
@@ -159,6 +162,7 @@ class Position:
     t60_logged: bool = False   # True once T+60s post-signal price is recorded
     creator_wallet: str = ""   # token deployer — triggers dev_dump exit if they sell
     tokens_held: int = 0       # raw token count from buy tx delta — used for known-balance TP sells
+    sol_received: float = 0.0  # raw SOL received at exit (from on-chain delta — accounting only)
 
     @property
     def pnl_pct(self) -> float:
@@ -280,6 +284,7 @@ def _build_journal_row(pos: Position) -> dict:
         "tp_levels_hit": ",".join(pos.tp_levels_hit),
         "realized_partial_usd": round(pos.realized_pnl_usd, 4),
         "remaining_fraction": round(pos.remaining_fraction, 4),
+        "sol_received": round(pos.sol_received, 8) if pos.sol_received else "",
         "accounting_epoch": ACCOUNTING_EPOCH,
     }
 
@@ -312,41 +317,44 @@ def _append_journal(pos: Position):
     _is_social = pos.signal_type == "social_alert"
     target = SOCIAL_JOURNAL_FILE if _is_social else JOURNAL_FILE
 
-    _ensure_journal_header(target)
-    write_header = not target.exists() or target.stat().st_size == 0
-    with open(target, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
-
-    # If this was a live trade, also write to the live journal
-    if pos.notes and "live|tx:" in pos.notes:
-        _ensure_journal_header(LIVE_JOURNAL_FILE)
-        write_header = not LIVE_JOURNAL_FILE.exists() or LIVE_JOURNAL_FILE.stat().st_size == 0
-        with open(LIVE_JOURNAL_FILE, "a", newline="") as f:
+    # Hold JOURNAL_LOCK for all file writes so reconciler rewrites cannot erase new rows.
+    # Never hold this lock during RPC calls — build the row before acquiring.
+    with JOURNAL_LOCK:
+        _ensure_journal_header(target)
+        write_header = not target.exists() or target.stat().st_size == 0
+        with open(target, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
             if write_header:
                 writer.writeheader()
             writer.writerow(row)
 
-        # DRY_RUN funnel counter — notify when threshold crossed
-        if "DRY_RUN" in (pos.notes or ""):
-            try:
-                count = 0
-                with open(LIVE_JOURNAL_FILE) as _f:
-                    for _r in csv.DictReader(_f):
-                        if "DRY_RUN" in (_r.get("notes") or ""):
-                            count += 1
-                if count >= 3:
-                    from app.alerts import _send
-                    _send(
-                        f"✅ DRY_RUN funnel: {count} signals through live path\n"
-                        f"Latest: {pos.token_symbol} ({pos.signal_type})\n"
-                        f"Ready for your go-live decision."
-                    )
-            except Exception:
-                pass
+        # If this was a live trade, also write to the live journal
+        if pos.notes and "live|tx:" in pos.notes:
+            _ensure_journal_header(LIVE_JOURNAL_FILE)
+            write_header = not LIVE_JOURNAL_FILE.exists() or LIVE_JOURNAL_FILE.stat().st_size == 0
+            with open(LIVE_JOURNAL_FILE, "a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
+                if write_header:
+                    writer.writeheader()
+                writer.writerow(row)
+
+    # DRY_RUN funnel counter — read + alert outside lock (non-critical, can be eventually consistent)
+    if pos.notes and "live|tx:" in pos.notes and "DRY_RUN" in (pos.notes or ""):
+        try:
+            count = 0
+            with open(LIVE_JOURNAL_FILE) as _f:
+                for _r in csv.DictReader(_f):
+                    if "DRY_RUN" in (_r.get("notes") or ""):
+                        count += 1
+            if count >= 3:
+                from app.alerts import _send
+                _send(
+                    f"✅ DRY_RUN funnel: {count} signals through live path\n"
+                    f"Latest: {pos.token_symbol} ({pos.signal_type})\n"
+                    f"Ready for your go-live decision."
+                )
+        except Exception:
+            pass
 
 
 def is_rescue_eligible_error(
@@ -948,6 +956,10 @@ class Portfolio:
                 #          price source yet; pump-amm sell path unreliable for Token-2022
                 _token_dex    = (paper_pos.dex_id or "").lower()
                 _token_age    = paper_pos.age_minutes or 0.0
+                # Graduated-cohort exclusion: CAT-3 tokens (dex_id=pumpswap/raydium/orca)
+                # are already migrated. No bonding-curve buy possible; no real-time feed.
+                # get_pumpfun_curve_snapshot() also blocks complete=True / account_missing
+                # tokens further down in the type-1 and type-2 paths.
                 _is_graduated = _token_dex in ("pumpswap", "raydium", "orca")
                 if _is_graduated:
                     log.info(
@@ -973,15 +985,64 @@ class Portfolio:
                 _pp.subscribe({_mint})
 
                 if _price_source == "pp":
-                    # ── Type-1 path: poll for live PP price, fail-closed if silent ──
+                    # ── Type-1 path: bonding-curve baseline, fail-closed if no price ─
+                    # New preflight order (replaces 2s flat PP wait):
+                    #   1. PP cache hit (instant)    → baseline_source='pp_tick'
+                    #   2. Curve snapshot (one RPC)  → baseline_source='curve' if complete=False
+                    #      complete=True / account_missing → block as graduated/migrated
+                    #   3. Curve RPC error           → wait 0.5s for PP tick (reduced from 2s)
+                    #   4. signal._price_pp fallback → bonding-curve confirmed at screen time
+                    #   5. All silent               → fail-closed
                     _pp_price = 0.0
-                    _pf_deadline = time.time() + 2.0
-                    while time.time() < _pf_deadline:
-                        _p = _pp.get_prices().get(_mint, 0)
-                        if _p > 0:
-                            _pp_price = _p
-                            break
-                        time.sleep(0.1)
+                    _baseline_source = ""
+                    _t_preflight_start = time.time()
+
+                    # 1. Check PP cache immediately (no wait)
+                    _pp_price = _pp.get_prices().get(_mint, 0)
+                    if _pp_price > 0:
+                        _baseline_source = "pp_tick"
+                    else:
+                        # 2. Fetch curve snapshot (shares 5s cache with executor buy gate)
+                        try:
+                            from memecoin.executor import get_pumpfun_curve_snapshot as _gcs
+                            _curve_snap = _gcs(_mint)
+                            _curve_complete = _curve_snap.get("complete")
+                            _curve_reason   = _curve_snap.get("reason", "")
+                            if _curve_complete is False and (_curve_snap.get("price_usd") or 0) > 0:
+                                # Still on bonding curve, got live price → use as baseline
+                                _pp_price = _curve_snap["price_usd"]
+                                _baseline_source = "curve"
+                            elif _curve_complete is True or _curve_reason == "account_missing":
+                                # Token graduated or curve account closed → block
+                                log.info(
+                                    "LIVE PREFLIGHT GRADUATED %s — curve complete=%s reason=%s; "
+                                    "blocking live buy (graduated/migrated)",
+                                    live_pos.token_symbol, _curve_complete, _curve_reason,
+                                )
+                                _pf_blocked = True
+                            elif not _curve_snap.get("ok"):
+                                # RPC/parse error → short PP wait (0.5s, not 2s)
+                                _pf_deadline = time.time() + 0.5
+                                while time.time() < _pf_deadline:
+                                    _p = _pp.get_prices().get(_mint, 0)
+                                    if _p > 0:
+                                        _pp_price = _p
+                                        _baseline_source = "pp_tick"
+                                        break
+                                    time.sleep(0.05)
+                        except Exception as _snap_e:
+                            log.debug("curve snapshot error type-1 %s: %s", _mint[:8], _snap_e)
+                            # Curve unavailable → short PP wait (0.5s)
+                            _pf_deadline = time.time() + 0.5
+                            while time.time() < _pf_deadline:
+                                _p = _pp.get_prices().get(_mint, 0)
+                                if _p > 0:
+                                    _pp_price = _p
+                                    _baseline_source = "pp_tick"
+                                    break
+                                time.sleep(0.05)
+
+                    _elapsed_ms = int((time.time() - _t_preflight_start) * 1000)
 
                     try:
                         from memecoin.health_monitor import bump_preflight_attempt as _bpa
@@ -989,27 +1050,35 @@ class Portfolio:
                     except Exception:
                         pass
 
-                    if _pp_price == 0:
-                        # Before fail-closing, check if signal carries a PP screening
-                        # price (set by _fire_screening_entry for tokens confirmed on
-                        # bonding curve).  A 1-3 min old token can have a 2-20s quiet
-                        # period between the screening accumulation and the TG alert.
+                    if not _pf_blocked:
+                        log.info(
+                            "LIVE PREFLIGHT BASELINE token=%s symbol=%s baseline=%s "
+                            "price=%.10f elapsed_ms=%d",
+                            _mint[:8], live_pos.token_symbol, _baseline_source or "none",
+                            _pp_price, _elapsed_ms,
+                        )
+
+                    if _pp_price == 0 and not _pf_blocked:
+                        # 4. signal._price_pp fallback: bonding-curve confirmed at screen time.
+                        # A 1-3 min old token can have a 2-20s quiet period between the
+                        # screening accumulation and the TG alert.
                         _sig_pp_fallback = getattr(signal, "_price_pp", 0.0) or 0.0
                         if _sig_pp_fallback > 0:
                             _pp_price = _sig_pp_fallback
                             log.info(
                                 "LIVE PREFLIGHT PP-QUIET %s — using screening price "
-                                "$%.10f (PP silent in 2s, bonding-curve confirmed)",
+                                "$%.10f (PP silent, bonding-curve confirmed at screen)",
                                 live_pos.token_symbol, _pp_price,
                             )
                         else:
+                            # 5. All silent → fail-closed
                             try:
                                 from memecoin.health_monitor import bump_preflight_no_price as _bpnp
                                 _bpnp()
                             except Exception:
                                 pass
                             log.warning(
-                                "LIVE PREFLIGHT NO PRICE %s — PP returned no price in 2s, "
+                                "LIVE PREFLIGHT NO PRICE %s — PP and curve both silent, "
                                 "blocking trade (fail-closed, type-1)",
                                 live_pos.token_symbol,
                             )
@@ -1017,7 +1086,7 @@ class Portfolio:
                                 from app.alerts import _send
                                 _send(
                                     f"🚫 PREFLIGHT NO PRICE {live_pos.token_symbol} — "
-                                    f"PP silent 2s. Trade blocked, no SOL spent."
+                                    f"PP and curve silent. Trade blocked, no SOL spent."
                                 )
                             except Exception:
                                 pass
@@ -1031,23 +1100,23 @@ class Portfolio:
                                 pass
                             _pf_blocked = True
 
-                    else:
-                        # PP-to-PP drift gate (20% — measures genuine movement only)
+                    if _pp_price > 0 and not _pf_blocked:
+                        # Drift gate: live price vs signal price (measures real movement)
                         _gate = SLIPPAGE_GATE_RT_PCT
                         if _sig_price and _pp_price > _sig_price * (1 + _gate):
                             _pf_slip = (_pp_price / _sig_price - 1) * 100
                             log.warning(
-                                "LIVE PREFLIGHT BLOCKED %s — PP %.10f is %.1f%% above signal "
-                                "%.10f (>%.0f%% pp gate)",
-                                live_pos.token_symbol, _pp_price, _pf_slip, _sig_price,
-                                _gate * 100,
+                                "LIVE PREFLIGHT BLOCKED %s — %s price %.10f is %.1f%% above "
+                                "signal %.10f (>%.0f%% gate)",
+                                live_pos.token_symbol, _baseline_source, _pp_price, _pf_slip,
+                                _sig_price, _gate * 100,
                             )
                             try:
                                 from app.alerts import _send
                                 _send(
                                     f"🚫 PREFLIGHT BLOCKED {live_pos.token_symbol} — "
-                                    f"PP ${_pp_price:.8f} already {_pf_slip:.1f}% above signal "
-                                    f"${_sig_price:.8f} (>{_gate*100:.0f}% pp gate). "
+                                    f"{_baseline_source} ${_pp_price:.8f} already {_pf_slip:.1f}% "
+                                    f"above signal ${_sig_price:.8f} (>{_gate*100:.0f}% gate). "
                                     f"No SOL spent."
                                 )
                             except Exception:
@@ -1063,53 +1132,99 @@ class Portfolio:
                             _pf_blocked = True
 
                 else:
-                    # ── Type-2 path (dex source): wait up to 2s for PP tick ──────
-                    # PP was subscribed above. For a fresh pump.fun token the first
-                    # trade event often arrives within 1-2s of subscribe. If we get
-                    # one, upgrade to same-venue comparison (PP_at_gate ÷ Jupiter)
-                    # which measures only real movement, not DexScreener indexer lag.
-                    # If PP stays silent, fall back to cross-venue dex baseline.
-                    # Type-2 path: no PP-based block. Original intent (see comment above).
-                    # Try 2s for a PP tick to get same-venue slippage baseline.
-                    # If PP silent, use Jupiter quote as baseline in executor.
-                    # Graduated tokens (bought accidentally) are handled by the
-                    # executor's 6005-detection → pump-amm escalation path.
+                    # ── Type-2 path (dex source): curve baseline, PP upgrade ────────
+                    # New preflight order (replaces 2s flat PP wait):
+                    #   1. PP cache hit (instant)    → upgrade to same-venue baseline
+                    #   2. Curve snapshot (one RPC)  → baseline_source='curve' if complete=False
+                    #      complete=True / account_missing → block as graduated/migrated (NEW)
+                    #   3. Curve RPC error           → wait 0.5s for PP tick (reduced from 2s)
+                    #   4. All silent               → use dex signal_price (existing fallback)
                     try:
                         from memecoin.health_monitor import bump_preflight_attempt as _bpa
                         _bpa()
                     except Exception:
                         pass
-                    _pp_at_gate    = 0.0
-                    _pf_deadline2  = time.time() + 2.0
-                    while time.time() < _pf_deadline2:
-                        _p2 = _pp.get_prices().get(_mint, 0)
-                        if _p2 > 0:
-                            _pp_at_gate = _p2
-                            break
-                        time.sleep(0.1)
-                    if _pp_at_gate > 0:
-                        _exec_signal_price = _pp_at_gate
-                        log.info(
-                            "LIVE PREFLIGHT UPGRADED %s — PP ticked at gate: $%.10f "
-                            "(dex was $%.10f) — using same-venue baseline",
-                            live_pos.token_symbol, _pp_at_gate, _sig_price or 0,
-                        )
+                    _pp_at_gate       = 0.0
+                    _baseline_source2 = ""
+                    _t_preflight2     = time.time()
+
+                    # 1. Check PP cache immediately (no wait)
+                    _p2 = _pp.get_prices().get(_mint, 0)
+                    if _p2 > 0:
+                        _pp_at_gate = _p2
+                        _baseline_source2 = "pp_tick"
                     else:
-                        # PP silent after 2s. Use DexScreener signal price as anchor
-                        # so size normalisation and signal-anchored hard stop both work.
+                        # 2. Fetch curve snapshot
+                        try:
+                            from memecoin.executor import get_pumpfun_curve_snapshot as _gcs2
+                            _curve_snap2 = _gcs2(_mint)
+                            _curve_complete2 = _curve_snap2.get("complete")
+                            _curve_reason2   = _curve_snap2.get("reason", "")
+                            if _curve_complete2 is False and (_curve_snap2.get("price_usd") or 0) > 0:
+                                _pp_at_gate = _curve_snap2["price_usd"]
+                                _baseline_source2 = "curve"
+                            elif _curve_complete2 is True or _curve_reason2 == "account_missing":
+                                # Token graduated or migrated → block (NEW: previously fell through)
+                                log.info(
+                                    "LIVE PREFLIGHT GRADUATED %s — curve complete=%s reason=%s; "
+                                    "blocking live buy (type-2, graduated/migrated)",
+                                    live_pos.token_symbol, _curve_complete2, _curve_reason2,
+                                )
+                                _pf_blocked = True
+                            elif not _curve_snap2.get("ok"):
+                                # RPC/parse error → short PP wait (0.5s, not 2s)
+                                _pf_deadline2 = time.time() + 0.5
+                                while time.time() < _pf_deadline2:
+                                    _p2b = _pp.get_prices().get(_mint, 0)
+                                    if _p2b > 0:
+                                        _pp_at_gate = _p2b
+                                        _baseline_source2 = "pp_tick"
+                                        break
+                                    time.sleep(0.05)
+                        except Exception as _snap2_e:
+                            log.debug("curve snapshot error type-2 %s: %s", _mint[:8], _snap2_e)
+                            _pf_deadline2 = time.time() + 0.5
+                            while time.time() < _pf_deadline2:
+                                _p2b = _pp.get_prices().get(_mint, 0)
+                                if _p2b > 0:
+                                    _pp_at_gate = _p2b
+                                    _baseline_source2 = "pp_tick"
+                                    break
+                                time.sleep(0.05)
+
+                    _elapsed_ms2 = int((time.time() - _t_preflight2) * 1000)
+
+                    if _pp_at_gate > 0 and not _pf_blocked:
+                        _exec_signal_price = _pp_at_gate
+                        # Also set _pp_price so size normalisation fires for curve-baseline buys
+                        if _baseline_source2 == "curve":
+                            _pp_price = _pp_at_gate
+                        log.info(
+                            "LIVE PREFLIGHT BASELINE token=%s symbol=%s baseline=%s "
+                            "price=%.10f elapsed_ms=%d",
+                            _mint[:8], live_pos.token_symbol, _baseline_source2,
+                            _pp_at_gate, _elapsed_ms2,
+                        )
+                    elif not _pf_blocked:
+                        # 4. All silent → use dex signal_price as anchor.
                         # Never enter with signal_price=0: stop_level=0*0.65=0 fires
                         # on any retracement and size norm is skipped entirely.
                         _exec_signal_price = _sig_price or paper_pos.signal_price
                         if not _exec_signal_price:
                             log.warning(
-                                "LIVE PREFLIGHT NO PRICE %s — PP silent 2s and no "
-                                "DexScreener price available; blocking (fail-closed)",
+                                "LIVE PREFLIGHT NO PRICE %s — PP and curve silent and no "
+                                "DexScreener price; blocking (fail-closed, type-2)",
                                 live_pos.token_symbol,
                             )
                             _pf_blocked = True
                         else:
                             log.info(
-                                "LIVE PREFLIGHT DEFERRED %s — PP silent 2s, "
+                                "LIVE PREFLIGHT BASELINE token=%s symbol=%s baseline=dex "
+                                "price=%.10f elapsed_ms=%d",
+                                _mint[:8], live_pos.token_symbol, _exec_signal_price, _elapsed_ms2,
+                            )
+                            log.info(
+                                "LIVE PREFLIGHT DEFERRED %s — PP and curve silent, "
                                 "using dex signal price $%.10f as stop/size anchor; "
                                 "Jupiter quote will be live baseline",
                                 live_pos.token_symbol, _exec_signal_price,
@@ -1832,14 +1947,39 @@ class Portfolio:
                                 for _gl_sig in reversed(_gl_sigs):
                                     _gl_res = _rsd_gl(_gl_sig, _gl_wallet)
                                     if _gl_res.get("ok") and (_gl_res.get("sol_delta") or 0) > 0:
+                                        _gl_sol_delta = _gl_res["sol_delta"]
+                                        # Convert chain delta to USD/token so exit_price matches entry_price units.
+                                        try:
+                                            from memecoin.executor import _sol_price_usd as _gl_sol_price_fn
+                                            _gl_sol_price = _gl_sol_price_fn()
+                                        except Exception:
+                                            _gl_sol_price = 0.0
+                                        # Tokens in this exit = remaining_fraction of original raw count.
+                                        _gl_tokens_raw = (pos.tokens_held or 0) * (pos.remaining_fraction or 1.0)
+                                        if _gl_tokens_raw > 0:
+                                            _gl_tokens_human = _gl_tokens_raw / 1e6  # pump.fun decimals=6
+                                        elif pos.entry_price > 0 and pos.size_usd > 0:
+                                            # Fallback: estimate token count from entry cost
+                                            _gl_tokens_human = (pos.size_usd * pos.remaining_fraction) / pos.entry_price
+                                        else:
+                                            _gl_tokens_human = 0.0
+                                        if _gl_tokens_human > 0 and _gl_sol_price > 0:
+                                            pos.exit_price = (_gl_sol_delta * _gl_sol_price) / _gl_tokens_human
+                                        else:
+                                            # Cannot compute USD/token — store 0; reconciler will fix
+                                            pos.exit_price = 0.0
+                                        pos.sol_received = _gl_sol_delta
+                                        pos.exit_reason = "graduated_recovered"
+                                        pos.notes = (
+                                            (pos.notes or "")
+                                            + f"|graduated_recovered:{_gl_sig[:8]}"
+                                            + f"|sol_received:{_gl_sol_delta:.8f}"
+                                        )
                                         log.warning(
                                             "graduated_recovered: sig confirmed sol_delta=%.6f  "
-                                            "sig=%s  pos=%s",
-                                            _gl_res["sol_delta"], _gl_sig[:16], pos_id,
+                                            "exit_price=%.8f USD/tok  sig=%s  pos=%s",
+                                            _gl_sol_delta, pos.exit_price, _gl_sig[:16], pos_id,
                                         )
-                                        pos.exit_price  = _gl_res["sol_delta"]
-                                        pos.exit_reason = "graduated_recovered"
-                                        pos.notes = (pos.notes or "") + f"|graduated_recovered:{_gl_sig[:8]}"
                                         _gl_recovered = True
                                         break
 
