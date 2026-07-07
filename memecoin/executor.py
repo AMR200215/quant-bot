@@ -172,7 +172,43 @@ _blockhash_cache: dict = {"blockhash": None, "ts": 0.0}
 _blockhash_lock  = threading.Lock()
 
 
+def _get_cached_blockhash() -> str | None:
+    """Return cached blockhash if < 5s old, else None."""
+    with _blockhash_lock:
+        if time.time() - _blockhash_cache["ts"] < 5.0:
+            return _blockhash_cache["blockhash"]
+    return None
+
+
+def _fetch_latest_blockhash_inline() -> str | None:
+    """
+    One synchronous getLatestBlockhash call. Writes result into the cache.
+    Called only when cache is cold. No sleep/retry.
+    Returns blockhash string, or None if RPC fails.
+    """
+    try:
+        resp = requests.post(
+            SOLANA_RPC,
+            json={"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash",
+                  "params": [{"commitment": "confirmed"}]},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        bh = resp.json()["result"]["value"]["blockhash"]
+        with _blockhash_lock:
+            _blockhash_cache["blockhash"] = bh
+            _blockhash_cache["ts"] = time.time()
+        log.info("blockhash inline-fetched (cache cold)")
+        return bh
+    except Exception as _e:
+        log.warning("blockhash inline fetch failed: %s", _e)
+        return None
+
+
 def _blockhash_refresher():
+    # Warm blockhash cache before first build
+    if not _get_cached_blockhash():
+        _fetch_latest_blockhash_inline()
     while True:
         try:
             resp = requests.post(
@@ -194,14 +230,6 @@ def _blockhash_refresher():
 
 threading.Thread(target=_blockhash_refresher, daemon=True,
                  name="blockhash-cache").start()
-
-
-def _get_cached_blockhash() -> str | None:
-    """Return cached blockhash if < 5s old, else None."""
-    with _blockhash_lock:
-        if time.time() - _blockhash_cache["ts"] < 5.0:
-            return _blockhash_cache["blockhash"]
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +446,9 @@ def _pumpfun_local_build_tx(
 
     blockhash = _get_cached_blockhash()
     if not blockhash:
-        raise RuntimeError("Blockhash cache empty — local build blocked (refreshes every 2s)")
+        blockhash = _fetch_latest_blockhash_inline()
+        if not blockhash:
+            raise RuntimeError("blockhash unavailable: cache cold and inline fetch failed")
 
     msg = MessageV0.try_compile(
         payer=keypair.pubkey(),
@@ -1964,6 +1994,7 @@ class MemeExecutor:
         escalate: bool = False,
         known_token_count: int = 0,
         urgent: bool = False,
+        skip_pumpswap: bool = False,
     ) -> dict:
         """
         Swap all held token_address → SOL.
@@ -2134,6 +2165,7 @@ class MemeExecutor:
                 _skip_pamm_t22 = (
                     _mint_token_program_cache.get(token_address) == _TOKEN22_PROGRAM_ID
                     or "TokenzQ" in _mint_token_program_cache.get(token_address, "")
+                    or skip_pumpswap
                 )
                 if _skip_pamm_t22:
                     log.warning(
@@ -2552,7 +2584,7 @@ class MemeExecutor:
             #   Skips the remaining bonding-curve ladder steps (already broken out).
             # _graduated_detected=False: all 3 PP steps failed (non-6005 reverts).
             #   Route: Jupiter directly (existing behaviour for dead/rugged tokens).
-            if _graduated_detected:
+            if _graduated_detected and not skip_pumpswap:
                 # ── Try local PumpSwap first (correct account structure) ──────────────
                 log.warning("SELL 6005-detected → trying local PumpSwap first  token=%s", token_address[:8])
                 try:

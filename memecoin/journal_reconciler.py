@@ -261,9 +261,10 @@ def _compute_correction(
 
         exit_price_new = None
         if tokens_held > 0 and sol_price > 0:
-            tokens_human = tokens_held * remaining_fraction / 1e6
-            if tokens_human > 0:
-                exit_price_new = (sol_received / tokens_human) * sol_price
+            from memecoin.tx_meta import compute_fill_price
+            _raw_tokens = int(tokens_held * remaining_fraction)
+            if _raw_tokens > 0:
+                exit_price_new = compute_fill_price(sol_received, _raw_tokens, sol_price)
 
         # Old pnl for delta stats (only count delta once per sig across files)
         usd_delta = 0.0

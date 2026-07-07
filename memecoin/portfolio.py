@@ -2240,17 +2240,72 @@ class Portfolio:
 
             sig        = rescue_result.get("tx_sig", "")
             sol_recv   = float(rescue_result.get("sol_received") or 0.0)
-            fill_price = rescue_result.get("fill_price") or pos.exit_price or 0.0
+            fill_price = rescue_result.get("fill_price") or 0.0
+            if fill_price == 0.0 and sol_recv > 0.0:
+                try:
+                    from memecoin.tx_meta import compute_fill_price
+                    from memecoin.executor import _sol_price_usd
+                    _sol_usd = _sol_price_usd()
+                    _tokens_raw = int(pos.tokens_held * pos.remaining_fraction)
+                    if _tokens_raw > 0 and _sol_usd > 0:
+                        fill_price = compute_fill_price(sol_recv, _tokens_raw, _sol_usd)
+                except Exception as _fp_err:
+                    log.debug("compute_fill_price failed in rescue finalize: %s", _fp_err)
 
             pos.status      = "closed"
             pos.exit_reason = "jupiter_rescue"
             pos.exit_time   = time.time()
-            pos.exit_price  = fill_price
             pos.notes = (pos.notes or "") + (
                 f"|sell_tx:{sig}|route:JUPITER_RESCUE"
                 f"|sol_received:{sol_recv:.6f}"
                 + (f"|sell_fill:{fill_price:.10f}" if fill_price else "")
             )
+
+            if fill_price > 0 and pos.entry_price > 0:
+                pos.exit_price = fill_price
+                pos.pnl_pct = fill_price / pos.entry_price - 1.0
+                pos.pnl_usd = pos.pnl_pct * pos.size_usd * pos.remaining_fraction
+            else:
+                # fill still unknown — don't alert $0/-100%
+                pos.exit_price = 0.0
+                pos.notes = (pos.notes or "") + "|fill_estimated|sol_parse_failed"
+                # send estimation alert instead of bogus -100%
+                try:
+                    from app import alerts as _al
+                    _al._send(
+                        f"[LIVE SELL] {pos.token_symbol} (SOL)\n"
+                        f"Reason:   jupiter_rescue\n"
+                        f"Exit confirmed — fill reconciling (est. pending)\n"
+                        f"SOL rcvd: {sol_recv:.4f}\n"
+                        f"Tx:       {sig[:20]}..."
+                    )
+                except Exception:
+                    pass
+                # skip the normal alert_live_sell call below
+                self._positions[pos_id] = pos
+                _append_journal(pos)
+                promote_to_winners(pos)
+                del self._positions[pos_id]
+                _save_positions(self._positions)
+                self._sell_stuck_until.pop(pos_id, None)
+                self._graduated_retry_count.pop(pos_id, None)
+                try:
+                    from memecoin.pumpportal_monitor import monitor as _ppmon
+                    _ppmon.clear_creator(pos.token_address)
+                except Exception:
+                    pass
+                with self._presigned_lock:
+                    self._presigned_exits.pop(pos.token_address, None)
+                    self._presigned_ts.pop(pos.token_address, None)
+                    self._graduated_mints.discard(pos.token_address)
+                try:
+                    from app import alerts
+                    alerts.alert_position_close(pos)
+                except Exception:
+                    pass
+                log.info("_finalize_rescue_sell: closed %s  sig=%s  sol=%.6f  fill=PENDING",
+                         pos.token_symbol, sig[:16] if sig else "", sol_recv)
+                return
 
             self._positions[pos_id] = pos
             _append_journal(pos)
@@ -2612,39 +2667,54 @@ class Portfolio:
             else:
                 # check take-profit ladder
                 _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
+                import re as _re
                 for tp_pct, tp_fraction in TP_LEVELS:
                     level_key = f"tp_{int(tp_pct*100)}"
                     if gain >= tp_pct and level_key not in pos.tp_levels_hit:
-                        pos.tp_levels_hit.append(level_key)
+                        # Cooldown check: skip if a recent TP sell failed for this level
+                        _now = time.time()
+                        _cd_match = _re.search(
+                            rf'\|tp_retry_cooldown:{_re.escape(level_key)}:(\d+)',
+                            pos.notes or "",
+                        )
+                        if _cd_match and _now < float(_cd_match.group(1)):
+                            continue  # still cooling down, skip this level
+                        # cooldown expired — remove old tag, allow re-arm
+                        if _cd_match:
+                            pos.notes = _re.sub(
+                                rf'\|tp_retry_cooldown:{_re.escape(level_key)}:\d+',
+                                "", pos.notes or "",
+                            )
+
                         sell_frac = tp_fraction * pos.remaining_fraction
-                        pos.remaining_fraction -= sell_frac
                         partial_usd = sell_frac * pos.size_usd
 
-                        # ── Live TP sell (background thread) ───────────────────────
-                        # Apply paper estimate immediately so the price-monitor loop
-                        # continues without blocking.  A daemon thread does the real
-                        # on-chain sell in the background and corrects realized_pnl_usd
-                        # once the tx confirms — the trailing stop can fire at any time.
-                        # Paper path or failed live sell: estimate stays.
-                        pos.realized_pnl_usd += sell_frac * pos.size_usd * tp_pct  # paper estimate
-
                         if LIVE_TRADING and _was_live_buy:
+                            # Dispatch live TP sell — do NOT mutate state yet.
+                            # State mutates only on confirmed fill inside _run_tp_sell_bg.
                             _tp_thread = threading.Thread(
                                 target=self._run_tp_sell_bg,
                                 args=(pos.id, sell_frac, tp_pct, level_key),
                                 daemon=True,
                             )
                             _tp_thread.start()
+                        else:
+                            # Paper path: mutate immediately (no on-chain risk)
+                            pos.tp_levels_hit.append(level_key)
+                            pos.remaining_fraction -= sell_frac
+                            pos.realized_pnl_usd += sell_frac * pos.size_usd * tp_pct
 
                         log.info(
-                            "TP hit %s  %s +%.0f%%  sold %.0f%% ($%.2f)  realized=$%.2f",
+                            "TP hit %s  %s +%.0f%%  selling %.0f%% ($%.2f)  realized=$%.2f",
                             pos.id, pos.token_symbol, gain * 100,
                             tp_fraction * 100, partial_usd, pos.realized_pnl_usd,
                         )
-                        try:
-                            alerts.alert_tp_hit(pos, tp_pct, partial_usd)
-                        except Exception:
-                            pass
+                        if not (LIVE_TRADING and _was_live_buy):
+                            # Paper path: alert immediately
+                            try:
+                                alerts.alert_tp_hit(pos, tp_pct, partial_usd)
+                            except Exception:
+                                pass
 
         # Update cycle counter for next iteration's dex_pair_loss discriminator
         self._last_cycle_n_with_dex = _this_cycle_n_with_dex
@@ -2657,10 +2727,9 @@ class Portfolio:
     def _run_tp_sell_bg(self, pos_id: str, sell_frac: float, tp_pct: float, level_key: str):
         """Execute a live partial TP sell in a daemon thread.
 
-        The paper estimate was already applied to realized_pnl_usd before this
-        thread started.  On success the estimate is replaced with the real fill.
-        The price-monitor loop is never blocked — the trailing stop can fire
-        during the ~10s tx confirmation window.
+        State (tp_levels_hit, remaining_fraction, realized_pnl_usd) is mutated
+        ONLY on confirmed fill. Failed sells add a cooldown tag and leave state
+        untouched so the TP level can re-arm after cooldown.
         """
         try:
             from memecoin.executor import MemeExecutor as _MEx
@@ -2670,14 +2739,10 @@ class Portfolio:
 
         pos = self._positions.get(pos_id)
         if pos is None or pos.status != "open":
-            # Position already closed by trailing stop while we were waiting — nothing to do
             log.info("LIVE TP BG: position %s already closed, skipping TP sell", pos_id)
             return
 
         # Use the exact token count received at buy time (from tx postTokenBalances delta).
-        # This bypasses the _token_balance() RPC call entirely — no settle lag, no
-        # zero_balance_partial failure on fast-pumping tokens that TP within 2-5s of entry.
-        # tokens_held is set on the live position at buy confirm time.
         _known_count = int(pos.tokens_held * sell_frac) if pos.tokens_held > 0 else 0
         if _known_count > 0:
             log.info("LIVE TP BG: using known_token_count=%d for %.0f%% sell  %s",
@@ -2686,17 +2751,36 @@ class Portfolio:
             log.info("LIVE TP BG: tokens_held=0, falling back to RPC balance query  %s",
                      pos.token_symbol)
 
+        # --- Cohort routing ---
+        _is_bc = bool(pos.notes and "cohort:bonding_curve" in (pos.notes or ""))
+        _tp_is_grad = "|cohort:graduated" in (pos.notes or "")
+
         try:
-            _tp_ex      = _MEx()
-            _tp_is_grad = "|cohort:graduated" in (pos.notes or "")
-            _tp_r  = _tp_ex.sell(
-                pos.token_address, pos.size_usd, pos.entry_price,
-                pos.chain, fraction=sell_frac,
-                escalate=_tp_is_grad,
-                known_token_count=_known_count,
-            )
+            _tp_ex = _MEx()
+            if _is_bc:
+                # Bonding-curve tokens: force BC path, never PumpSwap/pump-amm
+                _tp_r = _tp_ex.sell(
+                    pos.token_address, pos.size_usd, pos.entry_price,
+                    pos.chain, fraction=sell_frac,
+                    escalate=False,
+                    known_token_count=_known_count,
+                    skip_pumpswap=True,
+                )
+            else:
+                _tp_r = _tp_ex.sell(
+                    pos.token_address, pos.size_usd, pos.entry_price,
+                    pos.chain, fraction=sell_frac,
+                    escalate=_tp_is_grad,
+                    known_token_count=_known_count,
+                )
         except Exception as _tp_err:
-            log.warning("LIVE TP BG exception %s: %s — paper estimate kept", pos.token_symbol, _tp_err)
+            log.warning("LIVE TP BG exception %s: %s — state unchanged", pos.token_symbol, _tp_err)
+            # Add cooldown tag — no state mutation
+            pos = self._positions.get(pos_id)
+            if pos and pos.status == "open":
+                _cooldown_key = f"|tp_retry_cooldown:{level_key}:{int(time.time() + 30)}"
+                pos.notes = (pos.notes or "") + _cooldown_key
+                _save_positions(self._positions)
             return
 
         # Re-fetch position: it may have been closed during the tx confirmation
@@ -2706,15 +2790,17 @@ class Portfolio:
             _tp_fill_raw = _tp_r.get("fill_price")
             _tp_fill     = _tp_fill_raw if _tp_fill_raw else (pos.current_price if pos else 0.0)
             _tp_sig     = _tp_r.get("tx_sig", "")
-            _paper_est  = sell_frac * (pos.size_usd if pos else 0.0) * tp_pct
             _real_pnl   = (
                 (_tp_fill / pos.entry_price - 1) * sell_frac * pos.size_usd
-                if pos and pos.entry_price > 0 else _paper_est
+                if pos and pos.entry_price > 0 else 0.0
             )
 
             if pos and pos.status == "open":
-                # Position still open: swap paper estimate for real fill
-                pos.realized_pnl_usd += _real_pnl - _paper_est
+                # --- mutate state only here ---
+                if level_key not in pos.tp_levels_hit:
+                    pos.tp_levels_hit.append(level_key)
+                    pos.remaining_fraction -= sell_frac
+                    pos.realized_pnl_usd += _real_pnl
                 pos.notes = (
                     (pos.notes or "")
                     + f"|{level_key}_tx:{_tp_sig}"
@@ -2723,12 +2809,17 @@ class Portfolio:
                 _save_positions(self._positions)
                 log.warning(
                     "LIVE TP SELL BG %s  tp=+%.0f%%  frac=%.0f%%  "
-                    "fill=%.10f  real=$%.2f  paper_est=$%.2f  tx=%s",
+                    "fill=%.10f  real=$%.2f  tx=%s",
                     pos.token_symbol, tp_pct * 100, sell_frac * 100,
-                    _tp_fill, _real_pnl, _paper_est, _tp_sig[:16],
+                    _tp_fill, _real_pnl, _tp_sig[:16],
                 )
+                # alert TP success
+                try:
+                    partial_usd = sell_frac * pos.size_usd
+                    alerts.alert_tp_hit(pos, tp_pct, partial_usd)
+                except Exception:
+                    pass
             else:
-                # Position was closed while tx was confirming — just log
                 log.warning(
                     "LIVE TP SELL BG %s confirmed but position already closed  "
                     "fill=%.10f  realized=$%.2f  tx=%s",
@@ -2739,7 +2830,7 @@ class Portfolio:
                 _sym = pos.token_symbol if pos else pos_id
                 from app.alerts import _send
                 _send(
-                    f"✅ LIVE TP {_sym} +{tp_pct*100:.0f}%\n"
+                    f"LIVE TP {_sym} +{tp_pct*100:.0f}%\n"
                     f"Sold: {sell_frac*100:.0f}% of position\n"
                     f"Locked: ${_real_pnl:.2f}\n"
                     + (f"Remaining: {pos.remaining_fraction*100:.0f}%\n" if pos and pos.status == "open" else "")
@@ -2748,9 +2839,15 @@ class Portfolio:
             except Exception:
                 pass
         else:
+            # --- failure/revert: do NOT mutate remaining_fraction, realized_pnl, or tp_levels_hit ---
+            _cooldown_key = f"|tp_retry_cooldown:{level_key}:{int(time.time() + 30)}"
+            if pos and pos.status == "open":
+                pos.notes = (pos.notes or "") + _cooldown_key
+                _save_positions(self._positions)
             log.warning(
-                "LIVE TP BG sell FAILED %s — paper estimate kept. reason=%s",
+                "TP partial sell FAILED %s level=%s — cooldown 30s. reason=%s",
                 pos.token_symbol if pos else pos_id,
+                level_key,
                 _tp_r.get("reason") or _tp_r.get("error", "unknown"),
             )
 
