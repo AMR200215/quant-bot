@@ -163,6 +163,61 @@ _PRESIGNED_RESERVE = 50_000     # headroom for presigned emergency exit
 
 
 # ---------------------------------------------------------------------------
+# Shared RPC helper — defined early so _fetch_latest_blockhash_inline (called
+# by the blockhash-cache thread at import time) can use it without a NameError.
+# ---------------------------------------------------------------------------
+def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
+    """POST to SOLANA_RPC with a three-tier fallback chain.
+
+    Tier 1 — Helius (primary, paid):
+      429 burst → retry once after 1.5s before escalating.
+      Timeout or persistent 429 → Tier 2.
+
+    Tier 2 — Solana public RPC (api.mainnet-beta.solana.com):
+      Timeout or 429 → Tier 3.
+
+    Tier 3 — Ankr free RPC (rpc.ankr.com/solana):
+      Last resort; response returned regardless of status.
+    """
+    # ── Tier 1: Helius ──────────────────────────────────────────────────────
+    _primary_failed = False
+    try:
+        resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
+        if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
+            log.warning("Primary RPC 429 — retrying Helius in 1.5s")
+            time.sleep(1.5)
+            resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
+        if resp.status_code not in (429, 503) or SOLANA_RPC == SOLANA_RPC_FALLBACK:
+            return resp
+        _primary_failed = True
+    except requests.exceptions.Timeout:
+        log.warning("Primary RPC unavailable (timeout) — falling back to mainnet-beta")
+        _primary_failed = True
+    except requests.exceptions.RequestException as e:
+        log.warning("Primary RPC unavailable (%s) — falling back to mainnet-beta", e)
+        _primary_failed = True
+
+    if not _primary_failed:
+        return resp  # type: ignore[return-value]  # 503 path falls through
+
+    # ── Tier 2: Solana public RPC ───────────────────────────────────────────
+    log.warning("Primary RPC still failing — falling back to mainnet-beta")
+    try:
+        resp2 = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
+        if resp2.status_code not in (429, 503):
+            return resp2
+        log.warning("mainnet-beta also failing (%d) — trying Ankr", resp2.status_code)
+    except requests.exceptions.Timeout:
+        log.warning("mainnet-beta timeout — trying Ankr")
+    except requests.exceptions.RequestException as e:
+        log.warning("mainnet-beta unavailable (%s) — trying Ankr", e)
+
+    # ── Tier 3: Ankr free RPC ───────────────────────────────────────────────
+    log.warning("Primary RPC unavailable (429) — falling back to publicnode")
+    return requests.post(SOLANA_RPC_FALLBACK2, json=payload, timeout=timeout)
+
+
+# ---------------------------------------------------------------------------
 # Blockhash cache — refreshed every 2s by background thread.
 # Eliminates one getLatestBlockhash RPC call from the local-build path.
 # PumpPortal path fetches its own blockhash server-side; cache used by
@@ -492,60 +547,6 @@ def _get_keypair():
             raise RuntimeError("SOLANA_PRIVATE_KEY env var not set")
         _keypair_cache = Keypair.from_bytes(base58.b58decode(raw))
         return _keypair_cache
-
-
-# ---------------------------------------------------------------------------
-# Shared RPC helpers
-# ---------------------------------------------------------------------------
-def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
-    """POST to SOLANA_RPC with a three-tier fallback chain.
-
-    Tier 1 — Helius (primary, paid):
-      429 burst → retry once after 1.5s before escalating.
-      Timeout or persistent 429 → Tier 2.
-
-    Tier 2 — Solana public RPC (api.mainnet-beta.solana.com):
-      Timeout or 429 → Tier 3.
-
-    Tier 3 — Ankr free RPC (rpc.ankr.com/solana):
-      Last resort; response returned regardless of status.
-    """
-    # ── Tier 1: Helius ──────────────────────────────────────────────────────
-    _primary_failed = False
-    try:
-        resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
-        if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
-            log.warning("Primary RPC 429 — retrying Helius in 1.5s")
-            time.sleep(1.5)
-            resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
-        if resp.status_code not in (429, 503) or SOLANA_RPC == SOLANA_RPC_FALLBACK:
-            return resp
-        _primary_failed = True
-    except requests.exceptions.Timeout:
-        log.warning("Primary RPC unavailable (timeout) — falling back to mainnet-beta")
-        _primary_failed = True
-    except requests.exceptions.RequestException as e:
-        log.warning("Primary RPC unavailable (%s) — falling back to mainnet-beta", e)
-        _primary_failed = True
-
-    if not _primary_failed:
-        return resp  # type: ignore[return-value]  # 503 path falls through
-
-    # ── Tier 2: Solana public RPC ───────────────────────────────────────────
-    log.warning("Primary RPC still failing — falling back to mainnet-beta")
-    try:
-        resp2 = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
-        if resp2.status_code not in (429, 503):
-            return resp2
-        log.warning("mainnet-beta also failing (%d) — trying Ankr", resp2.status_code)
-    except requests.exceptions.Timeout:
-        log.warning("mainnet-beta timeout — trying Ankr")
-    except requests.exceptions.RequestException as e:
-        log.warning("mainnet-beta unavailable (%s) — trying Ankr", e)
-
-    # ── Tier 3: Ankr free RPC ───────────────────────────────────────────────
-    log.warning("Primary RPC unavailable (429) — falling back to publicnode")
-    return requests.post(SOLANA_RPC_FALLBACK2, json=payload, timeout=timeout)
 
 
 def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 1) -> int:
