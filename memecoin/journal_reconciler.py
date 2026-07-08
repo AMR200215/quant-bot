@@ -285,6 +285,26 @@ def _compute_correction(
             round(pnl_pct_new, 2) if pnl_pct_new is not None else "n/a",
         )
 
+        # ── Telemetry: journal corrected ──
+        try:
+            from memecoin import telemetry as _tel
+            _pos_id = row.get("id", "")
+            _rt = _tel.get_trace_id_for_pos(_pos_id)
+            if _rt:
+                _old_pnl = 0.0
+                try:
+                    _old_pnl = float(row.get("pnl_usd") or 0)
+                except (TypeError, ValueError):
+                    pass
+                _tel.event(_rt, "journal_corrected",
+                    row_id=_pos_id,
+                    old_pnl=round(_old_pnl, 4),
+                    new_pnl=round(pnl_usd_new, 4) if pnl_usd_new is not None else None,
+                    sol_delta=round(sol_received, 8),
+                )
+        except Exception:
+            pass
+
         return {
             "exit_price":    exit_price_new,
             "pnl_usd":       round(pnl_usd_new, 4) if pnl_usd_new is not None else None,

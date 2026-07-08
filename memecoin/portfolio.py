@@ -324,6 +324,15 @@ def _append_price_tick(pos: "Position", price: float) -> None:
 
 
 def _append_journal(pos: Position):
+    # ── Telemetry: journal write ──
+    try:
+        from memecoin import telemetry as _tel
+        _jt = _tel.get_trace_id_for_pos(pos.id)
+        if _jt:
+            _tel.event(_jt, "journal_write_started", pos_id=pos.id)
+    except Exception:
+        pass
+
     JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
     row = _build_journal_row(pos)
 
@@ -341,6 +350,20 @@ def _append_journal(pos: Position):
             if write_header:
                 writer.writeheader()
             writer.writerow(row)
+
+        # ── Telemetry: journal written ──
+        try:
+            _jt2 = _tel.get_trace_id_for_pos(pos.id)
+            if _jt2:
+                _tel.event(_jt2, "journal_written",
+                    pos_id=pos.id,
+                    exit_price=pos.exit_price,
+                    pnl_usd=pos.pnl_usd,
+                    exit_reason=pos.exit_reason,
+                    fill_estimated="|entry_estimated" in (pos.notes or ""),
+                )
+        except Exception:
+            pass
 
         # If this was a live trade, also write to the live journal
         if pos.notes and "live|tx:" in pos.notes:
@@ -1273,6 +1296,7 @@ class Portfolio:
                 _stop_dist = abs(_pp_price - _eff_stop) / _pp_price if _pp_price > 0 else abs(paper_pos.hard_stop_pct)
                 if _stop_dist > 0:
                     _size_mult = _base_stop_pct / _stop_dist
+                    _raw_size_mult = _size_mult            # before any clamp
                     _size_mult = max(0.5, min(1.0, _size_mult))
                     _orig_size = _live_size
                     _live_size = round(_live_size * _size_mult, 2)
@@ -1283,11 +1307,78 @@ class Portfolio:
                         _stop_dist * 100, _size_mult, _orig_size, _live_size,
                     )
 
+                    # ── Shadow size-floor reporting — no behavior change ──
+                    _hyp_size_mult_025 = max(0.25, min(1.0, _raw_size_mult))
+                    _live_size_used_usd = _orig_size * _size_mult
+                    _hyp_size_025_usd = _orig_size * _hyp_size_mult_025
+                    _drift_pct = (_pp_price / _sig_price - 1.0) * 100 if _sig_price > 0 else 0.0
+                    _stop_dist_from_fill = (_eff_stop / _pp_price - 1.0) * 100 if _pp_price > 0 else 0.0
+                    log.info(
+                        "SIZE_SHADOW %s: raw_mult=%.2f live_mult=%.2f hyp_mult_025=%.2f "
+                        "live_size=$%.2f hyp_size_025=$%.2f drift=%.1f%% eff_stop=%.8g stop_dist=%.1f%%",
+                        live_pos.token_symbol, _raw_size_mult, _size_mult, _hyp_size_mult_025,
+                        _live_size_used_usd, _hyp_size_025_usd, _drift_pct, _eff_stop, _stop_dist_from_fill,
+                    )
+                    try:
+                        from memecoin import telemetry as _tel
+                        _shadow_trace = _tel.get_trace_id_for_pos(live_pos.id)
+                        if _shadow_trace:
+                            _tel.event(_shadow_trace, "size_shadow",
+                                raw_mult=round(_raw_size_mult, 4),
+                                live_mult=round(_size_mult, 4),
+                                hyp_mult_025=round(_hyp_size_mult_025, 4),
+                                live_size_usd=round(_live_size_used_usd, 2),
+                                hyp_size_025_usd=round(_hyp_size_025_usd, 2),
+                                drift_pct=round(_drift_pct, 2),
+                                eff_stop=_eff_stop,
+                                stop_dist_from_fill=round(_stop_dist_from_fill, 2),
+                            )
+                    except Exception:
+                        pass
+
+            # ── Telemetry: preflight done, buy build starting ──
+            _entry_trace_id = getattr(signal, '_telemetry_trace_id', '') or ''
+            _buy_build_start_ts = time.time()
+            try:
+                from memecoin import telemetry as _tel
+                if _entry_trace_id:
+                    # Update trace with actual pos_id now that we know it
+                    with _tel._traces_lock:
+                        _tmeta = _tel._traces.get(_entry_trace_id)
+                        if _tmeta:
+                            _tmeta["pos_id"] = live_pos.id
+                    _tel.event(_entry_trace_id, "preflight_started",
+                        preflight_ts=getattr(self, '_t_preflight_start', _buy_build_start_ts),
+                    )
+                    _tel.event(_entry_trace_id, "preflight_baseline_selected",
+                        baseline_source=_baseline_source if '_baseline_source' in dir() else "unknown",
+                        pp_price=_pp_price,
+                        sig_price=_sig_price,
+                    )
+                    _tel.event(_entry_trace_id, "buy_build_started",
+                        buy_build_start_ts=_buy_build_start_ts,
+                        live_size_usd=_live_size,
+                    )
+            except Exception:
+                pass
+
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
                             signal_price=_exec_signal_price,
                             max_slippage_pct=0.30,
                             dex_id=live_pos.dex_id)
+
+            _buy_done_ts = time.time()
+            try:
+                if _entry_trace_id:
+                    _tel.event(_entry_trace_id, "buy_build_done",
+                        buy_done_ts=_buy_done_ts,
+                        build_ms=round((_buy_done_ts - _buy_build_start_ts) * 1000, 1),
+                        success=result.get("success", False),
+                    )
+            except Exception:
+                pass
+
             if result.get("success"):
                 fill_price = result.get("fill_price") or live_pos.entry_price
                 signal_price = live_pos.entry_price
@@ -1431,6 +1522,30 @@ class Portfolio:
                     _leg_exec or 0,
                     _total or 0,
                 )
+                # ── Telemetry: buy confirmed + fill recorded ──
+                try:
+                    if _entry_trace_id:
+                        _tel.event(_entry_trace_id, "buy_confirmed",
+                            buy_confirmed_ts=_t_now,
+                            fill_price=fill_price,
+                            tx_sig=result.get("tx_sig", ""),
+                            tokens_received=result.get("tokens_received_raw", 0),
+                            entry_slippage_pct=result.get("entry_slippage_pct"),
+                            jupiter_quote_price=_jup_price,
+                            total_slip_pct=round(_total_slip, 2) if _total_slip is not None else None,
+                        )
+                        _tel.event(_entry_trace_id, "buy_fill_recorded",
+                            fill_recorded_ts=time.time(),
+                            pos_id=live_pos.id,
+                            live_size_usd=_live_size,
+                            signal_price=_sig_price,
+                            pp_gate_price=_pp_at_gate if '_pp_at_gate' in dir() else 0,
+                            fill_price=fill_price,
+                            alert_to_fill_ms=round((_t_now - _t_receive) * 1000, 1) if _t_receive else None,
+                        )
+                except Exception:
+                    pass
+
                 try:
                     from app.alerts import alert_live_buy
                     alert_live_buy(live_pos, result.get("tx_sig",""), result.get("sol_spent", _live_size / 70))
@@ -1602,6 +1717,30 @@ class Portfolio:
                     _skip_chain_sell = True
             except Exception:
                 pass
+
+        # ── Telemetry: exit triggered ──
+        _exit_trace_id = ""
+        try:
+            from memecoin import telemetry as _tel
+            _exit_trace_id = _tel.get_trace_id_for_pos(pos_id)
+            if not _exit_trace_id and _was_live_buy:
+                # Position opened before telemetry — start a new trace
+                _exit_trace_id = _tel.start_trace(
+                    pos_id=pos_id,
+                    mint=pos.token_address,
+                    symbol=pos.token_symbol,
+                    live_or_paper="live",
+                )
+            if _exit_trace_id:
+                _tel.event(_exit_trace_id, "exit_triggered",
+                    reason=reason,
+                    trigger_price=price or pos.current_price,
+                    trigger_source="close_position",
+                    fraction=pos.remaining_fraction,
+                    skip_chain_sell=_skip_chain_sell,
+                )
+        except Exception:
+            pass
 
         if LIVE_TRADING and _was_live_buy and not _skip_chain_sell:
             from memecoin.executor import MemeExecutor
@@ -1927,6 +2066,19 @@ class Portfolio:
                         )
                         log.info("Live sell confirmed %s  tx=%s  fill=%.10f",
                                  pos.token_symbol, result.get("tx_sig","")[:16], fill)
+                        # ── Telemetry: sell confirmed ──
+                        try:
+                            if _exit_trace_id:
+                                _tel.event(_exit_trace_id, "sell_confirmed",
+                                    sell_confirmed_ts=time.time(),
+                                    tx_sig=result.get("tx_sig", ""),
+                                    fill_price=fill,
+                                    sol_received=result.get("sol_received", 0),
+                                    ladder_step=result.get("ladder_step", 1),
+                                    route_used=result.get("route", "executor"),
+                                )
+                        except Exception:
+                            pass
                         try:
                             from app.alerts import alert_live_sell
                             alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
@@ -2656,6 +2808,20 @@ class Portfolio:
                     reason = "time_stop"
 
             if reason:
+                # ── Telemetry: exit condition true ──
+                try:
+                    from memecoin import telemetry as _tel
+                    _mon_tid = _tel.get_trace_id_for_pos(pos.id)
+                    if _mon_tid:
+                        _evt_name = "tp_condition_true" if reason.startswith("whale_exit") else "exit_condition_true"
+                        _tel.event(_mon_tid, _evt_name,
+                            reason=reason,
+                            trigger_price=pos.current_price,
+                            gain_pct=round(gain * 100, 2),
+                            peak_gain_pct=round(_peak_gain * 100, 2),
+                        )
+                except Exception:
+                    pass
                 closed = self.close_position(pos.id, reason)
                 if closed:
                     exits.append({
@@ -2731,6 +2897,20 @@ class Portfolio:
         ONLY on confirmed fill. Failed sells add a cooldown tag and leave state
         untouched so the TP level can re-arm after cooldown.
         """
+        # ── Telemetry: TP sell triggered ──
+        _tp_trace_id = ""
+        try:
+            from memecoin import telemetry as _tel
+            _tp_trace_id = _tel.get_trace_id_for_pos(pos_id) or ""
+            if _tp_trace_id:
+                _tel.event(_tp_trace_id, "exit_queued",
+                    reason=f"tp_{level_key}",
+                    tp_pct=tp_pct,
+                    sell_frac=sell_frac,
+                )
+        except Exception:
+            pass
+
         try:
             from memecoin.executor import MemeExecutor as _MEx
         except Exception as _e:

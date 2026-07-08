@@ -134,6 +134,18 @@ logs/
 7. If all sell attempts fail → `sell_stuck`, arms `_sell_stuck_until` (retry after backoff)
 8. Reconciler (runs every 60s): if on-chain balance = 0 but position open → `close_position("reconciled_gone")` — skips on-chain sell
 
+### MU Retry Ladder (deployed 2026-07-07, commit 538132f)
+
+- **Attempts 1-3**: normal oracle-gated retry (BC still open → retry sell)
+- **Attempts 4-7**: Jupiter rescue escalation (when complete=True / account_missing / PumpSwap pool exists)
+- **Attempt 8**: final gate
+  - sig sweep (check if any pending sig already confirmed)
+  - token balance check
+  - outcome: recovered | reconciled_gone | manual_required
+- After attempt 8: no more auto-retries
+- Total duration: bounded ~8 minutes
+- The 30-minute retry loop was the LEAN failure mode (pre-fix). Not the design.
+
 ---
 
 ## Known Issues / Active Constraints
@@ -163,6 +175,9 @@ With this flag True, only the Telegram social feed drives signals. Whale wallet 
 
 ### Sell kill switch (added)
 `kill_switch.py` now has an independent sell switch (`_live_sells_enabled`). `/sells_off` in Telegram disables all on-chain sells without stopping position tracking. `/sells_on` re-enables. Useful if you manually sell in Phantom and want to prevent the bot from also trying to sell.
+
+### Jul 6-7 batch summary
+Multiple live trades (LEAN, ESCAPE, BULL, STOCK BULL) exposed sell-path failure modes. All fixed in MU retry ladder (commit 538132f): oracle-gated retries 1-3, Jupiter rescue escalation 4-7, final balance gate at attempt 8. Telemetry layer added (commit pending) to instrument future trades with full entry/exit lifecycle timestamps. Old Jul 6-7 trades lack timing data — timing instrumentation was not yet deployed.
 
 ---
 

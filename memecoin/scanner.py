@@ -933,7 +933,27 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     """Called by TelegramMonitor when a token address is found in a channel message."""
     import time as _time
     _t0 = _time.time()
+    _alert_received_ts = _t0
     _health.bump_tg_message()
+
+    # ── Telemetry: start entry trace ──
+    _trace_id = ""
+    try:
+        from memecoin import telemetry as _tel
+        _trace_id = _tel.start_trace(
+            pos_id="pending",
+            mint=address,
+            symbol=address[:8],
+            live_or_paper="unknown",
+            pair_id=f"tg_{address[:16]}_{int(_t0)}",
+        )
+        _tel.event(_trace_id, "alert_received",
+            source_channel="pumpdotfunalert",
+            raw_mint=address,
+            alert_ts=_alert_received_ts,
+        )
+    except Exception:
+        pass
 
     # ── Subscribe-on-signal (preflight_no_price reduction) ──────────────────
     # Fire PP subscribeTokenTrade immediately — before screen_token() runs.
@@ -1082,6 +1102,21 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         _record_prefetch_stats(_prefetch_dex_hit, _prefetch_safety_hit,
                                 _screen_ms, _decision_ms)
 
+        # ── Telemetry: screen done ──
+        try:
+            if _trace_id:
+                _tel.event(_trace_id, "alert_parsed",
+                    raw_symbol=address[:8],
+                    screen_ms=round(_screen_ms, 1),
+                    decision_ms=round(_decision_ms, 1),
+                )
+                _tel.event(_trace_id, "token_resolved",
+                    dex_hit=_prefetch_dex_hit,
+                    safety_hit=_prefetch_safety_hit,
+                )
+        except Exception:
+            pass
+
         reason = screen.get("reason", "")
 
         # Hard reject: no DexScreener data yet.
@@ -1228,10 +1263,28 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                 log.warning("TG creator UNRESOLVED %s after %.1fs — live entry will be blocked",
                             address[:8], _time.time() - _t0)
         _health.bump_live_eligible()
+
+        # ── Telemetry: entry category decided, signal queued ──
+        try:
+            if _trace_id:
+                _tel.event(_trace_id, "entry_category_decided",
+                    signal_type="social_alert",
+                    price_source=sig._price_source,
+                    price_pp=getattr(sig, '_price_pp', 0),
+                    price_dex=getattr(sig, '_price_dex', 0),
+                    total_latency_ms=round((_time.time() - _t0) * 1000, 1),
+                )
+        except Exception:
+            pass
+
         try:
             log_signal_candidate(sig)
         except Exception as _lsc_err:
             log.debug("log_signal_candidate failed: %s", _lsc_err)
+
+        # Attach trace_id to signal so portfolio.py can continue the trace
+        sig._telemetry_trace_id = _trace_id
+
         _add_signal(sig)
     except _NoDexData:
         raise  # propagate to TelegramMonitor for 45s retry
@@ -1944,6 +1997,27 @@ def _portfolio_thread():
                             log.warning("MU RETRY %d/8  token=%s  route=%s  state=%s  last_error=%s",
                                         _mu_n, _sp.token_symbol, _mu_route, _mu_complete, _mu_last_err)
 
+                            # ── Telemetry: MU retry attempt ──
+                            try:
+                                from memecoin import telemetry as _tel_mu
+                                _mu_tid = _tel_mu.get_trace_id_for_pos(_sp.id)
+                                if not _mu_tid:
+                                    _mu_tid = _tel_mu.start_trace(
+                                        pos_id=_sp.id, mint=_sp.token_address,
+                                        symbol=_sp.token_symbol, live_or_paper="live",
+                                    )
+                                    _tel_mu.event(_mu_tid, "mu_entered",
+                                        mu_first_ts=int(time.time()),
+                                    )
+                                _tel_mu.event(_mu_tid, "mu_retry_attempt",
+                                    attempt_number=_mu_n,
+                                    oracle_complete=_mu_complete,
+                                    pool_exists=_mu_ps_pool,
+                                    route_chosen=_mu_route,
+                                )
+                            except Exception:
+                                pass
+
                             if _mu_n <= 3:
                                 # ── Attempts 1–3: oracle-gated, existing behavior ──
                                 log.info("SELL STUCK retry triggered for %s  pos=%s  reason=%s  attempt=%d",
@@ -2044,6 +2118,13 @@ def _portfolio_thread():
                                 # ── Attempt 8: final gate ──
                                 log.warning("MU RETRY 8 (FINAL) — running graduated_loss gate for %s", _sp.token_symbol)
                                 _sp.notes = (_sp.notes or "") + "|mu_final_gate|"
+                                try:
+                                    if _mu_tid:
+                                        _tel_mu.event(_mu_tid, "mu_final_gate",
+                                            attempt_number=8,
+                                        )
+                                except Exception:
+                                    pass
 
                                 # Check pending sigs first
                                 _mu8_recovered = False
@@ -2085,12 +2166,24 @@ def _portfolio_thread():
                                 if _mu8_bal == 0:
                                     # No confirmed sig AND balance == 0 → close as reconciled_gone
                                     log.warning("MU RETRY 8 — balance=0 + no confirmed sig → reconciled_gone  token=%s", _sp.token_symbol)
+                                    try:
+                                        if _mu_tid:
+                                            _tel_mu.event(_mu_tid, "mu_recovered",
+                                                resolution="reconciled_gone", balance=0)
+                                    except Exception:
+                                        pass
                                     portfolio._positions[_sp.id] = _sp
                                     portfolio._save()
                                     portfolio.close_position(_sp.id, "reconciled_gone", _sp.current_price or _sp.entry_price)
                                 elif _mu8_bal > 0:
                                     # Balance still present → manual required, do NOT write graduated_loss
                                     _sp.notes = (_sp.notes or "") + "|migration_manual_required|"
+                                    try:
+                                        if _mu_tid:
+                                            _tel_mu.event(_mu_tid, "mu_manual_required",
+                                                balance=_mu8_bal)
+                                    except Exception:
+                                        pass
                                     portfolio._positions[_sp.id] = _sp
                                     portfolio._save()
                                     log.error("MU RETRY 8 — balance=%d still present, manual check required  token=%s", _mu8_bal, _sp.token_symbol)

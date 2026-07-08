@@ -434,6 +434,13 @@ JUPITER_RESCUE_REBROADCAST_MAX_RPC      = 3     # max extra RPCs to broadcast to
 # Read from env so it can be set without code changes.
 # Falls back to the known trading wallet; override with WALLET_PUBKEY env var.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Telemetry — append-only event log for trade lifecycle instrumentation
+# ---------------------------------------------------------------------------
+TELEMETRY_ENABLED       = True
+TELEMETRY_HEARTBEAT_SEC = 10
+TELEMETRY_FILE          = "logs/trade_telemetry.jsonl"
+
 WALLET_PUBKEY: str = os.getenv(
     "WALLET_PUBKEY",
     "8PNHvFWeMT7CqpUvJjAwVgAK545t5KV3uCPd8DUfaTiM",
