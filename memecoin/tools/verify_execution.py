@@ -53,8 +53,8 @@ CELL_PARTIAL_PCT = {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _detect_program(mint: str) -> str:
-    from memecoin.executor import _detect_token_program, _TOKEN22_PROGRAM_ID
-    prog = _detect_token_program(mint)
+    from memecoin.executor import _pumpfun_mint_token_program, _TOKEN22_PROGRAM_ID
+    prog = _pumpfun_mint_token_program(mint)
     return "T22" if prog == _TOKEN22_PROGRAM_ID else "SPL"
 
 
