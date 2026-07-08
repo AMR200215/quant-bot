@@ -2808,13 +2808,16 @@ class Portfolio:
                     reason = "time_stop"
 
             if reason:
-                # ── Telemetry: exit condition true ──
+                # ── Telemetry: exit condition true (edge-trigger: once per reason) ──
                 try:
                     from memecoin import telemetry as _tel
                     _mon_tid = _tel.get_trace_id_for_pos(pos.id)
                     if _mon_tid:
                         _evt_name = "tp_condition_true" if reason.startswith("whale_exit") else "exit_condition_true"
-                        _tel.event(_mon_tid, _evt_name,
+                        _tel.emit_once(
+                            _mon_tid,
+                            f"{_evt_name}:{reason}",   # edge-trigger key
+                            _evt_name,
                             reason=reason,
                             trigger_price=pos.current_price,
                             gain_pct=round(gain * 100, 2),
@@ -2851,6 +2854,23 @@ class Portfolio:
                                 rf'\|tp_retry_cooldown:{_re.escape(level_key)}:\d+',
                                 "", pos.notes or "",
                             )
+
+                        # ── Telemetry: tp_condition_true (edge-trigger: once per level) ──
+                        try:
+                            from memecoin import telemetry as _tel
+                            _tp_tid = _tel.get_trace_id_for_pos(pos.id)
+                            if _tp_tid:
+                                _tel.emit_once(
+                                    _tp_tid,
+                                    f"tp_condition_true:{level_key}",   # edge-trigger key
+                                    "tp_condition_true",
+                                    level_key=level_key,
+                                    tp_pct=round(tp_pct * 100, 1),
+                                    gain_pct=round(gain * 100, 2),
+                                    trigger_price=pos.current_price,
+                                )
+                        except Exception:
+                            pass
 
                         sell_frac = tp_fraction * pos.remaining_fraction
                         partial_usd = sell_frac * pos.size_usd

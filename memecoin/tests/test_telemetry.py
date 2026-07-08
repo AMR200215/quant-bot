@@ -222,6 +222,70 @@ def test_paper_live_twins_share_pair_id(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Test 10: emit_once — edge-trigger guard
+# ---------------------------------------------------------------------------
+def test_emit_once_tp_condition_100_cycles(tmp_path):
+    """
+    A position held above TP1 for 100 monitor cycles must emit exactly
+    one tp_condition_true event (edge-trigger, not level-trigger).
+    """
+    tel = _fresh_telemetry(tmp_path)
+    tid = tel.start_trace("pos_tp_edge", "mint_tp", "EDGE", "paper")
+
+    # Simulate 100 monitor cycles where TP1 condition is true
+    for _ in range(100):
+        tel.emit_once(tid, "tp_condition_true:tp_30", "tp_condition_true",
+                      level_key="tp_30", tp_pct=30.0, gain_pct=45.0)
+
+    tel.finish_trace(tid)
+
+    # Read jsonl and count tp_condition_true events
+    lines = Path(tel.TELEMETRY_FILE).read_text().splitlines()
+    records = [json.loads(l) for l in lines if l.strip()]
+    tp_events = [r for r in records if r.get("event_name") == "tp_condition_true"]
+    assert len(tp_events) == 1, f"Expected 1 tp_condition_true, got {len(tp_events)}"
+    assert tp_events[0]["level_key"] == "tp_30"
+
+
+def test_emit_once_different_keys_each_emit(tmp_path):
+    """emit_once with different keys each emit: all fire, none suppressed."""
+    tel = _fresh_telemetry(tmp_path)
+    tid = tel.start_trace("pos_keys", "mint_k", "KEYS", "paper")
+
+    for level in ("tp_30", "tp_60", "tp_120"):
+        # 3 cycles per level
+        for _ in range(3):
+            tel.emit_once(tid, f"tp_condition_true:{level}", "tp_condition_true",
+                          level_key=level)
+
+    tel.finish_trace(tid)
+
+    lines = Path(tel.TELEMETRY_FILE).read_text().splitlines()
+    records = [json.loads(l) for l in lines if l.strip()]
+    tp_events = [r for r in records if r.get("event_name") == "tp_condition_true"]
+    levels_seen = {r["level_key"] for r in tp_events}
+    assert len(tp_events) == 3, f"Expected 3 (one per level), got {len(tp_events)}"
+    assert levels_seen == {"tp_30", "tp_60", "tp_120"}
+
+
+def test_emit_once_exit_condition_once_per_reason(tmp_path):
+    """exit_condition_true fires exactly once even if monitor loop runs 50 times."""
+    tel = _fresh_telemetry(tmp_path)
+    tid = tel.start_trace("pos_exit_edge", "mint_ex", "EXIT", "live")
+
+    for _ in range(50):
+        tel.emit_once(tid, "exit_condition_true:hard_stop", "exit_condition_true",
+                      reason="hard_stop", trigger_price=0.000010)
+
+    tel.finish_trace(tid)
+
+    lines = Path(tel.TELEMETRY_FILE).read_text().splitlines()
+    records = [json.loads(l) for l in lines if l.strip()]
+    exit_events = [r for r in records if r.get("event_name") == "exit_condition_true"]
+    assert len(exit_events) == 1, f"Expected 1, got {len(exit_events)}"
+
+
+# ---------------------------------------------------------------------------
 # Test 9: shadow size floor 0.25 not applied
 # ---------------------------------------------------------------------------
 def test_shadow_size_floor_025_not_applied():

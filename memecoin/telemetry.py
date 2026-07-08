@@ -189,6 +189,37 @@ def get_trace_id_for_pos(pos_id: str) -> str | None:
     return None
 
 
+def emit_once(trace_id: str, event_key: str, event_name: str, **fields) -> bool:
+    """
+    Edge-trigger guard: emit event_name only if event_key has not been emitted
+    for this trace. Suppresses all subsequent calls with the same key.
+
+    Example keys:
+      "exit_condition_true:hard_stop"   — once per position per exit reason
+      "tp_condition_true:tp_30"         — once per TP level per position
+
+    The emitted set is stored in _traces[trace_id]["_emitted"] and is cleared
+    when finish_trace() removes the trace.
+
+    Returns True if emitted, False if suppressed (or error).
+    """
+    try:
+        with _traces_lock:
+            meta = _traces.get(trace_id)
+            if meta is None:
+                return False
+            emitted: set = meta.setdefault("_emitted", set())
+            if event_key in emitted:
+                return False
+            emitted.add(event_key)
+        # emit outside the lock — event() is already thread-safe
+        event(trace_id, event_name, **fields)
+        return True
+    except Exception as exc:
+        log.debug("telemetry emit_once error: %s", exc)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
