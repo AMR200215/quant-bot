@@ -64,20 +64,22 @@ def _check_bc(mint: str) -> dict:
 
 
 def _buy(mint: str, size_usd: float = 1.0) -> dict:
-    from memecoin.executor import buy as _buy_fn
-    return _buy_fn(mint, size_usd=size_usd, chain="solana")
+    from memecoin.executor import MemeExecutor
+    return MemeExecutor().buy(mint, size_usd=size_usd, chain="solana")
 
 
 def _spl_sell(mint: str, tokens_raw: int, partial: float = 1.0) -> dict:
     """Sell SPL bonding-curve token via PumpPortal."""
     tokens_to_sell = int(tokens_raw * partial)
-    from memecoin.executor import sell as _sell_fn
-    return _sell_fn(
+    from memecoin.executor import MemeExecutor
+    return MemeExecutor().sell(
         mint,
-        amount=tokens_to_sell,
+        size_usd=1.0,        # approximate — not used for BC route selection
+        entry_price=0.0,     # not used for exit routing
         chain="solana",
-        skip_pumpswap=True,   # bonding-curve only
-        slippage_bps=3500,
+        fraction=partial,
+        known_token_count=tokens_to_sell,
+        skip_pumpswap=True,  # bonding-curve only
     )
 
 
