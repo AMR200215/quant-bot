@@ -177,7 +177,7 @@ def main():
         log.error("BUY FAILED: %s", buy_result)
         sys.exit(1)
     buy_sig      = buy_result.get("tx_sig", "")
-    tokens_bought = int(buy_result.get("token_amount") or buy_result.get("tokens_received") or 0)
+    tokens_bought = int(buy_result.get("tokens_received_raw") or buy_result.get("token_amount") or buy_result.get("tokens_received") or 0)
     log.info("BUY SIG:      %s", buy_sig)
     log.info("TOKENS BOUGHT:%s", tokens_bought)
 
