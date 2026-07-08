@@ -72,12 +72,14 @@ def _spl_sell(mint: str, tokens_raw: int, partial: float = 1.0) -> dict:
     """Sell SPL bonding-curve token via PumpPortal."""
     tokens_to_sell = int(tokens_raw * partial)
     from memecoin.executor import MemeExecutor
+    # Pass pre-computed token count as known_token_count with fraction=1.0
+    # (tokens_to_sell already encodes the partial percentage)
     return MemeExecutor().sell(
         mint,
         size_usd=1.0,        # approximate — not used for BC route selection
         entry_price=0.0,     # not used for exit routing
         chain="solana",
-        fraction=partial,
+        fraction=1.0,
         known_token_count=tokens_to_sell,
         skip_pumpswap=True,  # bonding-curve only
     )
