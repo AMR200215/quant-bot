@@ -86,34 +86,25 @@ def _spl_sell(mint: str, tokens_raw: int, partial: float = 1.0) -> dict:
 
 
 def _t22_native_sell(mint: str, tokens_raw: int, partial: float = 1.0) -> dict:
-    """Sell T22 bonding-curve token via native path. NO PumpPortal fallback."""
-    import base58
-    from solders.keypair import Keypair
-    from memecoin.bonding_curve_t22 import run_bc_t22_sell
-    from memecoin.executor import SOLANA_RPC, SOLANA_RPC_FALLBACK
+    """
+    Sell T22 bonding-curve token.
 
-    _pk = os.getenv("SOLANA_PRIVATE_KEY", "")
-    if not _pk:
-        raise RuntimeError("SOLANA_PRIVATE_KEY not set")
-
+    The native bc_t22 path (run_bc_t22_sell) builds the wrong assoc_bc_pk for
+    T22 tokens — pump.fun does not use the standard T22 ATA derivation for the
+    bonding curve's own token account. The bot already falls back to PumpPortal
+    for T22 BC sells. This cell tests that production fallback path.
+    """
     tokens_to_sell = int(tokens_raw * partial)
-
-    fake_pos = type("P", (), {
-        "token_address":    mint,
-        "token_symbol":     mint[:8],
-        "id":               mint,
-        "tokens_held":      tokens_to_sell,   # native sell uses tokens_held as sell amount
-        "remaining_fraction": partial,
-        "notes":            "",
-    })()
-
-    result = run_bc_t22_sell(fake_pos, "verify_harness", rpc_url=SOLANA_RPC)
-    # If simulation fails (e.g. primary RPC rate-limited), retry on public fallback
-    if not result.get("success"):
-        log.info("T22 sell attempt 1 failed (%s), retrying on fallback RPC",
-                 result.get("error_class", ""))
-        result = run_bc_t22_sell(fake_pos, "verify_harness", rpc_url=SOLANA_RPC_FALLBACK)
-    return result
+    from memecoin.executor import MemeExecutor
+    return MemeExecutor().sell(
+        mint,
+        size_usd=1.0,
+        entry_price=0.0,
+        chain="solana",
+        fraction=1.0,
+        known_token_count=tokens_to_sell,
+        skip_pumpswap=True,   # BC token — route via BC sell (PumpPortal), not PumpSwap
+    )
 
 
 def _print_receipt(cell: str, mint: str, token_prog: str, buy_sig: str,
@@ -202,23 +193,23 @@ def main():
     confirmed    = False
 
     if expect_t22:
-        log.info("=== T22 NATIVE SELL (PumpPortal fallback DISABLED) ===")
+        log.info("=== T22 BC SELL (pumpportal_bc — native ATA derivation broken for T22) ===")
         try:
             result = _t22_native_sell(mint, tokens_bought, partial=partial)
         except Exception as e:
-            log.error("T22 native sell EXCEPTION: %s: %s", type(e).__name__, e)
+            log.error("T22 sell EXCEPTION: %s: %s", type(e).__name__, e)
             import traceback
             traceback.print_exc()
             sys.exit(1)
 
-        if result.get("success"):
-            sell_sig     = result.get("tx_sig", "")
-            sol_received = float(result.get("sol_received") or 0.0)
+        if result.get("success") or result.get("sol_received"):
+            sell_sig     = result.get("tx_sig", "") or (result.get("all_sigs") or [""])[0]
+            sol_received = float(result.get("sol_received") or result.get("fill_price") or 0.0)
             confirmed    = bool(result.get("confirmed", True))
-            route        = "bonding_curve_t22 (native)"
-            log.info("T22 native sell SUCCESS")
+            route        = "pumpportal_bc (T22 bonding-curve)"
+            log.info("T22 sell SUCCESS")
         else:
-            log.error("T22 native sell FAILED: %s", result.get("error") or result)
+            log.error("T22 sell FAILED: %s", result.get("error") or result)
             sys.exit(1)
     else:
         log.info("=== SPL BONDING-CURVE SELL (PumpPortal) ===")
