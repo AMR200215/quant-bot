@@ -184,13 +184,13 @@ def _fetch_latest_blockhash_inline() -> str | None:
     """
     One synchronous getLatestBlockhash call. Writes result into the cache.
     Called only when cache is cold. No sleep/retry.
+    Uses _rpc_post() so Helius→mainnet-beta→Ankr fallback applies.
     Returns blockhash string, or None if RPC fails.
     """
     try:
-        resp = requests.post(
-            SOLANA_RPC,
-            json={"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash",
-                  "params": [{"commitment": "confirmed"}]},
+        resp = _rpc_post(
+            {"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash",
+             "params": [{"commitment": "confirmed"}]},
             timeout=5,
         )
         resp.raise_for_status()
