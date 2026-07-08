@@ -90,7 +90,7 @@ def _t22_native_sell(mint: str, tokens_raw: int, partial: float = 1.0) -> dict:
     import base58
     from solders.keypair import Keypair
     from memecoin.bonding_curve_t22 import run_bc_t22_sell
-    from memecoin.executor import SOLANA_RPC
+    from memecoin.executor import SOLANA_RPC, SOLANA_RPC_FALLBACK
 
     _pk = os.getenv("SOLANA_PRIVATE_KEY", "")
     if not _pk:
@@ -108,6 +108,11 @@ def _t22_native_sell(mint: str, tokens_raw: int, partial: float = 1.0) -> dict:
     })()
 
     result = run_bc_t22_sell(fake_pos, "verify_harness", rpc_url=SOLANA_RPC)
+    # If simulation fails (e.g. primary RPC rate-limited), retry on public fallback
+    if not result.get("success"):
+        log.info("T22 sell attempt 1 failed (%s), retrying on fallback RPC",
+                 result.get("error_class", ""))
+        result = run_bc_t22_sell(fake_pos, "verify_harness", rpc_url=SOLANA_RPC_FALLBACK)
     return result
 
 
