@@ -1223,6 +1223,12 @@ def _record_buy_gate(action: str, reason: str):
 _GRAD_ORACLE_CACHE: dict = {}   # mint → (timestamp, result_dict)
 _GRAD_ORACLE_TTL = 5.0          # seconds
 
+# 4D(b): multi-token kill switch guard
+# Kill switch only fires if >=2 DISTINCT tokens fail within 10 minutes.
+# One storming token cannot kill the desk.
+_KS_FAIL_TOKENS: dict[str, float] = {}   # token_address → last failure timestamp
+_KS_FAIL_WINDOW = 600.0                  # 10 minutes
+
 
 def get_pumpfun_curve_complete(mint: str) -> dict:
     """
@@ -2840,11 +2846,39 @@ class MemeExecutor:
                 token_address[:8], all_sigs,
             )
             # ── Kill switch: auto-disable live buys on unknown sell failure ───────────
+            # 4D(b): only fires when >=2 DISTINCT tokens fail within 10 min window.
+            # One token storming its own sell ladder cannot kill the entire desk.
             try:
                 from memecoin.config import AUTO_DISABLE_ON_UNKNOWN_SELL_FAILURE as _auto_disable
                 if _auto_disable:
-                    import memecoin.kill_switch as _ks
-                    _ks.disable_live_buys(f"unknown sell failure: token={token_address[:8]}")
+                    _now = time.time()
+                    # Record failure for this token
+                    _KS_FAIL_TOKENS[token_address] = _now
+                    # Purge entries outside the window
+                    _expired = [t for t, ts in _KS_FAIL_TOKENS.items() if _now - ts > _KS_FAIL_WINDOW]
+                    for t in _expired:
+                        _KS_FAIL_TOKENS.pop(t, None)
+                    _distinct_failing = len(_KS_FAIL_TOKENS)
+                    if _distinct_failing >= 2:
+                        import memecoin.kill_switch as _ks
+                        _trigger_tokens = list(_KS_FAIL_TOKENS.keys())
+                        _ks.disable_live_buys(f"unknown sell failure: {_distinct_failing} tokens")
+                        try:
+                            from app.alerts import _send as _ks_send
+                            _ks_send(
+                                f"🔴 KILL SWITCH: live buys disabled\n"
+                                f"Reason: sell ladder exhausted on {_distinct_failing} tokens "
+                                f"within {int(_KS_FAIL_WINDOW/60)} min\n"
+                                f"Tokens: {', '.join(t[:8] for t in _trigger_tokens)}"
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        log.warning(
+                            "SELL ladder exhausted for %s — kill switch NOT fired "
+                            "(only 1 distinct failing token in window; need >=2)",
+                            token_address[:8],
+                        )
             except Exception:
                 pass
             return {

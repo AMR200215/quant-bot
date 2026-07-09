@@ -150,6 +150,8 @@ class Position:
     remaining_fraction: float = 1.0  # 1.0 = full position still open
     realized_pnl_usd: float = 0.0   # locked-in USD from partial TP sells
     notes: str = ""
+    is_live: bool = False          # 4E: set True exactly once at live buy confirm; all routing keys off this
+    mu_sell_total: int = 0         # 4D: cumulative sell windows attempted across all sell_stuck re-arms
     sell_attempts: int = 0    # retry counter — if > MAX_SELL_RETRIES give up
     # --- model training features (captured at entry) ---
     price_change_5m: float = 0.0
@@ -205,6 +207,14 @@ class Position:
         # remaining portion: pnl_pct on whatever fraction is still open/being closed
         return self.realized_pnl_usd + self.pnl_pct * self.size_usd * self.remaining_fraction
 
+    @pnl_pct.setter
+    def pnl_pct(self, _):
+        raise AttributeError("pnl_pct is computed — set exit_price or realized_pnl_usd instead")
+
+    @pnl_usd.setter
+    def pnl_usd(self, _):
+        raise AttributeError("pnl_usd is computed — set exit_price or realized_pnl_usd instead")
+
 
 # ---------------------------------------------------------------------------
 # Persistence
@@ -217,6 +227,9 @@ def _load_positions() -> dict[str, Position]:
         raw = json.loads(POSITIONS_FILE.read_text())
         out = {}
         for d in raw:
+            # 4E backfill: existing positions serialized before is_live field was added
+            if "is_live" not in d:
+                d["is_live"] = bool(d.get("notes") and "live|tx:" in d["notes"])
             p = Position(**d)
             out[p.id] = p
         return out
@@ -390,7 +403,7 @@ def _append_journal(pos: Position):
             pass
 
         # If this was a live trade, also write to the live journal
-        if pos.notes and "live|tx:" in pos.notes:
+        if pos.is_live:
             _ensure_journal_header(LIVE_JOURNAL_FILE)
             write_header = not LIVE_JOURNAL_FILE.exists() or LIVE_JOURNAL_FILE.stat().st_size == 0
             with open(LIVE_JOURNAL_FILE, "a", newline="") as f:
@@ -400,7 +413,7 @@ def _append_journal(pos: Position):
                 writer.writerow(row)
 
     # DRY_RUN funnel counter — read + alert outside lock (non-critical, can be eventually consistent)
-    if pos.notes and "live|tx:" in pos.notes and "DRY_RUN" in (pos.notes or ""):
+    if pos.is_live and "DRY_RUN" in (pos.notes or ""):
         try:
             count = 0
             with open(LIVE_JOURNAL_FILE) as _f:
@@ -508,6 +521,9 @@ class Portfolio:
         # sell_stuck throttle: pos_id → earliest time to retry sell
         # In-memory only — resets on restart (which itself gives a fresh attempt).
         self._sell_stuck_until: dict[str, float] = {}
+        # 4C: TP inflight guard — never >1 concurrent TP thread per position per level
+        # {pos_id: {level_key: earliest_retry_time}}  (0 = in-flight, future = cooldown)
+        self._tp_inflight: dict[str, dict[str, float]] = {}
         # graduated_unsellable retry counter: pos_id → attempts
         # After MAX_GRADUATED_RETRIES the position is written off as a total loss.
         self._graduated_retry_count: dict[str, int] = {}
@@ -1569,6 +1585,7 @@ class Portfolio:
                 )
                 _canary_tag  = f"|canary_cap:{_canary_max}" if _canary_capped else ""
                 live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}"
+                live_pos.is_live = True   # 4E: set exactly once here; all journal routing keys off this
                 paper_pos.notes = (paper_pos.notes or "") + f"|has_live_twin:{live_pos.id}"  # fix: suppress duplicate paper close alert
                 # ── Paper twin: record fill but do NOT rebase entry ──────────────
                 # P1': paper entry stays at preflight curve baseline (set before buy).
@@ -1806,7 +1823,7 @@ class Portfolio:
             self._jup_fallback_since.pop(pos_id, None)  # clean up dex_pair_loss tracker
 
         # Live execution gate — only sell on-chain if this position was a live buy
-        _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
+        _was_live_buy = pos.is_live
         MAX_SELL_RETRIES = 5
 
         # reconciled_gone: balance already 0 on-chain — sell would fail and re-arm loop.
@@ -2393,16 +2410,39 @@ class Portfolio:
                             # Position stays open as sell_stuck; monitoring continues.
                             # Retry ladder every 60s with fresh blockhash.
                             # Journal write only happens on confirmed sell or reconciler verdict.
-                            pos.status = "sell_stuck"
-                            pos.exit_price  = 0.0
-                            pos.exit_time   = 0.0
-                            pos.exit_reason = ""
+                            pos.mu_sell_total = getattr(pos, "mu_sell_total", 0) + 1
                             pos.sell_attempts = 0   # reset counter for next 60s window
-                            if "|sell_stuck" not in (pos.notes or ""):
-                                pos.notes = (pos.notes or "") + "|sell_stuck"
-                            self._positions[pos_id] = pos
-                            self._sell_stuck_until[pos_id] = time.time() + SELL_STUCK_RETRY_SEC
-                            _save_positions(self._positions)
+                            if pos.mu_sell_total >= 8:
+                                # 4D: terminal gate — require manual intervention
+                                pos.status = "manual_required"
+                                self._positions[pos_id] = pos
+                                self._sell_stuck_until.pop(pos_id, None)  # never re-arm
+                                _save_positions(self._positions)
+                                log.error(
+                                    "SELL TERMINAL %s — attempt 8 exhausted, manual sell required. "
+                                    "mint=%s  /manual_sold %s",
+                                    pos.token_symbol, pos.token_address, pos.token_symbol,
+                                )
+                                try:
+                                    from app.alerts import _send
+                                    _send(
+                                        f"🚨 SELL TERMINAL {pos.token_symbol} — 8 sell windows failed.\n"
+                                        f"Tokens still on-chain. Sell manually in Phantom then:\n"
+                                        f"/manual_sold {pos.token_symbol}\n"
+                                        f"mint={pos.token_address}"
+                                    )
+                                except Exception:
+                                    pass
+                            else:
+                                pos.status = "sell_stuck"
+                                pos.exit_price  = 0.0
+                                pos.exit_time   = 0.0
+                                pos.exit_reason = ""
+                                if "|sell_stuck" not in (pos.notes or ""):
+                                    pos.notes = (pos.notes or "") + "|sell_stuck"
+                                self._positions[pos_id] = pos
+                                self._sell_stuck_until[pos_id] = time.time() + SELL_STUCK_RETRY_SEC
+                                _save_positions(self._positions)
                             log.error(
                                 "SELL STUCK %s — ladder exhausted, position stays open, "
                                 "retry in %ds.  mint=%s",
@@ -2533,8 +2573,8 @@ class Portfolio:
 
             if fill_price > 0 and pos.entry_price > 0:
                 pos.exit_price = fill_price
-                pos.pnl_pct = fill_price / pos.entry_price - 1.0
-                pos.pnl_usd = pos.pnl_pct * pos.size_usd * pos.remaining_fraction
+                # pnl_pct and pnl_usd are @property — computed from exit_price automatically.
+                # DO NOT assign them directly (raises AttributeError → blocks journal write).
             else:
                 # fill still unknown — don't alert $0/-100%
                 pos.exit_price = 0.0
@@ -2578,7 +2618,15 @@ class Portfolio:
                 return
 
             self._positions[pos_id] = pos
-            _append_journal(pos)
+            try:
+                _append_journal(pos)
+            except Exception as _jex:
+                log.error("_finalize_rescue_sell: journal write failed for %s: %s", pos.token_symbol, _jex)
+                try:
+                    from app.alerts import _send
+                    _send(f"🚨 JOURNAL WRITE FAILED {pos.token_symbol} (jupiter_rescue): {_jex}")
+                except Exception:
+                    pass
             promote_to_winners(pos)
             del self._positions[pos_id]
             _save_positions(self._positions)
@@ -2779,7 +2827,7 @@ class Portfolio:
                                 "chain":                pos.chain,
                                 "signal_type":          pos.signal_type,
                                 "strength":             pos.strength,
-                                "is_live":              "live|tx:" in (pos.notes or ""),
+                                "is_live":              pos.is_live,
                                 "signal_price":         pos.signal_price,
                                 "signal_time":          time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.signal_time)),
                                 "snapshot_label":       label,
@@ -2953,7 +3001,7 @@ class Portfolio:
                     })
             else:
                 # check take-profit ladder
-                _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
+                _was_live_buy = pos.is_live
                 import re as _re
                 for tp_pct, tp_fraction in TP_LEVELS:
                     level_key = f"tp_{int(tp_pct*100)}"
@@ -2994,14 +3042,24 @@ class Portfolio:
                         partial_usd = sell_frac * pos.size_usd
 
                         if LIVE_TRADING and _was_live_buy:
-                            # Dispatch live TP sell — do NOT mutate state yet.
-                            # State mutates only on confirmed fill inside _run_tp_sell_bg.
-                            _tp_thread = threading.Thread(
-                                target=self._run_tp_sell_bg,
-                                args=(pos.id, sell_frac, tp_pct, level_key),
-                                daemon=True,
-                            )
-                            _tp_thread.start()
+                            # 4C: TP inflight guard — never >1 concurrent thread per position/level
+                            _tp_levels = self._tp_inflight.setdefault(pos.id, {})
+                            _tp_ready_at = _tp_levels.get(level_key, 0)
+                            if _tp_ready_at > time.time():
+                                log.info("TP INFLIGHT guard: skipping duplicate dispatch "
+                                         "pos=%s level=%s ready_in=%.1fs",
+                                         pos.id, level_key, _tp_ready_at - time.time())
+                            else:
+                                # Mark in-flight (ready_at=inf blocks all re-dispatch until thread clears it)
+                                _tp_levels[level_key] = float("inf")
+                                # Dispatch live TP sell — do NOT mutate state yet.
+                                # State mutates only on confirmed fill inside _run_tp_sell_bg.
+                                _tp_thread = threading.Thread(
+                                    target=self._run_tp_sell_bg,
+                                    args=(pos.id, sell_frac, tp_pct, level_key),
+                                    daemon=True,
+                                )
+                                _tp_thread.start()
                         else:
                             # Paper path: mutate immediately (no on-chain risk)
                             pos.tp_levels_hit.append(level_key)
@@ -3034,6 +3092,10 @@ class Portfolio:
         State (tp_levels_hit, remaining_fraction, realized_pnl_usd) is mutated
         ONLY on confirmed fill. Failed sells add a cooldown tag and leave state
         untouched so the TP level can re-arm after cooldown.
+
+        4C: On entry the dispatch guard set _tp_inflight[pos_id][level_key]=inf.
+        On exit (success OR failure) we clear/set the cooldown so the next
+        dispatch cycle can re-evaluate.
         """
         # ── Telemetry: TP sell triggered ──
         _tp_trace_id = ""
@@ -3055,9 +3117,16 @@ class Portfolio:
             log.warning("LIVE TP BG: executor import failed: %s", _e)
             return
 
+        def _clear_tp_inflight(cooldown_s: float = 0.0):
+            """4C: clear in-flight marker; set cooldown if sell failed."""
+            lvls = self._tp_inflight.get(pos_id, {})
+            lvls[level_key] = time.time() + cooldown_s if cooldown_s > 0 else 0.0
+            self._tp_inflight[pos_id] = lvls
+
         pos = self._positions.get(pos_id)
         if pos is None or pos.status != "open":
             log.info("LIVE TP BG: position %s already closed, skipping TP sell", pos_id)
+            _clear_tp_inflight()
             return
 
         # Use the exact token count received at buy time (from tx postTokenBalances delta).
@@ -3099,10 +3168,12 @@ class Portfolio:
                 _cooldown_key = f"|tp_retry_cooldown:{level_key}:{int(time.time() + 30)}"
                 pos.notes = (pos.notes or "") + _cooldown_key
                 _save_positions(self._positions)
+            _clear_tp_inflight(cooldown_s=30.0)  # 4C: 30s cooldown before next dispatch
             return
 
         # Re-fetch position: it may have been closed during the tx confirmation
         pos = self._positions.get(pos_id)
+        _clear_tp_inflight()  # 4C: sell returned (success or failure result below)
 
         if _tp_r.get("success"):
             _tp_fill_raw = _tp_r.get("fill_price")
@@ -3192,7 +3263,7 @@ class Portfolio:
         sym_upper = symbol.strip().upper()
         target = None
         for pos in self._positions.values():
-            if pos.status in ("open", "sell_stuck") and pos.notes and "live|tx:" in pos.notes:
+            if pos.status in ("open", "sell_stuck") and pos.is_live:
                 if pos.token_symbol.upper() == sym_upper:
                     target = pos
                     break
@@ -3200,7 +3271,7 @@ class Portfolio:
         if target is None:
             # Try partial match as fallback
             for pos in self._positions.values():
-                if pos.status in ("open", "sell_stuck") and pos.notes and "live|tx:" in pos.notes:
+                if pos.status in ("open", "sell_stuck") and pos.is_live:
                     if sym_upper in pos.token_symbol.upper():
                         target = pos
                         break

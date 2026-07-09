@@ -2391,11 +2391,11 @@ def _reconciler_thread() -> None:
             # the tx succeeded and we must journal it as reconciled_gone.
             _all_live = [
                 p for p in portfolio._positions.values()
-                if p.status in ("open", "sell_stuck")
-                and p.notes and "live|tx:" in p.notes
+                if p.status in ("open", "sell_stuck", "manual_required")
+                and p.is_live
             ]
             for pos in _all_live:
-                if not (pos.notes and "live|tx:" in pos.notes):
+                if not pos.is_live:
                     continue   # paper position — no on-chain balance to check
                 if "|sell_pending" in (pos.notes or ""):
                     continue   # in-flight retry — don't race with sell thread
