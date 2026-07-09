@@ -19,10 +19,10 @@ Requires: ~0.012 SOL/cell, SOLANA_PRIVATE_KEY set, token actively on bonding cur
 
 | cell | date | commit | mint (first 8) | buy sig (first 8) | sell sig (first 8) | SOL delta | note |
 |------|------|--------|----------------|-------------------|--------------------|-----------|------|
-| spl_bc_full    | — | — | — | — | — | — | PENDING — run on VPS with SPL BC mint |
-| spl_bc_partial | — | — | — | — | — | — | PENDING — run on VPS with SPL BC mint |
-| t22_bc_full    | — | — | — | — | — | — | PENDING — run on VPS with T22 BC mint |
-| t22_bc_partial | — | — | — | — | — | — | PENDING — run on VPS with T22 BC mint |
+| spl_bc_full    | — | — | — | — | — | — | PENDING — SPL BC mints now rare on pump.fun (mostly T22); run if SPL mint appears |
+| spl_bc_partial | — | — | — | — | — | — | PENDING — SPL BC mints now rare on pump.fun (mostly T22); run if SPL mint appears |
+| t22_bc_full    | 2026-07-09 | ada6c06 | 2tGZPzMR | 51DHXwVa | 5gpeXsFW | −0.000249 | PumpPortal BC path (native T22 ATA disabled); confirmed |
+| t22_bc_partial | 2026-07-09 | ada6c06 | 8QbvbYxw | 5YaN222t | 53dH183E | −0.001459 | 30% partial, PumpPortal BC; confirmed |
 
 **How to fill a row after running:**
 ```
