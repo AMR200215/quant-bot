@@ -1429,6 +1429,7 @@ class MemeExecutor:
         signal_price: float = 0.0,
         max_slippage_pct: float = 0.50,
         dex_id: str = "",
+        preflight_oracle_result: dict | None = None,
     ) -> dict:
         """
         Swap SOL → token_address worth size_usd USD.
@@ -1680,7 +1681,42 @@ class MemeExecutor:
                 # BUY INVARIANT: MIGRATION_UNCERTAIN is not graduation proof.
                 # It is a sell-side routing state only. Do not re-add it as a buy blocker.
                 # Graduation proof comes exclusively from curve.complete or account_missing.
-                _curve = get_pumpfun_curve_complete(token_address)
+                #
+                # FIX: Reuse preflight oracle result if fresh (<3s) and mint matches.
+                # portfolio.py preflight calls get_pumpfun_curve_snapshot() which populates
+                # the same _GRAD_ORACLE_CACHE — so the cache already covers the common case.
+                # The passthrough is an explicit belt-and-suspenders guarantee that removes
+                # the RPC entirely when conditions are met (e.g. cache evicted under load).
+                _oracle_reused = False
+                _pf = preflight_oracle_result
+                _dex_lower_safe = _dex_lower  # already set above
+                if (
+                    _pf
+                    and _pf.get("ok")
+                    and _pf.get("complete") is False
+                    and _dex_lower_safe not in ("pumpswap", "raydium", "orca")
+                    and (time.time() - _pf.get("_preflight_ts", 0)) <= 3.0
+                ):
+                    _curve = _pf
+                    _oracle_reused = True
+                    _oracle_age_ms = int((time.time() - _pf["_preflight_ts"]) * 1000)
+                    log.info(
+                        "BUY GATE oracle_reuse token=%s age_ms=%d source=preflight_curve_snapshot",
+                        token_address[:8], _oracle_age_ms,
+                    )
+                else:
+                    _curve = get_pumpfun_curve_complete(token_address)
+                    _skip_reason = (
+                        "stale_or_missing_preflight" if _pf is None
+                        else "preflight_complete_not_false" if not (_pf.get("ok") and _pf.get("complete") is False)
+                        else "dex_not_pumpfun"  if _dex_lower_safe in ("pumpswap", "raydium", "orca")
+                        else "age_exceeded"
+                    )
+                    log.info(
+                        "BUY GATE oracle_fresh token=%s reason=%s",
+                        token_address[:8], _skip_reason,
+                    )
+
                 if _curve["complete"] is False:
                     # Still on bonding curve — not graduated. Allow buy through normal gates.
                     _grad_evidence = []

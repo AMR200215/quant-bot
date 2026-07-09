@@ -1006,6 +1006,7 @@ class Portfolio:
             _pp_price          = 0.0
             _pp_at_gate        = 0.0   # PP price captured at gate time (dex-source path)
             _exec_signal_price = paper_pos.signal_price  # baseline passed to executor
+            _curve_snap        = None  # populated if oracle path taken; passed to executor
             try:
                 from memecoin import pumpportal_monitor as _pp_monitor
                 _pp        = _pp_monitor.monitor
@@ -1070,6 +1071,7 @@ class Portfolio:
                         try:
                             from memecoin.executor import get_pumpfun_curve_snapshot as _gcs
                             _curve_snap = _gcs(_mint)
+                            _curve_snap["_preflight_ts"] = time.time()  # age stamp for executor passthrough
                             _curve_complete = _curve_snap.get("complete")
                             _curve_reason   = _curve_snap.get("reason", "")
                             if _curve_complete is False and (_curve_snap.get("price_usd") or 0) > 0:
@@ -1417,7 +1419,8 @@ class Portfolio:
             result = ex.buy(signal.token_address, _live_size, signal.chain,
                             signal_price=_exec_signal_price,
                             max_slippage_pct=0.30,
-                            dex_id=live_pos.dex_id)
+                            dex_id=live_pos.dex_id,
+                            preflight_oracle_result=_curve_snap)
 
             _buy_done_ts = time.time()
             # P8: set post-buy quiet window so Helius standby WS doesn't reconnect
