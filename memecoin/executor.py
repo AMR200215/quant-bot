@@ -132,6 +132,14 @@ SOLANA_RPC           = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.sol
 SOLANA_RPC_FALLBACK  = "https://api.mainnet-beta.solana.com"   # Solana public (free)
 SOLANA_RPC_FALLBACK2 = "https://rpc.ankr.com/solana"           # Ankr free tier (no auth)
 
+# P6': T22 native bonding-curve sell path — always disabled.
+# pump.fun uses non-standard ATA derivation (curve-PDA as owner, off-curve owner),
+# combined with Token-2022 program — the native path always fails with bad ATA.
+# T22 native BC sell flag — sourced from config.T22_NATIVE_BC_SELL_ENABLED.
+# When False (default): skip native path entirely, zero RPC spent, PumpPortal primary.
+# Code kept intact behind the flag for harness-gated re-enablement.
+_T22_NATIVE_SELL_LOGGED = False  # log once per process start
+
 # Which execution backend to use.  "pumpportal" is the default; set to
 # "jupiter" to fall back to the old path (useful for A/B testing).
 try:
@@ -2414,29 +2422,33 @@ class MemeExecutor:
                                 log.warning("LOCAL BUILD sell step %d failed (%s) — PumpPortal  token=%s",
                                             step, _lb_err, token_address[:8])
                         elif _tokens_to_sell_local > 0:
-                            # T22 bonding-curve sell: use T22-native local path first.
-                            # bonding_curve_t22.run_bc_t22_sell() derives user ATA with Token-2022
-                            # token program — fixes Custom:6001 from wrong ATA derivation.
-                            _bc_t22_result = None
-                            try:
-                                from memecoin.bonding_curve_t22 import run_bc_t22_sell as _run_bc_t22
-                                from memecoin.exit_router import TokenExitState as _TES, _log_route_attempt as _lra
-                                # executor.sell() has no `pos` param — use token_address as fallback
-                                _fake_pos = type("P", (), {
-                                    "token_address": token_address, "token_symbol": token_address[:8],
-                                    "id": token_address, "tokens_held": _tokens_to_sell_local,
-                                    "notes": "",
-                                })()
-                                _bc_t22_result = _run_bc_t22(_fake_pos, "auto_sell", rpc_url=SOLANA_RPC)
-                                _lra(_bc_t22_result, _fake_pos, _TES.BONDING_CURVE_T22)
-                            except Exception as _t22_err:
-                                log.warning("BC T22 sell call failed (%s) — PumpPortal fallback  token=%s",
-                                            _t22_err, token_address[:8])
-                            # If T22 local path succeeded, skip PumpPortal
-                            if _bc_t22_result and _bc_t22_result.get("success"):
-                                log.info("BC T22 LOCAL SELL success  token=%s", token_address[:8])
-                                _sig_sent_local = True
-                                sig = _bc_t22_result.get("tx_sig", "")
+                            # Phase 1: check config.T22_NATIVE_BC_SELL_ENABLED before any
+                            # native path code. When False: zero RPC spent, no sim, no
+                            # run_bc_t22_sell call. Code kept intact behind flag.
+                            from memecoin.config import T22_NATIVE_BC_SELL_ENABLED as _t22_enabled
+                            global _T22_NATIVE_SELL_LOGGED
+                            if not _t22_enabled:
+                                if not _T22_NATIVE_SELL_LOGGED:
+                                    log.info(
+                                        "T22 native BC sell disabled — PumpPortal primary"
+                                    )
+                                    _T22_NATIVE_SELL_LOGGED = True
+                                # skip: no run_bc_t22_sell, no sim, zero RPC
+                            else:
+                                # Native path enabled — attempt bc_t22 sell (harness-gated)
+                                try:
+                                    from memecoin.bonding_curve_t22 import run_bc_t22_sell as _bct22
+                                    _bct22_result = _bct22(
+                                        token_address, _tokens_to_sell_local, slip_pct, fee_sol
+                                    )
+                                    if _bct22_result and _bct22_result.get("success"):
+                                        sig = _bct22_result.get("tx_sig", "")
+                                        _sig_sent_local = bool(sig)
+                                except Exception as _bct22_err:
+                                    log.warning("bc_t22_sell failed (%s) — PumpPortal  token=%s",
+                                                _bct22_err, token_address[:8])
+                            if not _sig_sent_local:
+                                log.info("BC T22 sell — PumpPortal  token=%s", token_address[:8])
                         if not _sig_sent_local:
                             tx_bytes  = _pumpportal_build_tx(
                                 wallet_pubkey=wallet, action="sell", token_mint=token_address,

@@ -53,9 +53,12 @@ def effective_hard_stop_level(signal_price: float, entry_price: float, hard_stop
     signal structure when fill is close to signal.
     Paper behaviour unchanged: paper entry_price == signal_price.
     """
-    from memecoin.config import MAX_LOSS_FROM_FILL_PCT
+    try:
+        from memecoin.config import MAX_LOSS_FROM_FILL_PCT as _mlffp
+    except ImportError:
+        _mlffp = 0.50  # default: 50% max loss from fill (stub-safe fallback)
     _sa = signal_price * (1 + hard_stop_pct) if signal_price > 0 else 0.0
-    _fl = entry_price * (1 - MAX_LOSS_FROM_FILL_PCT)
+    _fl = entry_price * (1 - _mlffp)
     return max(_sa, _fl)
 
 
@@ -95,6 +98,11 @@ JOURNAL_FIELDS = [
     # accounting v3 fields (added 2026-07-06)
     "sol_received",          # raw SOL received from chain at exit (from tx_meta / reconciler)
     "accounting_epoch",      # which accounting logic produced this row
+    # P1': three-price benchmark fields (added 2026-07-09)
+    "signal_dex_price",      # DexScreener price at signal time (stale indexer snapshot)
+    "baseline_curve_price",  # preflight curve/PP baseline price at decision time
+    "fill_price_field",      # actual on-chain fill price (blank for paper-only signals)
+    "entry_source",          # "curve" | "pp_tick" | "dex_stale" | ""
 ]
 
 # Stamp applied to every trade written from this session onward
@@ -177,6 +185,12 @@ class Position:
     creator_wallet: str = ""   # token deployer — triggers dev_dump exit if they sell
     tokens_held: int = 0       # raw token count from buy tx delta — used for known-balance TP sells
     sol_received: float = 0.0  # raw SOL received at exit (from on-chain delta — accounting only)
+    # P1': price benchmark fields
+    signal_dex_price: float = 0.0    # DexScreener price at signal time (stale)
+    baseline_curve_price: float = 0.0  # preflight curve/PP baseline at decision time
+    fill_price_recorded: float = 0.0  # actual on-chain fill price (0 for paper-only)
+    entry_source: str = ""           # "curve"|"pp_tick"|"dex_stale"|""
+    baseline_price: float = 0.0   # preflight curve/PP baseline (same ref as stops/sizing)  # Phase 6.1
 
     @property
     def pnl_pct(self) -> float:
@@ -300,6 +314,11 @@ def _build_journal_row(pos: Position) -> dict:
         "remaining_fraction": round(pos.remaining_fraction, 4),
         "sol_received": round(pos.sol_received, 8) if pos.sol_received else "",
         "accounting_epoch": ACCOUNTING_EPOCH,
+        # P1': three-price benchmark fields
+        "signal_dex_price": pos.signal_dex_price or "",
+        "baseline_curve_price": pos.baseline_curve_price or "",
+        "fill_price_field": pos.fill_price_recorded or "",
+        "entry_source": pos.entry_source or "dex_stale",
     }
 
 
@@ -323,6 +342,11 @@ def _append_price_tick(pos: "Position", price: float) -> None:
         pass
 
 
+# JOURNAL CHOKE POINT — ALL close paths must call this function.
+# Verify with: grep -n "_append_journal\|JOURNAL CHOKE POINT" portfolio.py
+# Every path: close_position (normal, abort_tripwire, zero_balance, graduated_loss,
+#             graduated_recovered), _finalize_rescue_sell (both fill and pending).
+# abort_tripwire path at line ~1442 also calls _append_journal directly.
 def _append_journal(pos: Position):
     # ── Telemetry: journal write ──
     try:
@@ -667,6 +691,9 @@ class Portfolio:
             buy_tax=getattr(signal, "buy_tax", 0.0),
             sell_tax=getattr(signal, "sell_tax", 0.0),
             creator_wallet=getattr(signal, "creator_wallet", ""),
+            # P1': capture DexScreener price at signal time for benchmark comparison
+            signal_dex_price=getattr(signal, "_price_dex", 0.0) or signal.price_usd or 0.0,
+            entry_source="pp_tick" if _use_pp else "dex_stale",
         )
         # Pre-graduation tokens on pumpswap experience more jitter before breakout.
         # Widen hard stop to -40% so normal price oscillation doesn't stop us out early.
@@ -1336,6 +1363,29 @@ class Portfolio:
                     except Exception:
                         pass
 
+            # P1': store preflight curve baseline on paper position for honest benchmark
+            # entry_source = "baseline_curve" when fetched from bonding curve RPC snapshot
+            # entry_source = "baseline_pp"    when fetched from PumpPortal live price
+            # The paper entry_price stays at signal time (PP or DexScreener fallback);
+            # baseline_curve_price is the *preflight* price at decision time for replay audit.
+            _pf_baseline_source = (_baseline_source if '_baseline_source' in dir() else
+                                   (_baseline_source2 if '_baseline_source2' in dir() else ""))
+            if _pp_price > 0:
+                paper_pos.baseline_curve_price = _pp_price
+                # Phase 3.1: paper entry anchored to preflight curve baseline (not stale DexScreener)
+                paper_pos.entry_price = _pp_price
+                paper_pos.current_price = _pp_price
+                paper_pos.peak_price = _pp_price
+                _bs_label = _pf_baseline_source or "pp"
+                # Phase 3.2: renamed tags: "curve" / "pp_tick" / "dex_stale"
+                paper_pos.entry_source = (
+                    "curve" if "curve" in _bs_label
+                    else "pp_tick"
+                )
+                # Phase 6.1: persistent baseline_price for abort comparison
+                paper_pos.baseline_price = _pp_price
+                live_pos.baseline_price = _pp_price
+
             # ── Telemetry: preflight done, buy build starting ──
             _entry_trace_id = getattr(signal, '_telemetry_trace_id', '') or ''
             _buy_build_start_ts = time.time()
@@ -1369,6 +1419,13 @@ class Portfolio:
                             dex_id=live_pos.dex_id)
 
             _buy_done_ts = time.time()
+            # P8: set post-buy quiet window so Helius standby WS doesn't reconnect
+            # during buy TX propagation (contends with confirmation)
+            try:
+                from memecoin.helius_account_monitor import helius_monitor as _ham
+                _ham.set_post_buy_quiet()
+            except Exception:
+                pass
             try:
                 if _entry_trace_id:
                     _tel.event(_entry_trace_id, "buy_build_done",
@@ -1391,20 +1448,36 @@ class Portfolio:
                 # Threshold 30%: if fill is >30% above what Jupiter quoted, something
                 # went wrong (price spiked during the 5s confirmation window).
                 _jup_ref = result.get("jupiter_quote_price") or 0
-                # Abort reference priority:
-                # 1. Jupiter quote — live AMM price (best)
-                # 2. PP-fresh signal_price — only if signal came from PP cache (sub-second fresh)
-                # 3. Missing — skip abort entirely, tag note, log warning
-                # Never use DexScreener-derived price (stale 10-30s, makes abort meaningless)
-                if _jup_ref > 0:
+                # P5': Abort reference uses preflight CURVE BASELINE, not Jupiter quote.
+                # Priority:
+                # 1. _pp_price — preflight curve/PP baseline at decision time (FRESHEST)
+                # 2. _pp_at_gate — PP price captured at gate time (dex-source type-2 path)
+                # 3. Jupiter quote — live AMM price at build time
+                # 4. Missing — skip abort, tag note, log warning
+                # Never use DexScreener-derived price (stale 10-30s).
+                # Note: Dog still aborts under this change (+61.5% vs baseline ~$0.0000214).
+                # Comment: "Dog still aborts under this change (+48% vs baseline)."
+                # Phase 6.2: prefer live_pos.baseline_price (persistent) over local _pp_price var
+                _preflight_baseline = live_pos.baseline_price if live_pos.baseline_price > 0 else (_pp_price if '_pp_price' in dir() else 0)
+                if _preflight_baseline > 0:
+                    _abort_ref = _preflight_baseline
+                    _abort_ref_label = "preflight_baseline"
+                elif _pp_at_gate > 0:
+                    _abort_ref = _pp_at_gate
+                    _abort_ref_label = "pp_gate"
+                elif _jup_ref > 0:
                     _abort_ref = _jup_ref
                     _abort_ref_label = "jup_quote"
-                elif _pp_at_gate > 0 and signal_price > 0:
-                    _abort_ref = signal_price
-                    _abort_ref_label = "pp_fresh"
                 else:
                     _abort_ref = 0
                     _abort_ref_label = "missing"
+                # Shadow log for 10 trades (always log, helps verify reference is correct)
+                log.info(
+                    "ABORT_REF_SHADOW fill=%.10f baseline=%.10f pp_gate=%.10f jup_quote=%.10f "
+                    "ref_used=%s token=%s",
+                    fill_price, _preflight_baseline, _pp_at_gate if '_pp_at_gate' in dir() else 0,
+                    _jup_ref, _abort_ref_label, live_pos.token_symbol,
+                )
                 if _abort_ref == 0:
                     live_pos.notes = (live_pos.notes or "") + "|abort_ref_missing"
                     log.warning(
@@ -1426,11 +1499,31 @@ class Portfolio:
                         sell_tx_sig = abort_sell.get("tx_sig", "") if abort_sell else ""
                     except Exception as _e:
                         log.error("Abort-sell failed %s: %s", live_pos.token_symbol, _e)
+                    # Phase 3.4: abort closes live_pos only; paper_pos continues independently — no duplicate paper row
                     # Write abort row to live journal so the burn is visible and auditable
+                    # Phase 4.4: compute REAL pnl from abort_sell result
+                    _abort_sol_recv = float((abort_sell or {}).get("sol_received") or 0.0)
+                    _abort_sol_spent_usd = result.get("sol_spent_usd") or 0.0
+                    _sol_price_est = 70.0  # fallback estimate
+                    try:
+                        from memecoin.config import SOL_USD_PRICE as _sol_p
+                        _sol_price_est = _sol_p
+                    except (ImportError, AttributeError):
+                        pass
+                    if _abort_sol_recv > 0 and _abort_sol_spent_usd > 0:
+                        _abort_sol_spent = _abort_sol_spent_usd / _sol_price_est
+                        _abort_pnl_usd = (_abort_sol_recv - _abort_sol_spent) * _sol_price_est
+                        _abort_exit_price = (abort_sell or {}).get("fill_price") or fill_price
+                    else:
+                        _abort_pnl_usd = 0.0
+                        _abort_exit_price = fill_price
                     live_pos.entry_price = fill_price
                     live_pos.current_price = fill_price
                     live_pos.peak_price = fill_price
-                    live_pos.exit_price = fill_price  # approximate — immediate sell
+                    live_pos.fill_price_recorded = fill_price  # P1'
+                    live_pos.exit_price = _abort_exit_price
+                    live_pos.realized_pnl_usd = _abort_pnl_usd
+                    live_pos.sol_received = _abort_sol_recv
                     live_pos.exit_time = time.time()
                     live_pos.exit_reason = "abort_tripwire"
                     live_pos.status = "closed"
@@ -1438,6 +1531,7 @@ class Portfolio:
                         f"live|tx:{buy_tx_sig}|fill:{fill_price:.10f}"
                         f"|abort_slip:{_abort_slip:.1f}%vs{_abort_ref_label}"
                         + (f"|sell_tx:{sell_tx_sig}" if sell_tx_sig else "")
+                        + (f"|sol_received:{_abort_sol_recv:.8f}" if _abort_sol_recv > 0 else "")
                     )
                     _append_journal(live_pos)
                     try:
@@ -1456,6 +1550,8 @@ class Portfolio:
                 live_pos.current_price = fill_price
                 live_pos.peak_price    = fill_price
                 live_pos.tokens_held   = result.get("tokens_received_raw", 0)  # known-balance TP sells
+                # P1': record fill on live position for journal benchmark fields
+                live_pos.fill_price_recorded = fill_price
                 _dry_tag     = "DRY_RUN|" if result.get("dry_run") else ""
                 _est_tag     = "|entry_estimated" if result.get("entry_estimated") else ""
                 _slip_tag    = f"|slip:{result['entry_slippage_pct']:+.1f}%" if result.get("entry_slippage_pct") is not None else ""
@@ -1469,10 +1565,15 @@ class Portfolio:
                 )
                 _canary_tag  = f"|canary_cap:{_canary_max}" if _canary_capped else ""
                 live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}"
-                # ── Paper twin: mirror live fill price for honest P&L comparison ──
-                # Rebase paper entry to actual fill so paper and live stops
-                # trigger at the same token price regardless of price source.
-                paper_pos.entry_price   = fill_price
+                # ── Paper twin: record fill but do NOT rebase entry ──────────────
+                # P1': paper entry stays at preflight curve baseline (set before buy).
+                # This gives an honest benchmark — replay shows ~+94% not +408%.
+                # fill_price_recorded is stored for audit comparison only.
+                # Live position's entry_price IS anchored to fill (stop logic needs it).
+                paper_pos.fill_price_recorded = fill_price
+                # Do NOT set paper_pos.entry_price = fill_price (P1' — wrong design).
+                # Keep paper entry at baseline_curve_price set during preflight.
+                # Only update tracking prices so stops fire correctly:
                 paper_pos.current_price = fill_price
                 paper_pos.peak_price    = fill_price
                 _dry_pfx = "DRY_RUN " if result.get("dry_run") else ""
@@ -1523,13 +1624,16 @@ class Portfolio:
                     _total or 0,
                 )
                 # ── Telemetry: buy confirmed + fill recorded ──
+                # P4': buy_confirmed event includes sol_spent, tokens_received, fill_price, slip_pct
                 try:
                     if _entry_trace_id:
                         _tel.event(_entry_trace_id, "buy_confirmed",
                             buy_confirmed_ts=_t_now,
-                            fill_price=fill_price,
-                            tx_sig=result.get("tx_sig", ""),
+                            sol_spent=result.get("sol_spent", 0),
                             tokens_received=result.get("tokens_received_raw", 0),
+                            fill_price=fill_price,
+                            slip_pct=round(_total_slip, 2) if _total_slip is not None else None,
+                            tx_sig=result.get("tx_sig", ""),
                             entry_slippage_pct=result.get("entry_slippage_pct"),
                             jupiter_quote_price=_jup_price,
                             total_slip_pct=round(_total_slip, 2) if _total_slip is not None else None,
@@ -2055,12 +2159,21 @@ class Portfolio:
                         fill  = _exec_fill if _exec_fill else pos.exit_price
                         if _exec_fill:
                             pos.exit_price = fill   # real on-chain fill measured
+                        # P3 / Phase 4.3: sol_received/realized_pnl_usd populated from sell result before _save_positions()
+                        _sol_recv = result.get("sol_received") or 0.0
+                        if _sol_recv:
+                            pos.sol_received = _sol_recv
+                        # Accumulate realized_pnl_usd for the remaining fraction being closed
+                        if pos.entry_price > 0 and fill:
+                            _exit_pnl = (fill / pos.entry_price - 1.0) * pos.size_usd * pos.remaining_fraction
+                            pos.realized_pnl_usd += _exit_pnl
                         _step = result.get("ladder_step", 1)
                         _all  = result.get("all_sigs", [])
                         _sigs_tag = f"|all_sigs:{','.join(_all)}" if len(_all) > 1 else ""
                         pos.notes = (
                             (pos.notes or "")
                             + f"|sell_tx:{result.get('tx_sig','')}|sell_fill:{fill:.10f}"
+                            + (f"|sol_received:{_sol_recv:.8f}" if _sol_recv else "")
                             + (f"|sell_step:{_step}" if _step > 1 else "")
                             + _sigs_tag
                         )

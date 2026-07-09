@@ -501,6 +501,15 @@ def run_reconciler_pass(
     total_corrected = 0
     total_usd = 0.0
 
+    # Phase 4.2: self-heal missing rows before normal reconciliation (runs under JOURNAL_LOCK inside)
+    try:
+        from memecoin.reconcile import _self_heal_missing_journal_rows
+        _healed = _self_heal_missing_journal_rows()
+        if _healed:
+            log.warning("journal_reconciler: self-heal added %d missing row(s)", _healed)
+    except Exception as _sh_err:
+        log.debug("self_heal in journal_reconciler failed: %s", _sh_err)
+
     # Shared set: confirmed sigs seen across files so USD delta is not double-counted
     # when the same live trade appears in both live and social journals.
     already_corrected_sigs: set[str] = set()

@@ -55,7 +55,10 @@ MAX_CONCURRENT               = 2      # matches live position cap
 
 # Websocket
 _WS_TIMEOUT                  = 30
-_RECONNECT_DELAY             = 2.0
+_RECONNECT_DELAY             = 2.0   # base delay (P8: now used as base for exponential backoff)
+# P8: exponential backoff + max retry limit
+_WS_MAX_RETRIES              = 20    # ~8 minutes total before alerting and stopping
+_POST_BUY_WS_QUIET_SEC       = 10.0  # do not reconnect WS for this many seconds after a live buy
 
 # Price is "fresh" if received within this many seconds
 PRICE_STALE_SEC              = 15.0
@@ -113,6 +116,9 @@ class HeliusAccountMonitor:
         # Daily credit counter (informational log only)
         self._daily_updates:  int       = 0
         self._daily_day:      str       = ""
+
+        # P8: post-buy quiet window — suppress WS reconnect for 10s after live buy
+        self._post_buy_quiet_until: float = 0.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -246,18 +252,60 @@ class HeliusAccountMonitor:
             with self._ws_lock:
                 self._ws = None
 
+    def set_post_buy_quiet(self) -> None:
+        """P8: Call this immediately after a live buy TX is submitted.
+        Suppresses Helius WS reconnect for _POST_BUY_WS_QUIET_SEC seconds
+        to avoid contending with buy TX propagation on the same connection."""
+        self._post_buy_quiet_until = time.time() + _POST_BUY_WS_QUIET_SEC
+        log.debug("Helius standby WS: post-buy quiet window set (%.0fs)", _POST_BUY_WS_QUIET_SEC)
+
     def _ws_run(self):
-        """WS reconnect loop — runs only while there are active slots."""
+        """WS reconnect loop with exponential backoff (P8).
+        Runs only while there are active slots.
+        Max retries: _WS_MAX_RETRIES (~8 min). Alerts on exhaustion."""
+        attempt = 0
         while True:
             with self._lock:
                 if not self._slots:
                     log.info("Helius account monitor: no active slots, WS thread exiting")
                     return
+
+            # P8: post-buy quiet window — don't reconnect while buy TX is propagating
+            _quiet_remaining = self._post_buy_quiet_until - time.time()
+            if _quiet_remaining > 0:
+                log.debug("Helius standby WS: post-buy quiet window (%.1fs remaining)", _quiet_remaining)
+                time.sleep(min(_quiet_remaining, 1.0))
+                continue
+
+            if attempt >= _WS_MAX_RETRIES:
+                log.error(
+                    "Helius standby WS: max retries (%d) exhausted — giving up. "
+                    "Restart the bot or check Helius API key.", _WS_MAX_RETRIES,
+                )
+                try:
+                    from app.alerts import _send
+                    _send(
+                        f"🚨 Helius standby WS: {_WS_MAX_RETRIES} reconnect attempts exhausted. "
+                        f"Standby feed unavailable — PP feed only. Restart if needed."
+                    )
+                except Exception:
+                    pass
+                return
+
             try:
+                _reason = "helius_primary_disconnect" if attempt == 0 else f"helius_retry_{attempt}"
+                if attempt > 0:
+                    log.info("STANDBY WS ACTIVATE: triggered by %s", _reason)
                 self._ws_connect()
+                attempt = 0  # reset on successful connection
             except Exception as e:
-                log.warning("Helius WS error: %s — retry in %.1fs", e, _RECONNECT_DELAY)
-                time.sleep(_RECONNECT_DELAY)
+                delay = min(60, 2 ** attempt)  # exponential backoff: 1, 2, 4, 8, 16, 32, 60, 60...
+                attempt += 1
+                log.warning(
+                    "Helius WS error (attempt %d/%d): %s — retry in %.0fs",
+                    attempt, _WS_MAX_RETRIES, e, delay,
+                )
+                time.sleep(delay)
 
     def _ws_connect(self):
         api_key = os.getenv("HELIUS_API_KEY", "")
@@ -274,7 +322,21 @@ class HeliusAccountMonitor:
             return
 
         url = f"wss://atlas-mainnet.helius-rpc.com/?api-key={api_key}"
-        ws  = _ws_mod.create_connection(url, timeout=_WS_TIMEOUT)
+        try:
+            ws  = _ws_mod.create_connection(url, timeout=_WS_TIMEOUT)
+        except Exception as _conn_err:
+            _err_str = str(_conn_err)
+            if "429" in _err_str or "rate limit" in _err_str.lower():
+                log.warning(
+                    "STANDBY WS ACTIVATE: triggered by helius_primary_429 — "
+                    "Helius returned 429 (rate limited) during WS handshake"
+                )
+            else:
+                log.warning(
+                    "STANDBY WS ACTIVATE: triggered by helius_primary_disconnect — "
+                    "connection error: %s", _conn_err,
+                )
+            raise
         log.info("Helius WS connected")
 
         with self._ws_lock:

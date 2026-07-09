@@ -396,6 +396,13 @@ PUMPSWAP_LOCAL_SIM_ONLY      = True    # simulate, log result, then fall through
 PUMPSWAP_LOCAL_REQUIRE_SIM_OK = True   # if sim fails, do not send (always respected)
 ALLOW_ZERO_MIN_OUT_EMERGENCY   = False  # if True, skip min_sol_out check (last resort only)
 LOCAL_PUMPSWAP_MAX_SLIPPAGE_PCT = 35    # max slippage for min_sol_out computation (35%)
+# ---------------------------------------------------------------------------
+# T22 bonding-curve native sell path
+# ---------------------------------------------------------------------------
+T22_NATIVE_BC_SELL_ENABLED = False
+# Native T22 BC sell disabled: assoc bonding-curve ATA derivation broken
+# (curve-PDA owner, off-curve, TOKEN_2022 program). Fix is issue-tracked and
+# harness-gated. PumpPortal is primary for T22 BC sells.
 
 # ---------------------------------------------------------------------------
 # Execution RPC — multi-RPC failover for rescue sell path only

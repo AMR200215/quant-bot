@@ -937,6 +937,12 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     _health.bump_tg_message()
 
     # ── Telemetry: start entry trace ──
+    # P4' ACCEPTANCE CRITERIA:
+    # "one real end-to-end jsonl trace from VPS (alert_received → trace_finished)"
+    # "one rejected-signal trace showing filter_rejected event"
+    # filter_rejected events are emitted at: no_dex_data, rug_blocked, and each
+    # individual filter (low_buy_pressure, vol_5m_out_of_range, vol_h1_too_high,
+    # price_change_blow_off, mcap_too_high) via _reject_filter() below.
     _trace_id = ""
     try:
         from memecoin import telemetry as _tel
@@ -1125,6 +1131,12 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         # if on-chain demand is strong enough.  The DexScreener retry path (_NoDexData)
         # continues unchanged — two independent entry chances for the same token.
         if reason == "no_dex_data":
+            try:
+                if _trace_id:
+                    _tel.event(_trace_id, "filter_rejected", filter_name="no_dex_data", reason=reason)
+                    _tel.finish_trace(_trace_id, final=False)
+            except Exception:
+                pass
             with _sq_lock:
                 if address not in _screening_queue:
                     # Task 2: try to carry creator into the screening state so
@@ -1164,6 +1176,12 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             raise _NoDexData(address)
         if any(r in reason for r in ("rugcheck_fail", "honeypot", "rug_detector")):
             log.info("TG REJECT %s — rug/safety: %s", address[:8], reason)
+            try:
+                if _trace_id:
+                    _tel.event(_trace_id, "filter_rejected", filter_name="rug_blocked", reason=reason)
+                    _tel.finish_trace(_trace_id, final=False)
+            except Exception:
+                pass
             # Free the screening slot — rug tokens are never traded
             if chain == "solana":
                 try:
@@ -1179,8 +1197,14 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         pc5m = screen.get("price_change_5m") or 0
         mcap = screen.get("mcap_usd") or 0
 
-        def _reject_filter(msg: str) -> None:
+        def _reject_filter(msg: str, filter_name: str = "entry_filter") -> None:
             log.info("TG REJECT %s — %s", address[:8], msg)
+            try:
+                if _trace_id:
+                    _tel.event(_trace_id, "filter_rejected", filter_name=filter_name, reason=msg)
+                    _tel.finish_trace(_trace_id, final=False)
+            except Exception:
+                pass
             # Free the screening slot — filter-rejected tokens won't trade
             if chain == "solana":
                 try:
@@ -1189,19 +1213,19 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                     pass
 
         if bs < MIN_BUY_SELL_RATIO_SOCIAL:
-            _reject_filter(f"bs={bs:.2f} < {MIN_BUY_SELL_RATIO_SOCIAL:.2f} (buy pressure too low)")
+            _reject_filter(f"bs={bs:.2f} < {MIN_BUY_SELL_RATIO_SOCIAL:.2f} (buy pressure too low)", "low_buy_pressure")
             return
         if not (MIN_VOL_5M_SOCIAL <= v5m < MAX_VOL_5M_SOCIAL):
-            _reject_filter(f"vol_5m={v5m:.0f} not in ${MIN_VOL_5M_SOCIAL}-${MAX_VOL_5M_SOCIAL}")
+            _reject_filter(f"vol_5m={v5m:.0f} not in ${MIN_VOL_5M_SOCIAL}-${MAX_VOL_5M_SOCIAL}", "vol_5m_out_of_range")
             return
         if vh1 >= MAX_VOL_H1_SOCIAL:
-            _reject_filter(f"vol_h1={vh1:.0f} >= ${MAX_VOL_H1_SOCIAL} (already pumped)")
+            _reject_filter(f"vol_h1={vh1:.0f} >= ${MAX_VOL_H1_SOCIAL} (already pumped)", "vol_h1_too_high")
             return
         if 0 < pc5m >= MAX_PRICE_CHANGE_5M_SOCIAL:
-            _reject_filter(f"pc5m={pc5m:.0f} >= {MAX_PRICE_CHANGE_5M_SOCIAL}% (blow-off top)")
+            _reject_filter(f"pc5m={pc5m:.0f} >= {MAX_PRICE_CHANGE_5M_SOCIAL}% (blow-off top)", "price_change_blow_off")
             return
         if 0 < mcap > MAX_MCAP_SOCIAL:
-            _reject_filter(f"mcap={mcap:.0f} > ${MAX_MCAP_SOCIAL} (near pump.fun graduation)")
+            _reject_filter(f"mcap={mcap:.0f} > ${MAX_MCAP_SOCIAL} (near pump.fun graduation)", "mcap_too_high")
             return
 
         screen["passed"] = True
@@ -1260,7 +1284,9 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                 log.info("TG creator resolved %s: %s (elapsed %.1fs)",
                          address[:8], sig.creator_wallet[:8], _time.time() - _t0)
             else:
-                log.warning("TG creator UNRESOLVED %s after %.1fs — live entry will be blocked",
+                # P7: log-only, no gate — buy proceeds regardless.
+                # creator_wallet will be resolved in background after buy confirms.
+                log.warning("TG creator UNRESOLVED %s after %.1fs — proceeding; creator unresolved",
                             address[:8], _time.time() - _t0)
         _health.bump_live_eligible()
 

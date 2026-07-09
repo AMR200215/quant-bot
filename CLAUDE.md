@@ -11,6 +11,7 @@
 - **Before any go-live step, curl every external API from the VPS** — mocked unit tests don't catch Cloudflare blocks or IP restrictions.
 - **Validate filters with clean data.** Remove outliers and null values before concluding a filter doesn't work.
 - **Trace the full execution flow before every fix or feature** — signal→buy→monitor→TP→stop→sell→journal→wallet. Flag every blocking call and lag failure mode before writing code.
+- **docs/RECEIPTS.md is a living document.** Any commit touching an execution path (executor.py, portfolio.py exit/close/abort, exit_router.py, bonding_curve_t22.py, verify_execution.py, any sell route) must add a receipt row in the same commit. "Proven" = row with real on-chain sig. "Not proven" = no row, regardless of what tests say.
 - **Responses should be short and concise.**
 
 ---
