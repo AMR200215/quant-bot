@@ -1327,6 +1327,7 @@ class Portfolio:
                     _size_mult = max(0.5, min(1.0, _size_mult))
                     _orig_size = _live_size
                     _live_size = round(_live_size * _size_mult, 2)
+                    live_pos.size_usd = _live_size  # fix: sync position size after norm so pnl_usd is correct
                     log.info(
                         "SIZE NORM %s: pp=%.8f stop=%.8f dist=%.1f%% "
                         "mult=%.2f  size $%.2f→$%.2f",
@@ -1565,6 +1566,7 @@ class Portfolio:
                 )
                 _canary_tag  = f"|canary_cap:{_canary_max}" if _canary_capped else ""
                 live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}"
+                paper_pos.notes = (paper_pos.notes or "") + f"|has_live_twin:{live_pos.id}"  # fix: suppress duplicate paper close alert
                 # ── Paper twin: record fill but do NOT rebase entry ──────────────
                 # P1': paper entry stays at preflight curve baseline (set before buy).
                 # This gives an honest benchmark — replay shows ~+94% not +408%.

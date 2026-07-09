@@ -115,7 +115,7 @@ def alert_position_close(pos) -> bool:
     if pos.signal_type != "social_alert":
         return False
     # Skip paper close alert if this was a live position — alert_live_sell handles it
-    if pos.notes and "live|tx:" in pos.notes:
+    if pos.notes and ("live|tx:" in pos.notes or "has_live_twin:" in pos.notes):
         return False
     pnl_pct = pos.pnl_pct * 100
     pnl_usd = pos.pnl_usd
