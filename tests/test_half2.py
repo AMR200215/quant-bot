@@ -267,18 +267,22 @@ class TestTrailTiers(unittest.TestCase):
 
 class TestEntryGate(unittest.TestCase):
 
-    def test_folkistan_quote_drift_blocks(self):
-        """Synthetic Folkistan: Jupiter quote 40% above signal → blocked_quote_drift."""
+    # L1a (post-measurement batch, 2026-07-10): the pre-buy Jupiter quote was
+    # moved off the blocking path — it now fires async and feeds telemetry
+    # only. Gate 1 (no_quote) and Gate 2 (quote-drift) were removed; the
+    # graduated-entry oracle check was decoupled from jupiter_quote_price so
+    # it always runs when PP is silent. These two tests now assert the new
+    # contract: a slow/failed/drifted quote no longer blocks the buy, and the
+    # oracle-based graduation check is what actually gates it.
+
+    def test_quote_drift_no_longer_blocks(self):
+        """Jupiter quote 40% above signal no longer blocks — quote is async/telemetry-only."""
         import memecoin.executor as ex_mod
 
         mock_kp = MagicMock()
         mock_kp.pubkey.return_value = "So11111111111111111111111111111111111111112"
-
         signal_price = 0.001
-        # 40% above signal: quote_price = size_usd / tokens_out
-        # size_usd=3, signal_price=0.001 → tokens_out for 0% drift = 3000
-        # for 40% drift: quote_price = 0.001 * 1.40 = 0.0014 → tokens_out = 3/0.0014 ≈ 2143
-        tokens_out_int = int(3.0 / (signal_price * 1.40) * 1e6)  # 6 decimals
+        tokens_out_int = int(3.0 / (signal_price * 1.40) * 1e6)
 
         with (
             patch.object(ex_mod, "LIVE_DRY_RUN", False),
@@ -289,6 +293,10 @@ class TestEntryGate(unittest.TestCase):
                 "outAmount": str(tokens_out_int),
                 "outputDecimals": 6,
             }),
+            patch.object(ex_mod, "get_pumpfun_curve_complete",
+                         return_value={"ok": True, "complete": False, "reason": "complete_false"}),
+            patch.object(ex_mod, "_token_balance", return_value=0),
+            patch.object(ex_mod, "_pumpportal_build_tx", side_effect=RuntimeError("PAST_GATES")),
             patch.object(ex_mod, "_load_solders", return_value=(MagicMock(), MagicMock(), MagicMock())),
         ):
             result = ex_mod.MemeExecutor().buy(
@@ -298,13 +306,13 @@ class TestEntryGate(unittest.TestCase):
             )
 
         self.assertFalse(result.get("success"))
-        self.assertEqual(result.get("reason"), "blocked_quote_drift",
-                         f"Expected blocked_quote_drift, got: {result}")
-        self.assertGreater(result.get("slippage_pct", 0), 15,
-                           "Reported slippage should be > 15%")
+        self.assertNotIn(result.get("reason"), ("blocked_quote_drift", "no_quote"),
+                          f"Quote drift/no_quote must not gate the buy anymore, got: {result}")
+        self.assertIn("PAST_GATES", result.get("error", ""),
+                       f"Expected to reach tx build (proving gates were passed), got: {result}")
 
-    def test_no_quote_blocks_before_spend(self):
-        """Jupiter returns nothing → no_quote blocks before any SOL spent."""
+    def test_graduated_entry_blocks_even_when_quote_unavailable(self):
+        """Oracle-confirmed graduation still blocks the buy when the (async) quote never arrives."""
         import memecoin.executor as ex_mod
 
         mock_kp = MagicMock()
@@ -316,6 +324,8 @@ class TestEntryGate(unittest.TestCase):
             patch.object(ex_mod, "_sol_price_usd", return_value=170.0),
             patch.object(ex_mod, "_sol_balance", return_value=500_000_000),
             patch.object(ex_mod, "_jup_get_quote", side_effect=Exception("connection error")),
+            patch.object(ex_mod, "get_pumpfun_curve_complete",
+                         return_value={"ok": True, "complete": True, "reason": "complete_true"}),
             patch.object(ex_mod, "_load_solders", return_value=(MagicMock(), MagicMock(), MagicMock())),
         ):
             result = ex_mod.MemeExecutor().buy(
@@ -325,8 +335,8 @@ class TestEntryGate(unittest.TestCase):
             )
 
         self.assertFalse(result.get("success"))
-        self.assertEqual(result.get("reason"), "no_quote",
-                         f"Expected no_quote, got: {result}")
+        self.assertEqual(result.get("reason"), "blocked_graduated_entry",
+                         f"Expected blocked_graduated_entry, got: {result}")
 
 
 # ---------------------------------------------------------------------------

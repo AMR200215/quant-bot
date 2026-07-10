@@ -372,5 +372,55 @@ class TestG_DriftGateEnforced(unittest.TestCase):
                          "SLIPPAGE_GATE_RT_PCT must remain 0.30 (30%)")
 
 
+# ---------------------------------------------------------------------------
+# L3: oracle-driven MU escalation (post-measurement batch, 2026-07-10)
+#
+# Mirrors the _mu_force_escalate decision added in portfolio.py
+# close_position(): at every retry evaluation (including the first), a fresh
+# (not entry-time-cached) oracle read of complete=True/account_missing skips
+# ExitRouter classify + PumpSwap-local + the normal PumpPortal ladder and
+# escalates straight to Jupiter rescue. sell_attempts stays the only outer
+# retry bound (unchanged).
+# ---------------------------------------------------------------------------
+
+class TestMUEscalation(unittest.TestCase):
+
+    def _mu_force_escalate(self, oracle_bc: bool, oracle_result: dict) -> bool:
+        """Reproduce portfolio.py's _mu_force_escalate condition."""
+        if oracle_bc:
+            return False
+        return (oracle_result.get("complete") is True
+                or oracle_result.get("reason") == "account_missing")
+
+    def test_complete_true_escalates_at_attempt_1(self):
+        """Mocked oracle flips complete=True → escalate fires on the very first attempt."""
+        escalate = self._mu_force_escalate(
+            oracle_bc=False, oracle_result=_curve_result(True),
+        )
+        self.assertTrue(escalate, "complete=True must escalate immediately, attempt 1 included")
+
+    def test_account_missing_escalates(self):
+        escalate = self._mu_force_escalate(
+            oracle_bc=False, oracle_result=_curve_result(None),
+        )
+        self.assertTrue(escalate, "account_missing must escalate (curve closed/migrated)")
+
+    def test_complete_false_does_not_escalate(self):
+        """Still on bonding curve — normal ladder handles it, no escalation."""
+        escalate = self._mu_force_escalate(
+            oracle_bc=False, oracle_result=_curve_result(False),
+        )
+        self.assertFalse(escalate)
+
+    def test_oracle_confirmed_bonding_curve_never_escalates(self):
+        """T22 tokens tagged cohort:bonding_curve at entry must never escalate
+        via this path — PP/oracle silence is normal for T22, not graduation."""
+        escalate = self._mu_force_escalate(
+            oracle_bc=True, oracle_result=_curve_result(True),
+        )
+        self.assertFalse(escalate,
+                         "oracle-confirmed bonding curve (T22) must suppress escalation")
+
+
 if __name__ == "__main__":
     unittest.main()

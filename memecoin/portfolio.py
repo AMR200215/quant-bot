@@ -1006,6 +1006,12 @@ class Portfolio:
                         try:
                             from memecoin.executor import get_pumpfun_curve_snapshot as _gcs
                             _curve_snap = _gcs(_mint)
+                            log.info(
+                                "CURVE ORACLE ATTEMPT(1st) token=%s ok=%s complete=%s "
+                                "reason=%s price=%s",
+                                _mint[:8], _curve_snap.get("ok"), _curve_snap.get("complete"),
+                                _curve_snap.get("reason"), _curve_snap.get("price_usd"),
+                            )
                             _curve_complete = _curve_snap.get("complete")
                             _curve_reason   = _curve_snap.get("reason", "")
                             if _curve_complete is False and (_curve_snap.get("price_usd") or 0) > 0:
@@ -1030,6 +1036,28 @@ class Portfolio:
                                         _baseline_source = "pp_tick"
                                         break
                                     time.sleep(0.05)
+                                # L1b: retry curve once before conceding (not cached on error)
+                                if _pp_price == 0:
+                                    _curve_snap_r = _gcs(_mint)
+                                    log.info(
+                                        "CURVE ORACLE ATTEMPT(retry) token=%s ok=%s complete=%s "
+                                        "reason=%s price=%s",
+                                        _mint[:8], _curve_snap_r.get("ok"), _curve_snap_r.get("complete"),
+                                        _curve_snap_r.get("reason"), _curve_snap_r.get("price_usd"),
+                                    )
+                                    if (_curve_snap_r.get("complete") is False
+                                            and (_curve_snap_r.get("price_usd") or 0) > 0):
+                                        _pp_price = _curve_snap_r["price_usd"]
+                                        _baseline_source = "curve"
+                                    elif (_curve_snap_r.get("complete") is True
+                                            or _curve_snap_r.get("reason") == "account_missing"):
+                                        log.info(
+                                            "LIVE PREFLIGHT GRADUATED %s — curve complete=%s "
+                                            "reason=%s (retry); blocking live buy",
+                                            live_pos.token_symbol, _curve_snap_r.get("complete"),
+                                            _curve_snap_r.get("reason"),
+                                        )
+                                        _pf_blocked = True
                         except Exception as _snap_e:
                             log.debug("curve snapshot error type-1 %s: %s", _mint[:8], _snap_e)
                             # Curve unavailable → short PP wait (0.5s)
@@ -1131,6 +1159,15 @@ class Portfolio:
                                 pass
                             _pf_blocked = True
 
+                    # L1b fix: propagate the resolved pp_tick/curve baseline into
+                    # _exec_signal_price. Previously this stayed at its line-944
+                    # default (paper_pos.signal_price, the stale screening price)
+                    # for the entire type-1 path — meaning ex.buy() and the abort
+                    # tripwire never saw the fresh baseline this block just spent
+                    # an RPC resolving. _pp_price is pos.baseline_price (P5') here.
+                    if _pp_price > 0 and not _pf_blocked:
+                        _exec_signal_price = _pp_price
+
                 else:
                     # ── Type-2 path (dex source): curve baseline, PP upgrade ────────
                     # New preflight order (replaces 2s flat PP wait):
@@ -1154,10 +1191,23 @@ class Portfolio:
                         _pp_at_gate = _p2
                         _baseline_source2 = "pp_tick"
                     else:
-                        # 2. Fetch curve snapshot
-                        try:
+                        # 2. Fetch curve snapshot. L1b: log the raw oracle result on
+                        # every attempt (not just success) — this is the only way to
+                        # tell from logs whether "baseline=dex" happened because the
+                        # curve read failed vs the token actually being silent
+                        # everywhere. Previously only failure paths logged anything.
+                        def _curve_attempt(_reason_tag: str):
                             from memecoin.executor import get_pumpfun_curve_snapshot as _gcs2
-                            _curve_snap2 = _gcs2(_mint)
+                            _snap = _gcs2(_mint)
+                            log.info(
+                                "CURVE ORACLE ATTEMPT(%s) token=%s ok=%s complete=%s "
+                                "reason=%s price=%s",
+                                _reason_tag, _mint[:8], _snap.get("ok"), _snap.get("complete"),
+                                _snap.get("reason"), _snap.get("price_usd"),
+                            )
+                            return _snap
+                        try:
+                            _curve_snap2 = _curve_attempt("1st")
                             _curve_complete2 = _curve_snap2.get("complete")
                             _curve_reason2   = _curve_snap2.get("reason", "")
                             if _curve_complete2 is False and (_curve_snap2.get("price_usd") or 0) > 0:
@@ -1181,8 +1231,36 @@ class Portfolio:
                                         _baseline_source2 = "pp_tick"
                                         break
                                     time.sleep(0.05)
+                                # L1b: PP wait didn't help either — retry the curve
+                                # oracle ONCE more before conceding to dex. RPC errors
+                                # are not cached (see _GRAD_ORACLE_CACHE comment in
+                                # executor.py), so this is a genuine fresh attempt and
+                                # commonly clears transient Helius/mainnet-beta hiccups.
+                                if _pp_at_gate == 0:
+                                    _curve_snap2b = _curve_attempt("retry")
+                                    if (_curve_snap2b.get("complete") is False
+                                            and (_curve_snap2b.get("price_usd") or 0) > 0):
+                                        _pp_at_gate = _curve_snap2b["price_usd"]
+                                        _baseline_source2 = "curve"
+                                    elif (_curve_snap2b.get("complete") is True
+                                            or _curve_snap2b.get("reason") == "account_missing"):
+                                        log.info(
+                                            "LIVE PREFLIGHT GRADUATED %s — curve complete=%s "
+                                            "reason=%s (retry); blocking live buy",
+                                            live_pos.token_symbol, _curve_snap2b.get("complete"),
+                                            _curve_snap2b.get("reason"),
+                                        )
+                                        _pf_blocked = True
+                                    else:
+                                        log.warning(
+                                            "CURVE ORACLE UNAVAILABLE %s — both attempts "
+                                            "ok=False (reason=%s/%s), PP silent; "
+                                            "falling back to dex baseline",
+                                            live_pos.token_symbol, _curve_snap2.get("reason"),
+                                            _curve_snap2b.get("reason"),
+                                        )
                         except Exception as _snap2_e:
-                            log.debug("curve snapshot error type-2 %s: %s", _mint[:8], _snap2_e)
+                            log.warning("curve snapshot error type-2 %s: %s", _mint[:8], _snap2_e)
                             _pf_deadline2 = time.time() + 0.5
                             while time.time() < _pf_deadline2:
                                 _p2b = _pp.get_prices().get(_mint, 0)
@@ -1277,20 +1355,27 @@ class Portfolio:
                 fill_price = result.get("fill_price") or live_pos.entry_price
                 signal_price = live_pos.entry_price
                 buy_tx_sig = result.get("tx_sig", "")
-                # Abort if fill is much worse than the Jupiter quote we used to size.
-                # Compare fill vs jupiter_quote_price (fresh at tx-build time), NOT vs
-                # signal_price (stale DexScreener snapshot — can be 200%+ below real for
-                # graduated tokens). UK bug: fill=$0.0000236 vs stale signal=$0.0000064
-                # triggered abort wrongly; fill vs Jupiter quote was actually -1.2% (fine).
-                # Threshold 30%: if fill is >30% above what Jupiter quoted, something
-                # went wrong (price spiked during the 5s confirmation window).
+                # Abort if fill is much worse than the price we baselined the trade on.
+                # L1a: Jupiter quote is fetched async now (executor.py) and is no
+                # longer reliably available synchronously here — it's telemetry
+                # only. Abort reference = pos.baseline_price (P5', i.e.
+                # _exec_signal_price: the curve/PP baseline resolved in preflight
+                # above and what was actually passed to ex.buy() as signal_price).
+                # Threshold 30%: if fill is >30% above baseline, something went
+                # wrong (price spiked during the confirmation window).
                 _jup_ref = result.get("jupiter_quote_price") or 0
                 # Abort reference priority:
-                # 1. Jupiter quote — live AMM price (best)
-                # 2. PP-fresh signal_price — only if signal came from PP cache (sub-second fresh)
-                # 3. Missing — skip abort entirely, tag note, log warning
+                # 1. baseline_price (_exec_signal_price) — the preflight-resolved
+                #    curve/PP baseline; same value the buy was gated/sized against.
+                # 2. Jupiter quote — best-effort, only if the async fetch happened
+                #    to land before buy() returned.
+                # 3. PP-fresh signal_price — only if signal came from PP cache (sub-second fresh)
+                # 4. Missing — skip abort entirely, tag note, log warning
                 # Never use DexScreener-derived price (stale 10-30s, makes abort meaningless)
-                if _jup_ref > 0:
+                if _exec_signal_price > 0:
+                    _abort_ref = _exec_signal_price
+                    _abort_ref_label = "baseline_price"
+                elif _jup_ref > 0:
                     _abort_ref = _jup_ref
                     _abort_ref_label = "jup_quote"
                 elif _pp_at_gate > 0 and signal_price > 0:
@@ -1362,7 +1447,9 @@ class Portfolio:
                     else ("|cohort:graduated" if result.get("pp_silent") else "|cohort:bonding_curve")
                 )
                 _canary_tag  = f"|canary_cap:{_canary_max}" if _canary_capped else ""
-                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}"
+                _cpe = result.get("curve_progress_at_entry")
+                _cpe_tag = f"|curve_progress_at_entry:{_cpe:.4f}" if _cpe is not None else ""
+                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}{_cpe_tag}"
                 # ── Paper twin: mirror live fill price for honest P&L comparison ──
                 # Rebase paper entry to actual fill so paper and live stops
                 # trigger at the same token price regardless of price source.
@@ -1685,7 +1772,34 @@ class Portfolio:
                     # PumpPortal (escalate=False), not PumpSwap/Jupiter rescue.
                     _oracle_bc = "|cohort:bonding_curve" in (pos.notes or "")
 
-                    if _er_enabled:
+                    # ── L3: oracle-driven MU escalation ───────────────────────────
+                    # _oracle_bc above is the STALE entry-time cohort tag. Read the
+                    # graduation oracle fresh at every retry evaluation (including
+                    # the first failure): complete=True or account_missing means the
+                    # bonding curve is sealed/closed, so the ExitRouter classify +
+                    # PumpSwap-local attempt below and the normal PumpPortal ladder
+                    # are guaranteed to fail (wrong venue) — skip them and escalate
+                    # straight to Jupiter rescue instead of burning a 60s cycle.
+                    # sell_attempts is the existing outer retry bound (unchanged).
+                    _mu_force_escalate = False
+                    _mu_attempt = getattr(pos, "sell_attempts", 0) + 1
+                    if not _oracle_bc:
+                        try:
+                            from memecoin.executor import get_pumpfun_curve_complete as _gpc_mu
+                            _mu_oracle = _gpc_mu(pos.token_address)
+                            if (_mu_oracle.get("complete") is True
+                                    or _mu_oracle.get("reason") == "account_missing"):
+                                _mu_force_escalate = True
+                                log.warning(
+                                    "MU ESCALATE reason=oracle_complete attempt=%d "
+                                    "token=%s oracle_reason=%s",
+                                    _mu_attempt, pos.token_symbol, _mu_oracle.get("reason"),
+                                )
+                        except Exception as _mu_oracle_exc:
+                            log.debug("MU ESCALATE oracle check failed (non-blocking): %s",
+                                      _mu_oracle_exc)
+
+                    if _er_enabled and not _mu_force_escalate:
                         try:
                             from memecoin import exit_router as _er
                             from memecoin import pumpportal_monitor as _ppm_mod
@@ -1755,12 +1869,12 @@ class Portfolio:
                     _rescue_succeeded       = False
                     _rescue_class           = "fallback_allowed"
                     _ps_ec = _ps_result.get("error_class", "") if _ps_result is not None else ""
-                    if not _pumpswap_local_succeeded and is_rescue_eligible_error(
+                    if not _pumpswap_local_succeeded and (_mu_force_escalate or is_rescue_eligible_error(
                         error_class=_ps_ec,
                         exit_state=_exit_state.value if _exit_state is not None else "",
                         reason=reason,
                         oracle_bonding_curve=_oracle_bc,
-                    ):
+                    )):
                         try:
                             from memecoin.jupiter_rescue import (
                                 force_jupiter_rescue_sell,

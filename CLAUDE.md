@@ -141,11 +141,16 @@ logs/
 ### Token-2022 (T22) tokens
 Pump.fun tokens using the Token-2022 program have a different pool layout. The bot handles them in "canary mode" — buys work, but sells through `pumpswap_local` fail with `pumpswap_bad_pool_layout`. On graduation/migration, the T22 native sell path (`bonding_curve_t22`) is the primary route.
 
+**2026-07-10 investigation (L4)**: `pumpswap_local.py`'s ATA derivation (`_derive_ata`) already correctly threads `TOKEN_PROGRAM_T22` for the user's base-token ATA and passes the T22 program as `base_token_program` in the sell instruction's account list — same for `_pumpfun_local_build_tx` (the pre-graduation bonding-curve builder `bonding_curve_t22.py` calls). No missing-derivation bug found by static review. `PUMPSWAP_LOCAL_SELL_ENABLED=False` + `PUMPSWAP_LOCAL_SIM_ONLY=True` mean this path only ever *simulates* right now (never sends, never burns real SOL) and falls through to the working PumpPortal fallback — the `sim_err:pumpswap_bad_pool_layout` tags in the journal are simulation results, not failed live sends. The simulation genuinely fails though; most likely cause given the derivation code looks correct is a T22-extension-driven extra-account requirement (e.g. TransferFeeConfig) that this account list doesn't yet include, or a pool-version layout mismatch — **next step before touching this code again: pull the full `sim_logs` (program log lines, not just the error class) from one real `pumpswap_bad_pool_layout` simulation off the VPS** to see the actual on-chain rejection reason.
+
 ### Helius rate limits
 Helius (paid plan) rate-limits under heavy load. Bot falls back to `mainnet-beta.solana.com`. Public mainnet-beta can return `0` for `getBalance` when itself rate-limited — this is an RPC artifact, not a real zero balance. Check Solscan directly for authoritative wallet balance.
 
 ### SOCIAL_ALERT_ONLY mode
 With this flag True, only the Telegram social feed drives signals. Whale wallet polling, market scanner, pumpfun listener, and near-miss poller do NOT run. Helius credits are at zero — do not make changes that would increase Helius RPC call volume.
+
+### Abort-threshold recalibration — DEFERRED BY DESIGN
+The abort-tripwire threshold (30% above baseline_price, `portfolio.py`) is **locked — do not retune** until 10+ live trades have run under the post-L1-L4 latency profile (quote off critical path, submit decomposition, oracle-driven MU escalation, T22 native path). Those changes shift the fill-vs-baseline drift distribution; recalibrating against pre-change data would fit noise. Revisit once there's a fresh sample.
 
 ---
 
