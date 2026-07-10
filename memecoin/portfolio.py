@@ -1240,11 +1240,13 @@ class Portfolio:
                         try:
                             from memecoin.executor import get_pumpfun_curve_snapshot as _gcs2
                             _curve_snap2 = _gcs2(_mint)
+                            _curve_snap2["_preflight_ts"] = time.time()  # L1b: stamp for executor passthrough
                             _curve_complete2 = _curve_snap2.get("complete")
                             _curve_reason2   = _curve_snap2.get("reason", "")
                             if _curve_complete2 is False and (_curve_snap2.get("price_usd") or 0) > 0:
                                 _pp_at_gate = _curve_snap2["price_usd"]
                                 _baseline_source2 = "curve"
+                                _curve_snap = _curve_snap2  # L1b: pass through to executor oracle gate
                             elif _curve_complete2 is True or _curve_reason2 == "account_missing":
                                 # Token graduated or migrated → block (NEW: previously fell through)
                                 log.info(

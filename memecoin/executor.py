@@ -1542,21 +1542,19 @@ class MemeExecutor:
             _buy_fee            = PRIORITY_FEE_SOL
             _free_sol_lam       = 0
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _pool:
-                _sol_fut   = None if LIVE_DRY_RUN else _pool.submit(_sol_balance, wallet)
-                _quote_fut = _pool.submit(_jup_get_quote, SOL_MINT, token_address, lamports)
-                _fee_fut   = _pool.submit(_helius_priority_fee, token_address, "High")
+            # L1a: Jupiter quote is off the critical path for PP backend.
+            # Fire async; result attaches to telemetry/journal only after confirm.
+            # Jupiter backend collects it before build (still needs quote for swap route).
+            _quote_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            _quote_fut  = _quote_exec.submit(_jup_get_quote, SOL_MINT, token_address, lamports)
+
+            # Critical path: sol_balance + priority fee only (quote removed)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
+                _sol_fut = None if LIVE_DRY_RUN else _pool.submit(_sol_balance, wallet)
+                _fee_fut = _pool.submit(_helius_priority_fee, token_address, "High")
 
                 if _sol_fut is not None:
                     _free_sol_lam = _sol_fut.result(timeout=5)   # RuntimeError propagates → buy blocked
-                try:
-                    quote            = _quote_fut.result(timeout=10)
-                    token_decimals_q = int(quote.get("outputDecimals") or 6)
-                    tokens_out_q     = int(quote["outAmount"]) / (10 ** token_decimals_q)
-                    jupiter_quote_price = size_usd / tokens_out_q if tokens_out_q > 0 else 0
-                except Exception as e:
-                    _quote_fetch_err = e
-                    log.warning("Jupiter pre-flight quote failed: %s", e)
                 try:
                     _buy_fee = _fee_fut.result(timeout=3)
                 except Exception:
@@ -1867,8 +1865,14 @@ class MemeExecutor:
                     signed_tx = VersionedTransaction(tx.message, [keypair])
                     sig       = _send_transaction(bytes(signed_tx))
             else:
-                # Jupiter fallback backend
-                if not jupiter_quote_price:
+                # Jupiter fallback backend — collect async quote (may already be done)
+                try:
+                    quote = _quote_fut.result(timeout=10)
+                    token_decimals_q = int(quote.get("outputDecimals") or 6)
+                    tokens_out_q     = int(quote["outAmount"]) / (10 ** token_decimals_q)
+                    jupiter_quote_price = size_usd / tokens_out_q if tokens_out_q > 0 else 0
+                except Exception as _jup_qe:
+                    log.warning("Jupiter pre-flight quote failed: %s", _jup_qe)
                     quote = _jup_get_quote(SOL_MINT, token_address, lamports)
                 tx_bytes  = _jup_build_swap_tx(quote, wallet)
                 tx        = VersionedTransaction.from_bytes(tx_bytes)
@@ -1881,6 +1885,22 @@ class MemeExecutor:
             # ── Confirm — check meta.err ──────────────────────────────────────
             confirmed, err = _confirm_tx(sig)
             _t_confirmed   = time.time()
+
+            # L1a: collect async Jupiter quote for telemetry (PP backend)
+            # Quote has been running since pre-build (~12s ago) — usually already done.
+            if EXECUTOR_BACKEND == "pumpportal":
+                try:
+                    _q = _quote_fut.result(timeout=1.0)
+                    _tq_dec = int(_q.get("outputDecimals") or 6)
+                    _tq_out = int(_q["outAmount"]) / (10 ** _tq_dec)
+                    jupiter_quote_price = size_usd / _tq_out if _tq_out > 0 else 0
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        _quote_exec.shutdown(wait=False)
+                    except Exception:
+                        pass
 
             if not confirmed:
                 if err is not None:
