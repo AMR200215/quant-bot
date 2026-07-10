@@ -1675,6 +1675,12 @@ class Portfolio:
                     pass
 
                 try:
+                    # X5: store fill confirm timestamp for first_price_ms measurement
+                    live_pos._fill_confirm_ts = time.time()
+                except Exception:
+                    pass
+
+                try:
                     from app.alerts import alert_live_buy
                     alert_live_buy(live_pos, result.get("tx_sig",""), result.get("sol_spent", _live_size / 70))
                 except Exception as _alert_err:
@@ -1780,7 +1786,7 @@ class Portfolio:
     # ---- close ----
 
     def close_position(self, pos_id: str, reason: str,
-                       price: float = 0.0) -> Optional[Position]:
+                       price: float = 0.0, _t_detect: float = 0.0) -> Optional[Position]:
         # Fast pre-check without the per-position lock — eliminates lock allocation
         # overhead for already-closed positions on the hot monitor path.
         pos = self._positions.get(pos_id)
@@ -1825,6 +1831,7 @@ class Portfolio:
             self._jup_fallback_since.pop(pos_id, None)  # clean up dex_pair_loss tracker
 
         # Live execution gate — only sell on-chain if this position was a live buy
+        _t_close_enter = time.time()   # X3: for detect_ms / dispatch_ms telemetry
         _was_live_buy = pos.is_live
         MAX_SELL_RETRIES = 5
 
@@ -1866,6 +1873,8 @@ class Portfolio:
                     trigger_source="close_position",
                     fraction=pos.remaining_fraction,
                     skip_chain_sell=_skip_chain_sell,
+                    detect_ms=round((_t_close_enter - _t_detect) * 1000, 1) if _t_detect > 0 else None,
+                    dispatch_ms=round((_t_close_enter - (_t_detect or _t_close_enter)) * 1000, 1) if _t_detect > 0 else None,
                 )
         except Exception:
             pass
@@ -1893,6 +1902,7 @@ class Portfolio:
                 _STOP_REASONS   = frozenset({
                     "hard_stop", "trailing_stop",
                     "hard_stop_pp", "trailing_stop_pp",
+                    "feed_blind", "pre_graduation_exit",   # X1: urgent exits eligible for presigned
                 })
                 _presigned_used = False
                 _use_presigned  = (
@@ -1904,45 +1914,68 @@ class Portfolio:
                         _ps_bytes = self._presigned_exits.pop(pos.token_address, None)
                         self._presigned_ts.pop(pos.token_address, None)
                     if _ps_bytes:
-                        from memecoin.executor import _send_transaction, _confirm_tx
-                        _t_detect = time.time()
-                        try:
-                            _psig    = _send_transaction(_ps_bytes)
-                            _t_send  = time.time()
-                            log.warning(
-                                "PRESIGNED EXIT %s (%s)  sig=%s  detect→send=%.0fms",
-                                pos.token_symbol, reason, _psig[:16],
-                                (_t_send - _t_detect) * 1000,
-                            )
-                            pos.notes = (pos.notes or "") + f"|presigned:{_psig}"
-                            _pconf, _perr = _confirm_tx(_psig, t_sent=_t_send)
-                            if _pconf:
-                                log.info("Presigned exit confirmed %s  sig=%s",
-                                         pos.token_symbol, _psig[:16])
-                            else:
-                                log.warning("Presigned exit unconfirmed %s  sig=%s  err=%s",
-                                            pos.token_symbol, _psig[:16], _perr)
-                                pos.notes += "|presigned_unconf"
-                            _presigned_used = True
-                            # Alert for presigned exits (feed_blind, hard_stop, etc.)
-                            # The ladder path has its own alert at the sell confirm block.
+                        from memecoin.executor import (
+                            _send_transaction, _confirm_tx,
+                            _mint_token_program_cache, _TOKEN22_PROGRAM_ID,
+                            get_pumpfun_curve_complete,
+                        )
+                        # X1: skip T22 (L4 path not yet proven)
+                        _tok_prog     = _mint_token_program_cache.get(pos.token_address, "")
+                        _ps_is_t22    = (_tok_prog == _TOKEN22_PROGRAM_ID)
+                        # X1: oracle gate — complete==False required
+                        _ps_oracle_ok = False
+                        if _ps_is_t22:
+                            log.info("Presigned skip T22 %s — ladder", pos.token_symbol)
+                        else:
                             try:
-                                from app.alerts import alert_live_sell
-                                # sol_received not measured for presigned — use 0 as placeholder.
-                                # Append unconf flag to sig so alert shows uncertainty if needed.
-                                _psig_tag = _psig if _pconf else f"{_psig}(unconf)"
-                                alert_live_sell(pos, 0.0, _psig_tag)
-                            except Exception as _alert_err:
-                                log.warning("alert_live_sell (presigned) failed: %s", _alert_err)
-                        except Exception as _pe:
-                            log.warning(
-                                "Presigned exit send failed %s: %s — falling back to ladder",
-                                pos.token_symbol, _pe,
-                            )
-                            # Restore for ladder attempt
-                            if _ps_bytes:
-                                with self._presigned_lock:
-                                    self._presigned_exits[pos.token_address] = _ps_bytes
+                                _ps_cv = get_pumpfun_curve_complete(pos.token_address)
+                                _ps_oracle_ok = (_ps_cv.get("complete") is False)
+                                if not _ps_oracle_ok:
+                                    log.info(
+                                        "Presigned skip graduated/missing %s reason=%s — ladder",
+                                        pos.token_symbol, _ps_cv.get("reason", "?"),
+                                    )
+                            except Exception as _pog_e:
+                                log.debug("Presigned oracle gate err %s: %s", pos.token_symbol, _pog_e)
+                                _ps_oracle_ok = True  # err → attempt presigned
+                        if not _ps_oracle_ok or _ps_is_t22:
+                            with self._presigned_lock:
+                                self._presigned_exits[pos.token_address] = _ps_bytes
+                        else:
+                            _t_detect = time.time()
+                            try:
+                                _psig    = _send_transaction(_ps_bytes)
+                                _t_send  = time.time()
+                                log.warning(
+                                    "PRESIGNED EXIT %s (%s)  sig=%s  detect→send=%.0fms",
+                                    pos.token_symbol, reason, _psig[:16],
+                                    (_t_send - _t_detect) * 1000,
+                                )
+                                pos.notes = (pos.notes or "") + f"|presigned:{_psig}"
+                                _pconf, _perr = _confirm_tx(_psig, t_sent=_t_send)
+                                if _pconf:
+                                    log.info("Presigned exit confirmed %s  sig=%s",
+                                             pos.token_symbol, _psig[:16])
+                                else:
+                                    log.warning("Presigned exit unconfirmed %s  sig=%s  err=%s",
+                                                pos.token_symbol, _psig[:16], _perr)
+                                    pos.notes += "|presigned_unconf"
+                                _presigned_used = True
+                                # Alert for presigned exits (feed_blind, hard_stop, etc.)
+                                # The ladder path has its own alert at the sell confirm block.
+                                try:
+                                    from app.alerts import alert_live_sell
+                                    # sol_received not measured for presigned — use 0 as placeholder.
+                                    # Append unconf flag to sig so alert shows uncertainty if needed.
+                                    _psig_tag = _psig if _pconf else f"{_psig}(unconf)"
+                                    alert_live_sell(pos, 0.0, _psig_tag)
+                                except Exception as _alert_err:
+                                    log.warning("alert_live_sell (presigned) failed: %s", _alert_err)
+                            except Exception as _pe:
+                                log.warning(
+                                    "PRESIGNED FALLBACK token=%s presign_fallback reason=%s — ladder",
+                                    pos.token_symbol, _pe,
+                                )
 
                 if not _presigned_used:
                     # ── ExitRouter: classify token state + run PumpSwap local path ──────
@@ -2213,6 +2246,10 @@ class Portfolio:
                                     sol_received=result.get("sol_received", 0),
                                     ladder_step=result.get("ladder_step", 1),
                                     route_used=result.get("route", "executor"),
+                                    build_ms=result.get("timing", {}).get("build_ms"),
+                                    send_ms=result.get("timing", {}).get("send_ms"),
+                                    land_ms=result.get("timing", {}).get("land_ms"),
+                                    meta_ms=result.get("timing", {}).get("meta_ms"),
                                 )
                         except Exception:
                             pass
@@ -2758,6 +2795,24 @@ class Portfolio:
             if pos.current_price > 0:
                 _append_price_tick(pos, pos.current_price)
 
+            # X5: first_price_ms — time from fill confirm to first monitored price
+            if (getattr(pos, '_fill_confirm_ts', 0) > 0
+                    and not getattr(pos, '_first_price_logged', False)
+                    and pos.current_price > 0):
+                _fpm = (time.time() - pos._fill_confirm_ts) * 1000
+                pos._first_price_logged = True
+                log.info("FIRST_PRICE_MS token=%s ms=%.0f", pos.token_symbol, _fpm)
+                try:
+                    from memecoin import telemetry as _tel
+                    _fpm_tid = _tel.get_trace_id_for_pos(pos.id)
+                    if _fpm_tid:
+                        _tel.event(_fpm_tid, "first_price_tick",
+                            first_price_ms=round(_fpm, 1),
+                            first_price=pos.current_price,
+                        )
+                except Exception:
+                    pass
+
             # T+10 buy-velocity snapshot (8–12 min window, logged once per position)
             age_min = (time.time() - pos.entry_time) / 60
             if not pos.t10_logged and 8 <= age_min <= 12 and pair:
@@ -2889,6 +2944,9 @@ class Portfolio:
                 stall["last_peak"] = pos.peak_price
                 stall["stall_since"] = time.time()
 
+            # X3: capture trigger detection time before exit condition evaluation
+            _t_trig = time.time()
+
             # 0. Profit-lock on stall: if we're in small profit and the peak
             #    hasn't moved for N seconds, exit before momentum fully dies.
             #    Skip for big runners (gain > max_gain) — let trail handle those.
@@ -2993,7 +3051,7 @@ class Portfolio:
                         )
                 except Exception:
                     pass
-                closed = self.close_position(pos.id, reason)
+                closed = self.close_position(pos.id, reason, _t_detect=_t_trig)
                 if closed:
                     exits.append({
                         "pos_id": pos.id,
