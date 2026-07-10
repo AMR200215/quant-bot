@@ -15,3 +15,6 @@ data/historical_raw.json
 !logs/memecoin_live_journal.csv
 !logs/memecoin_social_journal.csv
 !logs/memecoin_journal.csv
+!logs/exit_route_attempts.csv
+!logs/gate_blocks.csv
+!logs/trade_telemetry_summary.csv
