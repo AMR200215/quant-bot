@@ -77,3 +77,74 @@ the changed path. Add the row. Commit it with the fix.
 
 **Stale rows:** a row is stale if the commit column predates a significant executor
 rewrite. Mark it `[stale — re-run]` and re-run when a suitable token is available.
+
+---
+
+## L6 — Screen Compression (2026-07-10, commit TBD)
+
+**Implementation**: Already deployed. DexScreener + rugcheck/safety fire concurrently
+via `_submit_prefetch` pool in `scanner.py` (_on_telegram_signal path). PP cache-hit
+skips DexScreener entirely. Measured from live syslog 2026-07-10:
+
+| Signal | dex_hit | safety_hit | screen_ms | decision_ms |
+|---|---|---|---|---|
+| GxZv4NJk | True | False | 0ms | 447ms |
+| 7GhD87DK | True | True | 223ms | 778ms |
+| ARYpA2N8 | True | False | 494ms | 589ms |
+
+Cache-miss (dex+safety): 223–494ms ✓ (target <800ms)
+Cache-hit: 0ms ✓ (target <300ms)
+
+**RTT VPS→Helius**: ~80ms network (measured via mainnet-beta proxy; Helius saturated
+by live bot during measurement). Helius `getAccountInfo` oracle avg=1915ms (this is
+`commitment=confirmed` propagation wait, not network RTT). Under 100ms threshold →
+no endpoint switch required.
+
+---
+
+## X1 — Presigned Urgent Exits (2026-07-10, commit TBD)
+
+**Code changes**: `memecoin/portfolio.py`
+- Added `feed_blind`, `pre_graduation_exit` to `_STOP_REASONS` (presigned-eligible)
+- Added oracle gate: `get_pumpfun_curve_complete()` must return `complete==False` before presigned send
+- Added T22 skip: tokens in `_mint_token_program_cache` with TOKEN22 program bypass presigned, use ladder
+- Fixed fallback log: now emits `presign_fallback reason=<err>` on send failure
+
+**Acceptance**: PENDING first live hard_stop/trailing_stop exit post-deployment.
+Will add telemetry line (exit_trigger→sell_sent <300ms) + sig when observed.
+
+---
+
+## X3 — Exit Telemetry Sub-spans (2026-07-10, commit TBD)
+
+**Code changes**: `memecoin/portfolio.py`
+- `close_position()` gains optional `_t_detect: float` param
+- `exit_triggered` telemetry event now includes `detect_ms`, `dispatch_ms`
+- `sell_confirmed` telemetry event now includes `build_ms`, `send_ms`, `land_ms`, `meta_ms` (from executor result timing dict)
+- Monitor loop passes `_t_trig` to `close_position` at each exit condition check
+
+exit_route_attempts.csv header — 28 named fields, no unnamed columns confirmed:
+```
+ts,pos_id,token_symbol,token_mint,token_program,is_token2022,token_extensions,
+exit_state,exit_reason,route_name,route_order,vsol_at_trigger,vsol_at_sell,
+migration_age,dex_id,pool_address,simulation_ok,simulation_error,custom_error_code,
+tx_sent,tx_sig,confirmed,confirm_error,jupiter_price_impact_pct,fallback_used,
+final_status,error_class,notes
+```
+
+**Acceptance**: PENDING first live sell exit post-deployment (need full trace with all sub-spans).
+
+---
+
+## X5 — Post-buy Readiness (2026-07-10, commit TBD)
+
+**Code changes**: `memecoin/portfolio.py`
+- `_fill_confirm_ts` stored on position object after buy confirms
+- Monitor loop emits `FIRST_PRICE_MS token=<sym> ms=<N>` log + `first_price_tick` telemetry event on first price tick post-fill
+- Target: ≤1000ms from fill confirm to first monitored price
+
+**Helius WS 429 backoff**: `_confirm_tx` already implements 2s backoff for first 15s,
+then 4s on 429. The P8 full backoff (2s→4s→8s→cap 60s) applies to the WS reconnect
+in `pumpfun_listener.py` — reviewed separately.
+
+**Acceptance**: PENDING first live buy post-deployment (need `FIRST_PRICE_MS` log line).
