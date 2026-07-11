@@ -44,6 +44,18 @@ _EXT_MINT_CLOSE_AUTH   = "MintCloseAuthority"
 _EXT_PERMANENT_DELEGATE = "PermanentDelegate"
 _EXT_CONFIDENTIAL      = "ConfidentialTransferMint"
 
+# Known-safe extensions (explicit allowlist — anything else → UNKNOWN_EXTENSION policy)
+_KNOWN_EXTENSIONS = frozenset({
+    _EXT_TRANSFER_FEE,
+    _EXT_METADATA,
+    _EXT_METADATA_POINTER,
+    _EXT_MINT_CLOSE_AUTH,
+    _EXT_INTEREST_BEARING,
+    _EXT_PERMANENT_DELEGATE,
+    _EXT_TRANSFER_HOOK,      # known but blocking
+    _EXT_CONFIDENTIAL,       # known but blocking
+})
+
 # Extensions that block live trading (unsupported execution paths)
 _BLOCKING_EXTENSIONS = frozenset({
     _EXT_TRANSFER_HOOK,
@@ -111,21 +123,35 @@ class MintClassification:
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 
-_cache: dict[str, MintClassification] = {}
+_cache: dict[str, tuple[MintClassification, float]] = {}  # (result, cache_until)
 _cache_lock = threading.Lock()
 
-# Classifications are permanent per mint (token program never changes for a given mint).
-# No TTL needed — cache until process restart.
+# B6(a): Definitive SPL/T22 results cached permanently (token program never changes).
+# UNKNOWN or error results get 60s TTL so transient RPC failures are retried.
 
 
 def _get_cached(mint: str) -> Optional[MintClassification]:
     with _cache_lock:
-        return _cache.get(mint)
+        entry = _cache.get(mint)
+        if entry is None:
+            return None
+        result, cache_until = entry
+        if cache_until == float("inf") or time.time() < cache_until:
+            return result
+        # TTL expired (non-definitive result)
+        del _cache[mint]
+        return None
 
 
 def _put_cached(mint: str, result: MintClassification) -> None:
     with _cache_lock:
-        _cache[mint] = result
+        # Definitive SPL/T22 results: permanent cache (token program never changes).
+        # UNKNOWN or error: 60s TTL (retry later — may be RPC transient).
+        if result.token_program in ("SPL", "T22") and not result.error:
+            cache_until = float("inf")
+        else:
+            cache_until = time.time() + 60.0
+        _cache[mint] = (result, cache_until)
 
 
 def clear_cache() -> None:
@@ -274,6 +300,34 @@ def classify_mint(mint: str, force_refresh: bool = False) -> MintClassification:
     extensions: list[str] = []
     if token_program == "T22" and isinstance(data, dict):
         extensions = _parse_extensions(data)
+
+    # B6(b): unknown extension check — unrecognized extensions are not tradeable
+    unknown_exts = [e for e in extensions if e not in _KNOWN_EXTENSIONS]
+    if unknown_exts:
+        # Unrecognized extension → policy 5 (UNKNOWN_EXTENSION), not tradeable
+        policy = "5_T22_unknown_extension"
+        unsupported_unk = unknown_exts
+        result = MintClassification(
+            mint=mint,
+            mint_owner_program=owner,
+            token_program=token_program,
+            token_extensions=extensions,
+            unsupported_extensions=unsupported_unk,
+            transfer_hook_present=_EXT_TRANSFER_HOOK in extensions,
+            transfer_fee_present=_EXT_TRANSFER_FEE in extensions,
+            policy_category=policy,
+            detection_source="rpc_live",
+            detection_timestamp_wall=t_wall,
+            detection_timestamp_monotonic=t_mono,
+            rpc_commitment="confirmed",
+            error=f"unknown_extension:{','.join(unknown_exts)}",
+        )
+        log.warning(
+            "MINT CLASSIFY unrecognized extension  mint=%s  exts=%s  policy=%s  tradeable=False",
+            mint[:8], unknown_exts, policy,
+        )
+        _put_cached(mint, result)
+        return result
 
     unsupported = [e for e in extensions if e in _BLOCKING_EXTENSIONS]
     policy = _classify_policy(token_program, extensions)

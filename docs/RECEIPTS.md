@@ -148,3 +148,74 @@ then 4s on 429. The P8 full backoff (2s→4s→8s→cap 60s) applies to the WS r
 in `pumpfun_listener.py` — reviewed separately.
 
 **Acceptance**: PENDING first live buy post-deployment (need `FIRST_PRICE_MS` log line).
+
+---
+
+## B-batch (epoch gate) — 2026-07-11 — commit PLACEHOLDER
+
+### B1 — Dual-source pre-graduation progress
+
+| Field | Value |
+|---|---|
+| behavior | PP-silent positions now use curve-account vSOL as secondary source for pre-graduation exit |
+| code | scanner.py: _curve_vsol dict; executor.py: get_pumpfun_curve_price returns virtual_sol_reserves_ui |
+| log format | `PRE-GRADUATION EXIT ... source=curve` |
+| test | test_b1_pregrad_dual_source.py — 3 tests pass |
+| live proof | PENDING — first PP-silent position crossing 97.75 SOL from curve feed |
+
+### B2 — Immediate graduation dispatch (oracle path)
+
+| Field | Value |
+|---|---|
+| behavior | curve feed complete=True / account_missing → graduated_exit dispatched immediately (no 30s delay) |
+| code | scanner.py: dispatch inside curve feed loop with graduation_first_seen_ts stamp |
+| log format | `CURVE FEED GRADUATED ... handing over` then immediate close_position call |
+| test | test_b2_immediate_graduation.py — 2 tests pass |
+| live proof | PENDING — first oracle-confirmed graduation after deployment |
+
+### B3 — pump-amm first for oracle-confirmed graduated
+
+| Field | Value |
+|---|---|
+| behavior | Oracle-confirmed graduated (graduation_first_seen_ts in notes): executor(pump-amm) → then Jupiter |
+| code | portfolio.py: _oracle_confirmed_graduated flag skips pre-executor Jupiter rescue; post-executor B3 Jupiter fallback added |
+| log format | executor pump-amm attempt logged BEFORE any Jupiter RESCUE alert |
+| test | test_b3_pump_amm_first.py — 3 tests pass |
+| live proof | PENDING — first graduated exit after deployment |
+
+### B4 — Per-venue state
+
+| Field | Value |
+|---|---|
+| behavior | _venue_state dict tracks cooldown_until, attempts, last_result per pos+venue; fast-window pump-amm capped at 3 attempts |
+| code | portfolio.py: _venue_state dict + _get_venue_state / _record_venue_attempt / _venue_in_cooldown / _pump_amm_attempts |
+| test | test_b4_venue_state.py — 6 tests pass |
+| live proof | PENDING — first graduation fast-window cycling after deployment |
+
+### B5 — T22 graduated pump-amm flags wired
+
+| Field | Value |
+|---|---|
+| behavior | T22_GRAD_PUMP_AMM_PROBE_ENABLED / T22_GRAD_PUMP_AMM_ENABLED now control escalate flag for T22 graduated |
+| code | portfolio.py: B5 T22 grad gate reads classify_mint + config flags; probe mode writes logs/t22_grad_probe.jsonl |
+| test | test_b5_t22_flags.py — 4 tests pass |
+| flags | Both default False — no T22 graduated sell receipt exists yet |
+| live proof | PENDING — set T22_GRAD_PUMP_AMM_PROBE_ENABLED=True when ready for canary test |
+
+### B6 — Classifier repair + integration
+
+| Field | Value |
+|---|---|
+| behaviors | (a) UNKNOWN/error results get 60s TTL; (b) unknown extension → not tradeable; (c) mint_classifier wired into executor T22 route decision |
+| code | mint_classifier.py: TTL cache, allowlist; executor.py: _pumpfun_mint_token_program checks classifier first |
+| test | test_b6_classifier_repair.py — 5 tests pass |
+| live proof | n/a — classification runs on every buy, logs ENTRY PROGRAM GATE line |
+
+### B7 — Submit telemetry (instrumented, artifact pending)
+
+| Field | Value |
+|---|---|
+| behavior | buy() in executor.py records build_ms, sign_ms, send_ms, land_ms, rpc_429_wait_ms in timing dict |
+| code | executor.py: _buy_timing dict; ENTRY TIMING log updated |
+| artifact | PENDING — will appear in next live trade's ENTRY TIMING log line |
+| artifact format | `build_ms=NNN sign_ms=NNN send_ms=NNN land_ms=NNN 429_ms=NNN` |
