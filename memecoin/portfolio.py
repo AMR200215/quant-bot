@@ -527,6 +527,9 @@ class Portfolio:
         # graduated_unsellable retry counter: pos_id → attempts
         # After MAX_GRADUATED_RETRIES the position is written off as a total loss.
         self._graduated_retry_count: dict[str, int] = {}
+        # B4: Per-position per-venue state for the graduation fast window.
+        # {pos_id: {venue_name: {"cooldown_until": float, "attempts": int, "last_result": str}}}
+        self._venue_state: dict[str, dict[str, dict]] = {}
         # dex_pair_loss tracking: pos_id → timestamp when Jupiter fallback started
         self._jup_fallback_since: dict[str, float] = {}
         # how many positions had PP or DexScreener data last cycle (>0 = feeds healthy)
@@ -1634,7 +1637,8 @@ class Portfolio:
                     "ENTRY TIMING %s | src=%s | "
                     "dex=$%.8f  pp_sig=$%.8f  pp_gate=$%.8f  jup=$%.8f  fill=$%.8f | "
                     "artifact=%s%%  screen_slip=%s%%  real_slip=%s%%  total_slip=%s%% | "
-                    "screen=%.1fs  quote=%.2fs  submit=%.2fs  confirm=%.2fs  total=%.1fs",
+                    "screen=%.1fs  quote=%.2fs  submit=%.2fs  confirm=%.2fs  total=%.1fs | "
+                    "build_ms=%.1f  sign_ms=%.1f  send_ms=%.1f  land_ms=%.1f  429_ms=%.1f",
                     live_pos.token_symbol, _price_src,
                     _dex_price, _pp_sig or 0, _pp_at_gate or 0, _jup_price or 0, fill_price,
                     f"{_artifact:.1f}" if _artifact is not None else "?",
@@ -1646,6 +1650,11 @@ class Portfolio:
                     _timing.get("t_submit", 0),
                     _leg_exec or 0,
                     _total or 0,
+                    _timing.get("build_ms", 0),
+                    _timing.get("sign_ms", 0),
+                    _timing.get("send_ms", 0),
+                    _timing.get("land_ms", 0),
+                    _timing.get("rpc_429_wait_ms", 0),
                 )
                 # ── Telemetry: buy confirmed + fill recorded ──
                 # P4': buy_confirmed event includes sol_spent, tokens_received, fill_price, slip_pct
@@ -2070,12 +2079,21 @@ class Portfolio:
                     _rescue_succeeded       = False
                     _rescue_class           = "fallback_allowed"
                     _ps_ec = _ps_result.get("error_class", "") if _ps_result is not None else ""
-                    if not _pumpswap_local_succeeded and is_rescue_eligible_error(
+                    # B3: For oracle-confirmed graduated positions, executor runs FIRST.
+                    # Jupiter rescue only fires after executor pump-amm fails.
+                    # Detection: graduation_first_seen_ts stamp (set by B2 curve feed oracle).
+                    _oracle_confirmed_graduated = (
+                        "|graduation_first_seen_ts:" in (pos.notes or "")
+                        and "|cohort:graduated" in (pos.notes or "")
+                    )
+                    if (not _pumpswap_local_succeeded
+                            and not _oracle_confirmed_graduated
+                            and is_rescue_eligible_error(
                         error_class=_ps_ec,
                         exit_state=_exit_state.value if _exit_state is not None else "",
                         reason=reason,
                         oracle_bonding_curve=_oracle_bc,
-                    ):
+                    )):
                         try:
                             from memecoin.jupiter_rescue import (
                                 force_jupiter_rescue_sell,
@@ -2197,6 +2215,30 @@ class Portfolio:
                             or reason == "graduated_exit"
                             or _er_classified_graduated
                         )
+                    # B5: T22 graduated pump-amm gate.
+                    # Check token program from classifier (not suffix heuristic).
+                    _is_t22_graduated = False
+                    _t22_pump_amm_allowed = False
+                    if _is_graduated and pos.is_live:
+                        try:
+                            from memecoin.mint_classifier import get_token_program as _gtp
+                            _tok_prog_b5 = _gtp(pos.token_address)
+                            _is_t22_graduated = (_tok_prog_b5 == "T22")
+                        except Exception:
+                            _is_t22_graduated = False
+                        if _is_t22_graduated:
+                            try:
+                                from memecoin.config import (
+                                    T22_GRAD_PUMP_AMM_PROBE_ENABLED as _t22_probe,
+                                    T22_GRAD_PUMP_AMM_ENABLED as _t22_enabled,
+                                )
+                            except ImportError:
+                                _t22_probe = False; _t22_enabled = False
+                            _t22_pump_amm_allowed = _t22_enabled or _t22_probe
+                            log.info(
+                                "B5 T22 grad gate  token=%s  probe=%s  enabled=%s  allowed=%s",
+                                pos.token_symbol, _t22_probe, _t22_enabled, _t22_pump_amm_allowed,
+                            )
                     result = {}  # default: no executor result (set below if executor runs)
                     if not _pumpswap_local_succeeded and not _rescue_succeeded and not _rescue_blocks_executor:
                         if _is_graduated and not _is_retry:
@@ -2212,7 +2254,9 @@ class Portfolio:
                             # Never escalate oracle-confirmed bonding curve tokens (T22).
                             # Escalation assumes PumpSwap graduation — BC tokens must always
                             # stay on PumpPortal path, even on retry (retry only ups slippage).
-                            escalate=(False if _oracle_bc else (_is_retry or _is_graduated)),
+                            escalate=(False if _oracle_bc
+                                      else (False if (_is_t22_graduated and not _t22_pump_amm_allowed)
+                                            else (_is_retry or _is_graduated))),
                             urgent=(reason in _URGENT_REASONS),
                             # Pass tokens_held so local build can use exact count without RPC.
                             # Only valid for full exits (fraction=1.0 default); partial TPs
@@ -2265,6 +2309,28 @@ class Portfolio:
                                 )
                         except Exception:
                             pass
+                        # B5 probe: append result row to logs/t22_grad_probe.jsonl
+                        if _is_t22_graduated and _t22_pump_amm_allowed:
+                            try:
+                                import json as _pj
+                                from pathlib import Path as _PP
+                                _probe_path = _PP("logs/t22_grad_probe.jsonl")
+                                _probe_row = {
+                                    "ts": time.time(),
+                                    "mint": pos.token_address,
+                                    "symbol": pos.token_symbol,
+                                    "route": result.get("route", "executor"),
+                                    "success": result.get("success", False),
+                                    "tx_sig": result.get("tx_sig", ""),
+                                    "error_class": result.get("error_class", ""),
+                                    "meta_err": result.get("meta_err"),
+                                    "sol_received": result.get("sol_received", 0),
+                                    "probe_mode": True,
+                                }
+                                with open(_probe_path, "a") as _pf:
+                                    _pf.write(json.dumps(_probe_row) + "\n")
+                            except Exception:
+                                pass
                         try:
                             from app.alerts import alert_live_sell
                             alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
@@ -2295,6 +2361,59 @@ class Portfolio:
                         except Exception:
                             pass
                         return pos
+                    # B3: Post-executor Jupiter fallback for oracle-confirmed graduated.
+                    # Only fires if executor did NOT succeed AND oracle_confirmed_graduated.
+                    if (not _pumpswap_local_succeeded
+                            and _oracle_confirmed_graduated
+                            and not result.get("success")
+                            and result.get("reason") not in ("zero_balance",)
+                            and is_rescue_eligible_error(
+                                error_class=result.get("error_class", ""),
+                                exit_state=_exit_state.value if _exit_state is not None else "",
+                                reason=reason,
+                                oracle_bonding_curve=_oracle_bc,
+                            )):
+                        log.info(
+                            "B3 post-executor Jupiter fallback for %s "
+                            "(executor pump-amm failed, trying Jupiter now)",
+                            pos.token_symbol,
+                        )
+                        try:
+                            from memecoin.jupiter_rescue import (
+                                force_jupiter_rescue_sell as _b3_jup,
+                                classify_rescue_result as _b3_clf,
+                            )
+                            _b3_resc = _b3_jup(pos, reason)
+                            _b3_cls  = _b3_clf(_b3_resc)
+                            if _b3_cls == "sold":
+                                _rescue_succeeded = True
+                                _b3_fill = _b3_resc.get("fill_price") or pos.exit_price
+                                pos.exit_price = _b3_fill
+                                pos.notes = (pos.notes or "") + (
+                                    f"|sell_tx:{_b3_resc.get('tx_sig','')}|sell_fill:{_b3_fill:.10f}"
+                                    f"|route:JUPITER_RESCUE_B3"
+                                )
+                                result = {"success": True, "fill_price": _b3_fill,
+                                          "sol_received": _b3_resc.get("sol_received", 0),
+                                          "tx_sig": _b3_resc.get("tx_sig", ""),
+                                          "route": "jupiter_rescue_b3"}
+                                log.info("B3 Jupiter fallback succeeded %s sig=%s",
+                                         pos.token_symbol, (_b3_resc.get("tx_sig",""))[:16])
+                            elif _b3_cls == "pending":
+                                try:
+                                    from memecoin.config import SELL_STUCK_RETRY_SEC as _srs
+                                except ImportError:
+                                    _srs = 60
+                                pos.status = "sell_stuck"
+                                self._positions[pos_id] = pos
+                                self._sell_stuck_until[pos_id] = time.time() + _srs
+                                _save_positions(self._positions)
+                                return pos
+                            elif _b3_cls in ("no_route", "retry_no_send"):
+                                self._arm_migration_retry(pos.id, 60)
+                                return pos
+                        except Exception as _b3_exc:
+                            log.warning("B3 Jupiter fallback exception: %s", _b3_exc)
                     elif not _pumpswap_local_succeeded and result.get("reason") == "graduated_unsellable":
                         # pump-amm + Jupiter both failed — token is mid-migration or pool is empty.
                         # 3 retries covers genuine migration lag (~2-3 min to settle).
@@ -2708,6 +2827,36 @@ class Portfolio:
             except Exception:
                 pass
 
+    def _get_venue_state(self, pos_id: str, venue: str) -> dict:
+        """Return mutable venue state dict for pos_id/venue. Creates if absent."""
+        if pos_id not in self._venue_state:
+            self._venue_state[pos_id] = {}
+        if venue not in self._venue_state[pos_id]:
+            self._venue_state[pos_id][venue] = {
+                "cooldown_until": 0.0,
+                "attempts": 0,
+                "last_result": "",
+            }
+        return self._venue_state[pos_id][venue]
+
+    def _record_venue_attempt(self, pos_id: str, venue: str, result: str,
+                               cooldown_sec: float = 0.0) -> None:
+        """Record a venue attempt and optionally set a cooldown."""
+        vs = self._get_venue_state(pos_id, venue)
+        vs["attempts"] += 1
+        vs["last_result"] = result
+        if cooldown_sec > 0:
+            vs["cooldown_until"] = time.time() + cooldown_sec
+
+    def _venue_in_cooldown(self, pos_id: str, venue: str) -> bool:
+        """True if venue is still in cooldown (do not retry yet)."""
+        vs = self._get_venue_state(pos_id, venue)
+        return time.time() < vs["cooldown_until"]
+
+    def _pump_amm_attempts(self, pos_id: str) -> int:
+        """Return pump-amm attempt count for pos in fast window."""
+        return self._get_venue_state(pos_id, "pump_amm")["attempts"]
+
     def _arm_migration_retry(self, pos_id: str, retry_sec: float) -> None:
         """
         Arm a MIGRATION_UNCERTAIN + no-pool position for sell_stuck retry.
@@ -2736,10 +2885,21 @@ class Portfolio:
             _grad_age = time.time() - int(_grad_ts_m.group(1))
             if _grad_age < GRAD_FAST_WINDOW_SEC:
                 _actual_retry = GRAD_FAST_RETRY_SEC
-                log.info(
-                    "GRAD FAST WINDOW %s: age=%.0fs < %ds — retry in %ds",
-                    pos.token_symbol, _grad_age, GRAD_FAST_WINDOW_SEC, _actual_retry,
-                )
+                # B4: enforce fast-window pump-amm attempt cap.
+                # After 3 pump-amm attempts, use 60s cadence (Jupiter will be tried at MU attempt 4+).
+                _pa_attempts = self._pump_amm_attempts(pos_id)
+                if _pa_attempts >= 3:
+                    _actual_retry = retry_sec  # switch to normal MU cadence
+                    log.info(
+                        "GRAD FAST WINDOW %s: pump-amm attempts=%d >= 3, "
+                        "switching to MU cadence (%ds)",
+                        pos.token_symbol, _pa_attempts, _actual_retry,
+                    )
+                else:
+                    log.info(
+                        "GRAD FAST WINDOW %s: age=%.0fs < %ds — retry in %ds",
+                        pos.token_symbol, _grad_age, GRAD_FAST_WINDOW_SEC, _actual_retry,
+                    )
             else:
                 _actual_retry = retry_sec
                 log.info(

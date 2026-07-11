@@ -352,6 +352,18 @@ def _pumpfun_mint_token_program(mint_str: str) -> str:
     with _mint_token_program_lock:
         if mint_str in _mint_token_program_cache:
             return _mint_token_program_cache[mint_str]
+    # B6(c): prefer authoritative mint_classifier over internal heuristic
+    try:
+        from memecoin.mint_classifier import get_token_program as _clf_gtp
+        _clf_prog = _clf_gtp(mint_str)
+        if _clf_prog in ("SPL", "T22"):
+            _prog = (_TOKEN22_PROGRAM_ID if _clf_prog == "T22" else _TOKEN_PROGRAM_ID)
+            with _mint_token_program_lock:
+                _mint_token_program_cache[mint_str] = _prog
+            return _prog
+    except Exception:
+        pass
+    # Fallback to RPC heuristic
     try:
         resp = _rpc_post({
             "jsonrpc": "2.0", "id": 1,
@@ -1377,6 +1389,8 @@ def get_pumpfun_curve_price(mint: str) -> dict:
             "price_sol": price_sol,
             "complete":  result.get("complete"),
             "reason":    result.get("reason", "ok"),
+            "virtual_sol_reserves_raw": vsr,
+            "virtual_sol_reserves_ui":  vsr / 1e9,
         }
     except Exception as e:
         log.debug("get_pumpfun_curve_price error for %s: %s", mint[:8], e)
@@ -1826,6 +1840,14 @@ class MemeExecutor:
             #   Sell legs for T22 positions are experimental: the exit router tests
             #   Jupiter sell then pump-amm sell and logs which venue clears. This
             #   buy block acquires real inventory; sell routing is data collection.
+            # B7: buy timing decomposition
+            _buy_timing = {
+                "build_ms": 0.0,
+                "sign_ms": 0.0,
+                "send_ms": 0.0,
+                "land_ms": 0.0,
+                "rpc_429_wait_ms": 0.0,
+            }
             if EXECUTOR_BACKEND == "pumpportal":
                 _sig_sent = False
                 # Check token program — local build only works for classic SPL Token mints
@@ -1845,9 +1867,13 @@ class MemeExecutor:
                             slippage_pct=SLIPPAGE_BUY_PCT,
                             priority_fee_sol=_buy_fee,
                         )
+                        _buy_timing["build_ms"] = (time.time() - _t_lb) * 1000
+                        _buy_timing["sign_ms"] = 0.0  # signing is inside local build
                         log.info("LOCAL BUILD buy  token=%s  build_ms=%.0f",
-                                 token_address[:8], (time.time() - _t_lb) * 1000)
+                                 token_address[:8], _buy_timing["build_ms"])
+                        _t_send_start = time.time()
                         sig       = _send_transaction(_lb_bytes)
+                        _buy_timing["send_ms"] = (time.time() - _t_send_start) * 1000
                         _sig_sent = True
                     except Exception as _lb_err:
                         log.warning("LOCAL BUILD buy failed (%s) — PumpPortal fallback  token=%s",
@@ -1856,14 +1882,20 @@ class MemeExecutor:
                     log.info("LOCAL BUILD buy SKIPPED (Token-2022) — PumpPortal  token=%s",
                              token_address[:8])
                 if not _sig_sent:
+                    _t_pp_build = time.time()
                     tx_bytes  = _pumpportal_build_tx(
                         wallet_pubkey=wallet, action="buy", token_mint=token_address,
                         amount=sol_amount, denominated_in_sol=True,
                         slippage_pct=SLIPPAGE_BUY_PCT, priority_fee_sol=_buy_fee,
                     )
+                    _buy_timing["build_ms"] = (time.time() - _t_pp_build) * 1000
+                    _t_sign_start = time.time()
                     tx        = VersionedTransaction.from_bytes(tx_bytes)
                     signed_tx = VersionedTransaction(tx.message, [keypair])
+                    _buy_timing["sign_ms"] = (time.time() - _t_sign_start) * 1000
+                    _t_send_start = time.time()
                     sig       = _send_transaction(bytes(signed_tx))
+                    _buy_timing["send_ms"] = (time.time() - _t_send_start) * 1000
             else:
                 # Jupiter fallback backend — collect async quote (may already be done)
                 try:
@@ -1883,8 +1915,10 @@ class MemeExecutor:
                      sig[:16], token_address[:8], size_usd, EXECUTOR_BACKEND)
 
             # ── Confirm — check meta.err ──────────────────────────────────────
+            _t_land_start = time.time()
             confirmed, err = _confirm_tx(sig)
             _t_confirmed   = time.time()
+            _buy_timing["land_ms"] = (_t_confirmed - _t_land_start) * 1000
 
             # L1a: collect async Jupiter quote for telemetry (PP backend)
             # Quote has been running since pre-build (~12s ago) — usually already done.
@@ -2048,6 +2082,12 @@ class MemeExecutor:
                     "t_quote":   round(_t_quoted    - _t0, 3),
                     "t_submit":  round(_t_submitted - _t0, 3),
                     "t_confirm": round(_t_confirmed - _t0, 3),
+                    # B7: granular timing decomposition
+                    "build_ms":          round(_buy_timing["build_ms"], 1),
+                    "sign_ms":           round(_buy_timing["sign_ms"], 1),
+                    "send_ms":           round(_buy_timing["send_ms"], 1),
+                    "land_ms":           round(_buy_timing["land_ms"], 1),
+                    "rpc_429_wait_ms":   round(_buy_timing["rpc_429_wait_ms"], 1),
                 },
             }
 

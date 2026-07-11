@@ -1441,6 +1441,8 @@ def _portfolio_thread():
     _curve_feed_last_seen:    dict[str, float] = {}   # mint → unix ts of last curve price
     _curve_price_overrides:   dict[str, float] = {}   # mint → price_usd from curve feed
     _curve_feed_last_polled:  dict[str, float] = {}   # mint → unix ts of last poll attempt
+    # B1: curve-account vSOL for pre-graduation exit (secondary source when PP silent)
+    _curve_vsol: dict[str, tuple[float, float]] = {}  # mint -> (vsol_ui, sample_ts)
     _CURVE_POLL_INTERVAL = 1.0    # seconds between curve fetches per mint
     _CURVE_FEED_VALID_SEC = 10.0  # curve price considered fresh for this long
 
@@ -1547,6 +1549,10 @@ def _portfolio_thread():
                         _curve_price_overrides[_cp_mint] = _cp_price
                         _curve_feed_last_seen[_cp_mint]  = now
                         price_overrides[_cp_mint]         = _cp_price
+                        # B1: store curve-account vSOL for pre-graduation exit
+                        _vsol_ui = _cp_result.get("virtual_sol_reserves_ui", 0)
+                        if _vsol_ui > 0:
+                            _curve_vsol[_cp_mint] = (_vsol_ui, now)
                         log.info(
                             "CURVE FEED  token=%s  price=$%.10f  complete=%s",
                             _cp_pos.token_symbol, _cp_price, _cp_result.get("complete"),
@@ -1562,11 +1568,22 @@ def _portfolio_thread():
                                 _cp_pos.notes = _cp_pos.notes.replace(
                                     "|cohort:bonding_curve", "|cohort:graduated"
                                 )
+                            # B2: stamp graduation_first_seen_ts immediately (oracle-confirmed)
+                            if "|graduation_first_seen_ts:" not in (_cp_pos.notes or ""):
+                                _cp_pos.notes = (_cp_pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
                             log.warning(
                                 "CURVE FEED GRADUATED %s — curve complete=True mid-hold; "
                                 "handing over to graduated exit path",
                                 _cp_pos.token_symbol,
                             )
+                            # B2: Oracle-confirmed graduation — dispatch immediately,
+                            # bypassing the 30s mig_age gate (that gate is for PP-ambiguity only).
+                            if _cp_pos.id not in _graduated_exit_fired and not _cp_pos.exit_reason:
+                                _graduated_exit_fired.add(_cp_pos.id)
+                                portfolio._positions[_cp_pos.id] = _cp_pos
+                                portfolio.close_position(
+                                    _cp_pos.id, "graduated_exit", _cp_pos.current_price or 0.0
+                                )
                     elif _cp_result.get("complete") is None:
                         # account_missing → curve closed / migrated. Treat exactly like
                         # complete=True: stop polling and trigger graduation handover.
@@ -1577,11 +1594,21 @@ def _portfolio_thread():
                             _cp_pos.notes = _cp_pos.notes.replace(
                                 "|cohort:bonding_curve", "|cohort:graduated"
                             )
+                        # B2: stamp graduation_first_seen_ts immediately (oracle-confirmed)
+                        if "|graduation_first_seen_ts:" not in (_cp_pos.notes or ""):
+                            _cp_pos.notes = (_cp_pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
                         log.warning(
                             "CURVE FEED ACCOUNT_MISSING %s — curve account closed mid-hold; "
                             "handing over to graduated exit path (account_missing → treat as graduated)",
                             _cp_pos.token_symbol,
                         )
+                        # B2: Oracle-confirmed missing account — dispatch immediately.
+                        if _cp_pos.id not in _graduated_exit_fired and not _cp_pos.exit_reason:
+                            _graduated_exit_fired.add(_cp_pos.id)
+                            portfolio._positions[_cp_pos.id] = _cp_pos
+                            portfolio.close_position(
+                                _cp_pos.id, "graduated_exit", _cp_pos.current_price or 0.0
+                            )
             except Exception as _cf_e:
                 log.debug("curve feed error: %s", _cf_e)
 
@@ -1620,6 +1647,13 @@ def _portfolio_thread():
                 if _pg_pos.token_address not in open_pumpfun:
                     continue
                 _vsol = _pp_monitor.get_vsol(_pg_pos.token_address)
+                _vsol_source = "pp"
+                if _vsol <= 0:
+                    # B1: PP silent — use curve-account reserves as secondary source
+                    _cv_entry = _curve_vsol.get(_pg_pos.token_address)
+                    if _cv_entry and (now - _cv_entry[1]) < 5.0:
+                        _vsol = _cv_entry[0]
+                        _vsol_source = "curve"
                 if _vsol <= 0:
                     continue
                 _progress = _vsol / _GRAD_SOL
@@ -1628,9 +1662,9 @@ def _portfolio_thread():
                     log.warning(
                         "PRE-GRADUATION EXIT %s (%s) — vSol=%.2f SOL (%.0f%% of "
                         "graduation threshold %.0f SOL). Selling on bonding curve "
-                        "before migration.",
+                        "before migration. source=%s",
                         _pg_pos.token_symbol, _pg_pos.id,
-                        _vsol, _progress * 100, _GRAD_SOL,
+                        _vsol, _progress * 100, _GRAD_SOL, _vsol_source,
                     )
                     try:
                         from app.alerts import _send as _pg_alert
