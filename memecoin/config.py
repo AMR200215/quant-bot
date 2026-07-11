@@ -98,6 +98,8 @@ EXECUTOR_BACKEND = "pumpportal"
 # Sell-stuck retry cooldown: seconds before retrying the full sell ladder
 # on a position that exhausted all sell attempts.
 SELL_STUCK_RETRY_SEC = 60
+GRAD_FAST_WINDOW_SEC   = 60    # first N seconds after graduation — use fast retry cadence
+GRAD_FAST_RETRY_SEC    = 5     # retry every N seconds in fast window (vs 60s MU ladder)
 MIGRATION_UNCERTAIN_MANUAL_TIMEOUT_SEC = 600  # 10 min before manual-check alert fires
 
 def _stage(capital: float) -> int:
@@ -207,6 +209,13 @@ TRAILING_STOP_PCT    = -0.40   # -40% from peak once in profit
 TRAIL_ACTIVATES_PCT  =  0.75   # trailing stop activates at +75% (was +100%)
 TIME_STOP_MINUTES    =  90     # exit if flat >90 min with < +30% gain (was 45)
 TIME_STOP_MIN_GAIN   =  0.30   # if gain > 30% don't apply time stop
+
+# CATCH-UP TP REJECTED (Part 1 of spec):
+# A catch-up TP after a high-drift live fill reduces exposure only after:
+# the worse entry has already occurred, entry fees were paid, an extra exit fee is paid,
+# and additional execution latency is introduced. The correct mechanisms are better entry
+# execution, ex-ante size normalization, entry drift blocking where justified, and
+# accurate paper/live comparison. No behavioral TP changes in this patch.
 
 # Take-profit ladder (only when no whale exit signal)
 # Fractions are of remaining position at each level.
@@ -369,6 +378,8 @@ JUPITER_JITTER_MS         = 100   # governor jitter (separate from executor back
 
 # Phase-gate: keep False until real-wallet simulation passes for T22 exits
 JUPITER_T22_GRAD_PRIMARY_ENABLED = False
+T22_GRAD_PUMP_AMM_PROBE_ENABLED = False  # Part 14: not proven, gate until receipt exists
+T22_GRAD_PUMP_AMM_ENABLED       = False  # Part 14: promote only after valid on-chain receipt
 
 # ── Live buy kill switch ─────────────────────────────────────────────────────
 LIVE_BUYS_ENABLED              = True    # master switch — auto-disabled on unknown sell failure

@@ -2144,14 +2144,12 @@ class Portfolio:
                                 _save_positions(self._positions)
                                 return pos
 
-                            else:
-                                # no_route / retry_no_send / fatal_no_send:
-                                # No tx was sent. Arm controlled retry for rescue-eligible states.
-                                # DO NOT call executor.sell — it has no path for graduated/uncertain.
-                                log.info(
-                                    "Jupiter rescue: %s for %s — arming migration retry, "
-                                    "blocking executor.sell",
-                                    _rescue_class, pos.token_symbol,
+                            elif _rescue_class == "fatal_no_send":
+                                # Structural failure (keypair/sign) — executor cannot help either.
+                                log.warning(
+                                    "Jupiter rescue: fatal_no_send for %s — arming migration retry, "
+                                    "not falling through (structural failure)",
+                                    pos.token_symbol,
                                 )
                                 try:
                                     from memecoin.config import SELL_STUCK_RETRY_SEC as _srs
@@ -2159,17 +2157,27 @@ class Portfolio:
                                     _srs = 60
                                 self._arm_migration_retry(pos.id, _srs)
                                 return pos
+                            else:
+                                # no_route / retry_no_send: Jupiter can't route yet (pool not indexed).
+                                # R3: Jupiter no_route CANNOT globally block pump-amm or BC routes.
+                                # No tx was sent — fall through to executor.sell with escalate=True.
+                                # executor will try pump-amm directly (no Jupiter indexing required).
+                                log.info(
+                                    "Jupiter rescue: %s for %s — no tx sent, "
+                                    "falling through to executor (R3 venue isolation, pump-amm attempt)",
+                                    _rescue_class, pos.token_symbol,
+                                )
+                                # Do NOT return — executor.sell runs below
 
                         except Exception as _resc_exc:
                             log.warning("Jupiter rescue exception (non-fatal): %s", _resc_exc)
 
-                    # Block executor.sell if rescue was attempted and result is not "fallback_allowed".
-                    # This covers any exception path where _rescue_class stayed "fallback_allowed"
-                    # despite _rescue_attempted=True — in that case we rely on the exception log
-                    # and let executor try (the exception means rescue never sent a tx).
-                    _rescue_blocks_executor = (
-                        _rescue_attempted and _rescue_class not in ("fallback_allowed",)
-                    )
+                    # R3 (venue isolation): Only block executor when a real tx is pending (duplicate risk).
+                    # no_route / retry_no_send are no-tx failures — executor may still try pump-amm.
+                    # fatal_no_send and pending both return early above, so _rescue_class here is
+                    # either "fallback_allowed" (rescue not attempted / exception path) or
+                    # "no_route" / "retry_no_send" (no tx sent, fall-through allowed).
+                    _rescue_blocks_executor = False  # R3: Jupiter result never globally blocks another venue
                     if not _pumpswap_local_succeeded and not _rescue_succeeded and not _rescue_blocks_executor:
                         ex     = MemeExecutor()
                         # escalate=True when:
@@ -2180,6 +2188,10 @@ class Portfolio:
                         #       "graduated_exit" reason, OR ExitRouter classification
                         #       (catches Cat-2 tokens that graduated during hold).
                         _is_retry     = getattr(pos, "sell_attempts", 0) > 0
+                        # G-batch Part 15: stamp first graduation detection for fast-window retry cadence.
+                        if reason == "graduated_exit" and "|graduation_first_seen_ts:" not in (pos.notes or ""):
+                            pos.notes = (pos.notes or "") + f"|graduation_first_seen_ts:{int(time.time())}"
+                            self._positions[pos_id] = pos
                         _is_graduated = (
                             "|cohort:graduated" in (pos.notes or "")
                             or reason == "graduated_exit"
@@ -2700,19 +2712,50 @@ class Portfolio:
         """
         Arm a MIGRATION_UNCERTAIN + no-pool position for sell_stuck retry.
         Sets sell_stuck status, records |migration_wait| + first-detection timestamp,
-        and sets the retry timer. Called from scanner.py no-pool branch only.
-        Never calls executor.sell().
+        and sets the retry timer.
+
+        Fast window (Part 15): if graduation_first_seen_ts is in notes and within
+        GRAD_FAST_WINDOW_SEC, uses GRAD_FAST_RETRY_SEC instead of retry_sec.
+        This reduces graduation-window loss by polling pump-amm every 5s instead of 60s.
+        After 60s, the existing MU ladder takes over at normal cadence.
         """
+        import re as _re_mu_arm
         pos = self._positions.get(pos_id)
         if not pos:
             return
+
+        # Fast window: check graduation_first_seen_ts
+        try:
+            from memecoin.config import GRAD_FAST_WINDOW_SEC, GRAD_FAST_RETRY_SEC
+        except ImportError:
+            GRAD_FAST_WINDOW_SEC = 60
+            GRAD_FAST_RETRY_SEC = 5
+
+        _grad_ts_m = _re_mu_arm.search(r'\|graduation_first_seen_ts:(\d+)', pos.notes or "")
+        if _grad_ts_m:
+            _grad_age = time.time() - int(_grad_ts_m.group(1))
+            if _grad_age < GRAD_FAST_WINDOW_SEC:
+                _actual_retry = GRAD_FAST_RETRY_SEC
+                log.info(
+                    "GRAD FAST WINDOW %s: age=%.0fs < %ds — retry in %ds",
+                    pos.token_symbol, _grad_age, GRAD_FAST_WINDOW_SEC, _actual_retry,
+                )
+            else:
+                _actual_retry = retry_sec
+                log.info(
+                    "GRAD FAST WINDOW %s: age=%.0fs >= %ds — normal retry %ds (MU ladder)",
+                    pos.token_symbol, _grad_age, GRAD_FAST_WINDOW_SEC, _actual_retry,
+                )
+        else:
+            _actual_retry = retry_sec
+
         if "|migration_wait" not in (pos.notes or ""):
             pos.notes = (pos.notes or "") + f"|migration_wait|migration_uncertain_ts:{int(time.time())}"
         elif "|migration_uncertain_ts:" not in (pos.notes or ""):
             pos.notes = (pos.notes or "") + f"|migration_uncertain_ts:{int(time.time())}"
         pos.status = "sell_stuck"
         self._positions[pos_id] = pos
-        self._sell_stuck_until[pos_id] = time.time() + retry_sec
+        self._sell_stuck_until[pos_id] = time.time() + _actual_retry
         _save_positions(self._positions)
 
     def _save(self) -> None:
