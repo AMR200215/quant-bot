@@ -1,0 +1,92 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.4, pytest-7.4.4, pluggy-1.0.0 -- /opt/anaconda3/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/amritanshu.k/Quant-bot/quant-bot
+plugins: anyio-4.2.0
+collecting ... collected 15 items
+
+memecoin/tests/test_c0_characterization.py::TestD1ExecutorT22Override::test_executor_does_not_read_token_program_cache_for_routing FAILED [  6%]
+memecoin/tests/test_c0_characterization.py::TestD1ExecutorT22Override::test_executor_has_no_internal_t22_routing_override FAILED [ 13%]
+memecoin/tests/test_c0_characterization.py::TestD2DualJupiterFallback::test_at_most_one_jupiter_rescue_call_site_in_close_position FAILED [ 20%]
+memecoin/tests/test_c0_characterization.py::TestD2DualJupiterFallback::test_no_is_rescue_eligible_in_portfolio FAILED [ 26%]
+memecoin/tests/test_c0_characterization.py::TestD3RouteOutcomeMissing::test_exit_orchestrator_module_exists FAILED [ 33%]
+memecoin/tests/test_c0_characterization.py::TestD3RouteOutcomeMissing::test_route_outcome_enum_importable FAILED [ 40%]
+memecoin/tests/test_c0_characterization.py::TestD3RouteOutcomeMissing::test_sent_pending_blocks_all_venues FAILED [ 46%]
+memecoin/tests/test_c0_characterization.py::TestD4R6ViolationsInBTests::test_b1_imports_scanner FAILED [ 53%]
+memecoin/tests/test_c0_characterization.py::TestD4R6ViolationsInBTests::test_b2_imports_scanner FAILED [ 60%]
+memecoin/tests/test_c0_characterization.py::TestD4R6ViolationsInBTests::test_b3_imports_portfolio FAILED [ 66%]
+memecoin/tests/test_c0_characterization.py::TestD4R6ViolationsInBTests::test_b5_calls_portfolio_t22_gate FAILED [ 73%]
+memecoin/tests/test_c0_characterization.py::TestD5NoClassifyMintAtEntry::test_entry_gate_module_exists FAILED [ 80%]
+memecoin/tests/test_c0_characterization.py::TestD5NoClassifyMintAtEntry::test_live_entry_calls_classify_mint FAILED [ 86%]
+memecoin/tests/test_c0_characterization.py::TestD6Rpc429WaitMsNotAccumulated::test_rpc_429_wait_ms_accumulated_in_retry_loop FAILED [ 93%]
+memecoin/tests/test_c0_characterization.py::TestD6Rpc429WaitMsNotAccumulated::test_rpc_429_wait_ms_not_always_zero_in_summary FAILED [100%]
+
+=================================== FAILURES ===================================
+_ TestD1ExecutorT22Override.test_executor_does_not_read_token_program_cache_for_routing _
+
+self = <memecoin.tests.test_c0_characterization.TestD1ExecutorT22Override testMethod=test_executor_does_not_read_token_program_cache_for_routing>
+
+    def test_executor_does_not_read_token_program_cache_for_routing(self):
+        """
+        After C4, executor's graduated sell block must not read _mint_token_program_cache
+        to make routing decisions. The caller (orchestrator) passes the route explicitly.
+        FAILS now because executor reads the cache to decide whether to skip pump-amm.
+        """
+        content = _read("memecoin/executor.py")
+        # Look for the pattern where cache is read AND used to decide skip
+        bypass_pattern = re.compile(
+            r'_mint_token_program_cache\.get.*TOKEN22|TOKEN22.*_mint_token_program_cache\.get',
+            re.DOTALL,
+        )
+>       self.assertIsNone(
+            bypass_pattern.search(content),
+            "executor.py reads _mint_token_program_cache to decide T22 routing. "
+            "This bypasses portfolio's T22_GRAD_PUMP_AMM_PROBE_ENABLED flag gate. "
+            "Fix: C4 removes this; orchestrator passes explicit route.",
+        )
+E       AssertionError: <re.Match object; span=(4854, 124736), match='TOKEN22_PROGRAM_ID  = "TokenzQdBNbLqP5VEhdkAS6EPF> is not None : executor.py reads _mint_token_program_cache to decide T22 routing. This bypasses portfolio's T22_GRAD_PUMP_AMM_PROBE_ENABLED flag gate. Fix: C4 removes this; orchestrator passes explicit route.
+
+memecoin/tests/test_c0_characterization.py:68: AssertionError
+_ TestD1ExecutorT22Override.test_executor_has_no_internal_t22_routing_override _
+
+self = <memecoin.tests.test_c0_characterization.TestD1ExecutorT22Override testMethod=test_executor_has_no_internal_t22_routing_override>
+
+    def test_executor_has_no_internal_t22_routing_override(self):
+        """
+        After C4, executor.py must NOT contain _skip_pamm_t22.
+        FAILS now because the variable exists at executor.py:2276.
+        """
+        content = _read("memecoin/executor.py")
+>       self.assertNotIn(
+            if "time.sleep" in ln and "429" in "\n".join(lines[max(0,i-5):i+1]):
+                window = "\n".join(lines[max(0,i-3):i+4])
+                if "rpc_429_wait_ms" in window and "+=" in window:
+                    found = True
+                    break
+>       self.assertTrue(
+            found,
+            "No time.sleep call within a 429-retry context has a rpc_429_wait_ms += "
+            "accumulation nearby. The ENTRY TIMING log will always show 0.0 for this field.",
+        )
+E       AssertionError: False is not true : No time.sleep call within a 429-retry context has a rpc_429_wait_ms += accumulation nearby. The ENTRY TIMING log will always show 0.0 for this field.
+
+memecoin/tests/test_c0_characterization.py:328: AssertionError
+=========================== short test summary info ============================
+FAILED memecoin/tests/test_c0_characterization.py::TestD1ExecutorT22Override::test_executor_does_not_read_token_program_cache_for_routing
+FAILED memecoin/tests/test_c0_characterization.py::TestD1ExecutorT22Override::test_executor_has_no_internal_t22_routing_override
+FAILED memecoin/tests/test_c0_characterization.py::TestD2DualJupiterFallback::test_at_most_one_jupiter_rescue_call_site_in_close_position
+FAILED memecoin/tests/test_c0_characterization.py::TestD2DualJupiterFallback::test_no_is_rescue_eligible_in_portfolio
+FAILED memecoin/tests/test_c0_characterization.py::TestD3RouteOutcomeMissing::test_exit_orchestrator_module_exists
+FAILED memecoin/tests/test_c0_characterization.py::TestD3RouteOutcomeMissing::test_route_outcome_enum_importable
+FAILED memecoin/tests/test_c0_characterization.py::TestD3RouteOutcomeMissing::test_sent_pending_blocks_all_venues
+FAILED memecoin/tests/test_c0_characterization.py::TestD4R6ViolationsInBTests::test_b1_imports_scanner
+FAILED memecoin/tests/test_c0_characterization.py::TestD4R6ViolationsInBTests::test_b2_imports_scanner
+FAILED memecoin/tests/test_c0_characterization.py::TestD4R6ViolationsInBTests::test_b3_imports_portfolio
+FAILED memecoin/tests/test_c0_characterization.py::TestD4R6ViolationsInBTests::test_b5_calls_portfolio_t22_gate
+FAILED memecoin/tests/test_c0_characterization.py::TestD5NoClassifyMintAtEntry::test_entry_gate_module_exists
+FAILED memecoin/tests/test_c0_characterization.py::TestD5NoClassifyMintAtEntry::test_live_entry_calls_classify_mint
+FAILED memecoin/tests/test_c0_characterization.py::TestD6Rpc429WaitMsNotAccumulated::test_rpc_429_wait_ms_accumulated_in_retry_loop
+FAILED memecoin/tests/test_c0_characterization.py::TestD6Rpc429WaitMsNotAccumulated::test_rpc_429_wait_ms_not_always_zero_in_summary
+============================== 15 failed in 0.06s ==============================
+--- SUMMARY ---
+Sat Jul 11 20:26:06 UTC 2026

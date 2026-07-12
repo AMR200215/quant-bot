@@ -169,6 +169,22 @@ _RENT_RESERVE      = 2_039_280   # token-account rent exemption
 _FEE_RESERVE       = 100_000    # tx priority-fee budget
 _PRESIGNED_RESERVE = 50_000     # headroom for presigned emergency exit
 
+# Thread-local 429 wait accumulator.  buy() resets this to 0 before TX build
+# and reads it after confirmation to populate _buy_timing["rpc_429_wait_ms"].
+_tl_429 = threading.local()
+
+
+def _rpc_429_reset() -> None:
+    _tl_429.wait_ms = 0.0
+
+
+def _rpc_429_accum(ms: float) -> None:
+    _tl_429.wait_ms = getattr(_tl_429, "wait_ms", 0.0) + ms
+
+
+def _rpc_429_read() -> float:
+    return getattr(_tl_429, "wait_ms", 0.0)
+
 
 # ---------------------------------------------------------------------------
 # Shared RPC helper — defined early so _fetch_latest_blockhash_inline (called
@@ -194,6 +210,7 @@ def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
         if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
             log.warning("Primary RPC 429 — retrying Helius in 1.5s")
             time.sleep(1.5)
+            _rpc_429_accum(1500.0)
             resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
         if resp.status_code not in (429, 503) or SOLANA_RPC == SOLANA_RPC_FALLBACK:
             return resp
@@ -1841,6 +1858,7 @@ class MemeExecutor:
             #   Jupiter sell then pump-amm sell and logs which venue clears. This
             #   buy block acquires real inventory; sell routing is data collection.
             # B7: buy timing decomposition
+            _rpc_429_reset()
             _buy_timing = {
                 "build_ms": 0.0,
                 "sign_ms": 0.0,
@@ -1919,6 +1937,7 @@ class MemeExecutor:
             confirmed, err = _confirm_tx(sig)
             _t_confirmed   = time.time()
             _buy_timing["land_ms"] = (_t_confirmed - _t_land_start) * 1000
+            _buy_timing["rpc_429_wait_ms"] += _rpc_429_read()
 
             # L1a: collect async Jupiter quote for telemetry (PP backend)
             # Quote has been running since pre-build (~12s ago) — usually already done.
@@ -2106,7 +2125,12 @@ class MemeExecutor:
         known_token_count: int = 0,
         urgent: bool = False,
         skip_pumpswap: bool = False,
+        skip_pump_amm: bool = False,
     ) -> dict:
+        """
+        skip_pump_amm: C4 — explicit orchestrator instruction to bypass pump-amm
+        (e.g. for T22 tokens). Replaces internal T22 cache lookup (C4).
+        """
         """
         Swap all held token_address → SOL.
 
@@ -2270,17 +2294,15 @@ class MemeExecutor:
                 _grad_fee_floor = 0.0005
                 _grad_fee = max(_helius_priority_fee(token_address, _grad_fee_level), _grad_fee_floor)
 
-                # ── T22 check: pump-amm cannot handle Token-2022 ATAs ────────────
-                # pump-amm uses SPL ATA derivation → always reverts with Custom:6001
-                # for T22 tokens. Skip directly to Jupiter for T22 graduated tokens.
-                _skip_pamm_t22 = (
-                    _mint_token_program_cache.get(token_address) == _TOKEN22_PROGRAM_ID
-                    or "TokenzQ" in _mint_token_program_cache.get(token_address, "")
-                    or skip_pumpswap
-                )
-                if _skip_pamm_t22:
+                # ── C4: pump-amm skip decision comes from orchestrator (not internal cache) ─
+                # skip_pump_amm is passed explicitly by portfolio/orchestrator.
+                # T22 tokens: orchestrator sets skip_pump_amm=True (pump-amm always
+                # reverts Custom:6001 for T22 due to wrong ATA program derivation).
+                # Also honour legacy skip_pumpswap flag from call sites not yet migrated.
+                _skip_pump_amm_final = skip_pump_amm or skip_pumpswap
+                if _skip_pump_amm_final:
                     log.warning(
-                        "SELL escalate (graduated T22) — pump-amm SKIPPED, going direct to Jupiter  token=%s",
+                        "SELL escalate — pump-amm SKIPPED (orchestrator decision)  token=%s",
                         token_address[:8],
                     )
                 else:
@@ -2291,10 +2313,9 @@ class MemeExecutor:
                 _pamm_conf = False
                 _pamm_err  = None
                 try:
-                    if _skip_pamm_t22:
-                        # pump-amm always reverts Custom:6001 for T22 (wrong ATA program).
-                        # Set err so the fallback condition below evaluates naturally.
-                        _pamm_err = "pump_amm_skipped_t22"
+                    if _skip_pump_amm_final:
+                        # Orchestrator says skip — set err so fallback evaluates naturally.
+                        _pamm_err = "pump_amm_skipped_orchestrator"
                     else:
                         _t_pamm = time.time()
                         _pamm_bytes = _pumpportal_build_tx(

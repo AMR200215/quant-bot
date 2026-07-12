@@ -116,6 +116,71 @@ CONFIG_TAG = "v7_entry_filters_2026-06-06"
 ACCOUNTING_EPOCH = "e4_rt_feed_quote_gate"
 
 
+# ---------------------------------------------------------------------------
+# C2 — Live entry program gate
+# ---------------------------------------------------------------------------
+
+def evaluate_live_entry_program_gate(
+    classification,   # MintClassification from mint_classifier.py
+    curve_observation=None,  # dict with "complete" key, or None
+    config=None,      # unused for now, reserved
+) -> dict:
+    """
+    Gate a live buy based on mint classification.
+
+    Returns:
+        {"allowed": True}  — proceed with buy
+        {"allowed": False, "reason": str, "token_program": str}  — block buy
+
+    Rules:
+        - If classification is None or classification.error is set → block (unknown program)
+        - If classification.token_program == "UNKNOWN" → block
+        - If classification.is_tradeable is False (unsupported extensions) → block
+        - If token_program is "T22" → block (T22 buys not supported)
+        - SPL tokens → allow
+    """
+    if classification is None:
+        return {
+            "allowed": False,
+            "reason": "unknown program: classification unavailable",
+            "token_program": "UNKNOWN",
+        }
+
+    if classification.error is not None:
+        return {
+            "allowed": False,
+            "reason": f"unknown program: classification error — {classification.error}",
+            "token_program": getattr(classification, "token_program", "UNKNOWN"),
+        }
+
+    tp = classification.token_program
+
+    if tp == "UNKNOWN":
+        return {
+            "allowed": False,
+            "reason": "unknown token program",
+            "token_program": "UNKNOWN",
+        }
+
+    if not classification.is_tradeable:
+        unsup = getattr(classification, "unsupported_extensions", [])
+        return {
+            "allowed": False,
+            "reason": f"unsupported extensions: {unsup}",
+            "token_program": tp,
+        }
+
+    if tp == "T22":
+        return {
+            "allowed": False,
+            "reason": "T22 buys not supported",
+            "token_program": "T22",
+        }
+
+    # SPL — allow
+    return {"allowed": True}
+
+
 @dataclass
 class Position:
     id: str
@@ -1435,6 +1500,34 @@ class Portfolio:
                     )
             except Exception:
                 pass
+
+            # ── C2: Live entry program gate ──────────────────────────────────
+            try:
+                from memecoin import mint_classifier as _mc
+                _mint_cls = _mc.classify_mint(signal.token_address)
+            except Exception as _mc_exc:
+                log.warning("PROGRAM GATE: mint_classifier failed for %s: %s — blocking buy",
+                            live_pos.token_symbol, _mc_exc)
+                _mint_cls = None
+            _curve_obs = _curve_snap if '_curve_snap' in dir() else None
+            _pg_result = evaluate_live_entry_program_gate(_mint_cls, curve_observation=_curve_obs)
+            if not _pg_result.get("allowed"):
+                _pg_reason = _pg_result.get("reason", "unknown")
+                _pg_tp     = _pg_result.get("token_program", "UNKNOWN")
+                log.warning(
+                    "PROGRAM GATE BLOCKED %s  token_program=%s  reason=%s",
+                    live_pos.token_symbol, _pg_tp, _pg_reason,
+                )
+                try:
+                    from memecoin.gate_logger import log_gate_block as _lgb
+                    _lgb("program_gate", live_pos.chain, live_pos.token_address,
+                         live_pos.token_symbol, pp_price=_pp_price if '_pp_price' in dir() else 0.0,
+                         signal_price=_sig_price or 0,
+                         size_usd=_live_size)
+                except Exception:
+                    pass
+                return
+            # ── end C2 ───────────────────────────────────────────────────────
 
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
