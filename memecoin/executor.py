@@ -208,9 +208,10 @@ def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
     try:
         resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
         if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
-            log.warning("Primary RPC 429 — retrying Helius in 1.5s")
-            time.sleep(1.5)
-            _rpc_429_accum(1500.0)
+            _429_wait_ms = 500.0  # exponential base: 0.5s first retry; Tier-2 on second
+            log.warning("Primary RPC 429 — retrying in %.0fms then Tier-2", _429_wait_ms)
+            time.sleep(_429_wait_ms / 1000.0)
+            _rpc_429_accum(_429_wait_ms)
             resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
         if resp.status_code not in (429, 503) or SOLANA_RPC == SOLANA_RPC_FALLBACK:
             return resp
@@ -1577,6 +1578,7 @@ class MemeExecutor:
             # Fire async; result attaches to telemetry/journal only after confirm.
             # Jupiter backend collects it before build (still needs quote for swap route).
             _quote_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            _t_quote_start = time.time()
             _quote_fut  = _quote_exec.submit(_jup_get_quote, SOL_MINT, token_address, lamports)
 
             # Critical path: sol_balance + priority fee only (quote removed)
@@ -1860,11 +1862,14 @@ class MemeExecutor:
             # B7: buy timing decomposition
             _rpc_429_reset()
             _buy_timing = {
-                "build_ms": 0.0,
-                "sign_ms": 0.0,
-                "send_ms": 0.0,
-                "land_ms": 0.0,
-                "rpc_429_wait_ms": 0.0,
+                "build_ms":          0.0,
+                "sign_ms":           0.0,
+                "send_ms":           0.0,
+                "land_ms":           0.0,
+                "rpc_429_wait_ms":   0.0,
+                "http_build_ms":     0.0,   # PP API HTTP POST only (0 for local build path)
+                "confirm_detect_ms": 0.0,   # alias for land_ms — detection lag, not slot settlement
+                "quote_ms":          0.0,   # how long the Jupiter quote took (off critical path)
             }
             if EXECUTOR_BACKEND == "pumpportal":
                 _sig_sent = False
@@ -1874,6 +1879,7 @@ class MemeExecutor:
                     _tok_prog = _pumpfun_mint_token_program(token_address)
                 _use_local_build = (_tok_prog == _TOKEN_PROGRAM_ID)
                 if _use_local_build:
+                    log.info("LOCAL BUILD primary  token=%s  tok_prog=SPL", token_address[:8])
                     try:
                         _t_lb     = time.time()
                         _lb_bytes = _pumpfun_local_build_tx(
@@ -1907,6 +1913,7 @@ class MemeExecutor:
                         slippage_pct=SLIPPAGE_BUY_PCT, priority_fee_sol=_buy_fee,
                     )
                     _buy_timing["build_ms"] = (time.time() - _t_pp_build) * 1000
+                    _buy_timing["http_build_ms"] = _buy_timing["build_ms"]  # entire build is the HTTP call for PP path
                     _t_sign_start = time.time()
                     tx        = VersionedTransaction.from_bytes(tx_bytes)
                     signed_tx = VersionedTransaction(tx.message, [keypair])
@@ -1937,6 +1944,7 @@ class MemeExecutor:
             confirmed, err = _confirm_tx(sig)
             _t_confirmed   = time.time()
             _buy_timing["land_ms"] = (_t_confirmed - _t_land_start) * 1000
+            _buy_timing["confirm_detect_ms"] = _buy_timing["land_ms"]  # same measurement, clearer name
             _buy_timing["rpc_429_wait_ms"] += _rpc_429_read()
 
             # L1a: collect async Jupiter quote for telemetry (PP backend)
@@ -1954,6 +1962,7 @@ class MemeExecutor:
                         _quote_exec.shutdown(wait=False)
                     except Exception:
                         pass
+                _buy_timing["quote_ms"] = (time.time() - _t_quote_start) * 1000
 
             if not confirmed:
                 if err is not None:
@@ -2107,6 +2116,10 @@ class MemeExecutor:
                     "send_ms":           round(_buy_timing["send_ms"], 1),
                     "land_ms":           round(_buy_timing["land_ms"], 1),
                     "rpc_429_wait_ms":   round(_buy_timing["rpc_429_wait_ms"], 1),
+                    # E1: sub-part decomposition
+                    "http_build_ms":     round(_buy_timing["http_build_ms"], 1),
+                    "confirm_detect_ms": round(_buy_timing["confirm_detect_ms"], 1),
+                    "quote_ms":          round(_buy_timing["quote_ms"], 1),
                 },
             }
 

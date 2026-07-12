@@ -211,11 +211,23 @@ in `pumpfun_listener.py` — reviewed separately.
 | test | test_b6_classifier_repair.py — 5 tests pass |
 | live proof | n/a — classification runs on every buy, logs ENTRY PROGRAM GATE line |
 
-### B7 — Submit telemetry (instrumented, artifact pending)
+### B7 — Entry timing decomposition (E1 instrument)
 
-| Field | Value |
+| field | description |
 |---|---|
-| behavior | buy() in executor.py records build_ms, sign_ms, send_ms, land_ms, rpc_429_wait_ms in timing dict |
-| code | executor.py: _buy_timing dict; ENTRY TIMING log updated |
-| artifact | PENDING — will appear in next live trade's ENTRY TIMING log line |
-| artifact format | `build_ms=NNN sign_ms=NNN send_ms=NNN land_ms=NNN 429_ms=NNN` |
+| `http_build_ms` | PP API trade-local HTTP POST round-trip (0 for local-build path) |
+| `sign_ms` | VersionedTransaction sign (0 for local-build — signing is inside build) |
+| `send_ms` | sendTransaction RPC call to Helius |
+| `confirm_detect_ms` | Time from send to getSignatureStatuses seeing confirmed/finalized |
+| `rpc_429_wait_ms` | Total time spent sleeping on 429 backoffs during buy |
+| `quote_ms` | Jupiter quote duration (off critical path — runs async during build+send+confirm) |
+
+| field | value | notes |
+|---|---|---|
+| code | executor.py: `_buy_timing` dict; ENTRY TIMING log updated (E1) | |
+| artifact | PENDING — will appear in next live trade's ENTRY TIMING log line | |
+
+ENTRY TIMING format (after E1):
+```
+ENTRY TIMING SYMBOL | ... | build_ms=X.X  sign_ms=X.X  send_ms=X.X  land_ms=X.X  429_ms=X.X  http_build_ms=X.X  confirm_detect_ms=X.X  quote_ms=X.X
+```

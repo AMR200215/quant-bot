@@ -1671,7 +1671,8 @@ class Portfolio:
                     "dex=$%.8f  pp_sig=$%.8f  pp_gate=$%.8f  jup=$%.8f  fill=$%.8f | "
                     "artifact=%s%%  screen_slip=%s%%  real_slip=%s%%  total_slip=%s%% | "
                     "screen=%.1fs  quote=%.2fs  submit=%.2fs  confirm=%.2fs  total=%.1fs | "
-                    "build_ms=%.1f  sign_ms=%.1f  send_ms=%.1f  land_ms=%.1f  429_ms=%.1f",
+                    "build_ms=%.1f  sign_ms=%.1f  send_ms=%.1f  land_ms=%.1f  429_ms=%.1f"
+                    "  http_build_ms=%.1f  confirm_detect_ms=%.1f  quote_ms=%.1f",
                     live_pos.token_symbol, _price_src,
                     _dex_price, _pp_sig or 0, _pp_at_gate or 0, _jup_price or 0, fill_price,
                     f"{_artifact:.1f}" if _artifact is not None else "?",
@@ -1688,6 +1689,9 @@ class Portfolio:
                     _timing.get("send_ms", 0),
                     _timing.get("land_ms", 0),
                     _timing.get("rpc_429_wait_ms", 0),
+                    _timing.get("http_build_ms", 0),
+                    _timing.get("confirm_detect_ms", 0),
+                    _timing.get("quote_ms", 0),
                 )
                 # ── Telemetry: buy confirmed + fill recorded ──
                 # P4': buy_confirmed event includes sol_spent, tokens_received, fill_price, slip_pct
