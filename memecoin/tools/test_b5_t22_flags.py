@@ -2,6 +2,8 @@
 import sys, os, unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+from memecoin.portfolio import evaluate_live_entry_program_gate as _pg_gate  # noqa: F401
+
 class TestB5T22Flags(unittest.TestCase):
 
     def test_flags_read_from_config(self):

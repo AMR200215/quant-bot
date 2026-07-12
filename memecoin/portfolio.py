@@ -496,66 +496,6 @@ def _append_journal(pos: Position):
             pass
 
 
-def is_rescue_eligible_error(
-    error_class: str = "",
-    exit_state: str = "",
-    reason: str = "",
-    oracle_bonding_curve: bool = False,
-) -> bool:
-    """
-    Return True when the current sell context warrants a Jupiter rescue attempt.
-    Replaces the fragile ``"_er" in dir()`` pattern in close_position().
-
-    Parameters
-    ----------
-    error_class          : str   error_class from the PumpSwap local path result
-    exit_state           : str   TokenExitState.value string from ExitRouter classification
-    reason               : str   reason string passed to close_position()
-    oracle_bonding_curve : bool  True when bonding curve oracle confirmed complete=False at
-                                 buy time. MIGRATION_UNCERTAIN is PP-silence-based and fires
-                                 for T22 tokens that are still on the bonding curve — Jupiter
-                                 rescue has no route for them. Route via PumpPortal instead.
-    """
-    # Oracle-confirmed bonding curve + MIGRATION_UNCERTAIN = T22 token still on BC.
-    # Jupiter cannot route these. Skip rescue and let executor.sell use PumpPortal.
-    if oracle_bonding_curve and exit_state == "MIGRATION_UNCERTAIN":
-        return False
-    _RESCUE_EXIT_STATES = frozenset({
-        "GRADUATED_PUMPSWAP",
-        "GRADUATED_PUMPSWAP_SPL",
-        "GRADUATED_PUMPSWAP_T22",
-        "MIGRATION_UNCERTAIN",
-        "MIGRATION_UNCERTAIN_SPL",
-        "MIGRATION_UNCERTAIN_T22",
-    })
-    _RESCUE_ERROR_CLASSES = frozenset({
-        "pumpswap_no_pool",
-        "pumpswap_bad_pool_layout",
-        "pool_not_indexed",
-        "local_build_failed",
-        "local_sim_failed",
-        "pumpswap_simulation_failed",
-        "jupiter_no_route",          # retry after no-route (route may appear later)
-        "graduated_unsellable",      # pump-amm + Jupiter in executor both failed
-        "Custom:6005",               # BC graduation detected during sell
-        "Custom:6001",
-    })
-    _RESCUE_REASONS = frozenset({
-        "migration_uncertain_no_pool",
-        "migration_uncertain_retry",
-        "sell_stuck",
-        "graduated_exit",
-        "feed_blind",
-    })
-    if exit_state in _RESCUE_EXIT_STATES:
-        return True
-    if error_class in _RESCUE_ERROR_CLASSES:
-        return True
-    if reason in _RESCUE_REASONS:
-        return True
-    return False
-
-
 # ---------------------------------------------------------------------------
 # Portfolio manager
 # ---------------------------------------------------------------------------
@@ -2080,6 +2020,11 @@ class Portfolio:
                                 )
 
                 if not _presigned_used:
+                    from memecoin.exit_orchestrator import (
+                        ExitOrchestrator as _ExitOrch,
+                        is_rescue_eligible as _is_rescue_elig,
+                    )
+                    orch = _ExitOrch(pos_id)
                     # ── ExitRouter: classify token state + run PumpSwap local path ──────
                     # Additive layer — does NOT replace the executor path below.
                     # PUMPSWAP_LOCAL_SIM_ONLY=True (default): simulate only, then fall through
@@ -2089,7 +2034,7 @@ class Portfolio:
                     # the executor escalation below doesn't miss it (pos.dex_id may still be
                     # "pumpfun" for Cat-2 tokens that graduated during the hold period).
                     _er_classified_graduated  = False
-                    # Initialized here so is_rescue_eligible_error() can safely read them
+                    # Initialized here so is_rescue_eligible() can safely read them
                     # even if ExitRouter raises or EXIT_ROUTER_ENABLED=False.
                     _exit_state = None
                     _ps_result  = None
@@ -2181,17 +2126,13 @@ class Portfolio:
                     )
                     if (not _pumpswap_local_succeeded
                             and not _oracle_confirmed_graduated
-                            and is_rescue_eligible_error(
+                            and _is_rescue_elig(
                         error_class=_ps_ec,
                         exit_state=_exit_state.value if _exit_state is not None else "",
                         reason=reason,
                         oracle_bonding_curve=_oracle_bc,
                     )):
                         try:
-                            from memecoin.jupiter_rescue import (
-                                force_jupiter_rescue_sell,
-                                classify_rescue_result as _classify_rescue,
-                            )
                             try:
                                 from app.alerts import _send as _alert_send
                                 _alert_send(
@@ -2200,9 +2141,8 @@ class Portfolio:
                                 )
                             except Exception:
                                 pass
-                            _resc             = force_jupiter_rescue_sell(pos, reason)
+                            _resc, _rescue_class = orch.dispatch_rescue(pos, reason)
                             _rescue_attempted = True
-                            _rescue_class     = _classify_rescue(_resc)
 
                             if _rescue_class == "sold":
                                 _rescue_succeeded = True
@@ -2460,7 +2400,7 @@ class Portfolio:
                             and _oracle_confirmed_graduated
                             and not result.get("success")
                             and result.get("reason") not in ("zero_balance",)
-                            and is_rescue_eligible_error(
+                            and _is_rescue_elig(
                                 error_class=result.get("error_class", ""),
                                 exit_state=_exit_state.value if _exit_state is not None else "",
                                 reason=reason,
@@ -2472,12 +2412,7 @@ class Portfolio:
                             pos.token_symbol,
                         )
                         try:
-                            from memecoin.jupiter_rescue import (
-                                force_jupiter_rescue_sell as _b3_jup,
-                                classify_rescue_result as _b3_clf,
-                            )
-                            _b3_resc = _b3_jup(pos, reason)
-                            _b3_cls  = _b3_clf(_b3_resc)
+                            _b3_resc, _b3_cls = orch.dispatch_rescue(pos, reason)
                             if _b3_cls == "sold":
                                 _rescue_succeeded = True
                                 _b3_fill = _b3_resc.get("fill_price") or pos.exit_price
@@ -2794,8 +2729,9 @@ class Portfolio:
 
     def _finalize_rescue_sell(self, pos_id: str, rescue_result: dict) -> None:
         """
-        Close a position whose sell was already executed by force_jupiter_rescue_sell()
-        from outside the normal close_position() path (e.g. scanner.py migration branch).
+        Close a position whose sell was already executed by the Jupiter rescue path
+        (dispatch_rescue / exit_orchestrator) from outside the normal close_position()
+        path (e.g. scanner.py migration branch).
 
         Never calls executor.sell() or close_position(). Sets status=closed, journals,
         and sends the sell alert. Safe to call even if the position was concurrently

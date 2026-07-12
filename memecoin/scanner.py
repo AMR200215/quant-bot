@@ -1416,6 +1416,43 @@ _graduated_exit_fired: set[str] = set()
 _pregrad_exit_fired: set[str] = set()
 
 
+def select_vsol_source(
+    mint: str,
+    pp_vsol: float,
+    curve_vsol: dict,
+    now: float,
+    freshness_sec: float = 5.0,
+) -> tuple:
+    """Select vSOL reading from PP or curve fallback. Returns (vsol, source)."""
+    vsol = pp_vsol
+    source = "pp"
+    if vsol <= 0:
+        cv = curve_vsol.get(mint)
+        if cv and (now - cv[1]) < freshness_sec:
+            vsol = cv[0]
+            source = "curve"
+    return vsol, source
+
+
+def stamp_and_dispatch_graduation(pos, portfolio, graduated_exit_fired: set, now: float) -> bool:
+    """Stamp graduation_first_seen_ts and dispatch close_position if not already fired.
+
+    Updates pos.notes with cohort:graduated and graduation_first_seen_ts.
+    Calls portfolio.close_position() exactly once per pos.id.
+    Returns True if dispatch happened.
+    """
+    if pos.notes and "|cohort:bonding_curve" in pos.notes:
+        pos.notes = pos.notes.replace("|cohort:bonding_curve", "|cohort:graduated")
+    if "|graduation_first_seen_ts:" not in (pos.notes or ""):
+        pos.notes = (pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
+    if pos.id not in graduated_exit_fired and not pos.exit_reason:
+        graduated_exit_fired.add(pos.id)
+        portfolio._positions[pos.id] = pos
+        portfolio.close_position(pos.id, "graduated_exit", pos.current_price or 0.0)
+        return True
+    return False
+
+
 def _portfolio_thread():
     """
     Exit-condition evaluation for live positions runs at 0.5s using in-memory

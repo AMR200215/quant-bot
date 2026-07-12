@@ -92,6 +92,62 @@ def _map_executor_result(result: dict) -> RouteOutcome:
     return RouteOutcome.NO_SEND
 
 
+def is_rescue_eligible(
+    error_class: str = "",
+    exit_state: str = "",
+    reason: str = "",
+    oracle_bonding_curve: bool = False,
+) -> bool:
+    """Return True when the current sell context warrants a Jupiter rescue attempt.
+
+    Parameters
+    ----------
+    error_class          : str   error_class from the PumpSwap local path result
+    exit_state           : str   TokenExitState.value string from ExitRouter classification
+    reason               : str   reason string passed to close_position()
+    oracle_bonding_curve : bool  True when bonding curve oracle confirmed complete=False at
+                                 buy time. MIGRATION_UNCERTAIN is PP-silence-based and fires
+                                 for T22 tokens that are still on the bonding curve — Jupiter
+                                 rescue has no route for them. Route via PumpPortal instead.
+    """
+    if oracle_bonding_curve and exit_state == "MIGRATION_UNCERTAIN":
+        return False
+    _RESCUE_EXIT_STATES = frozenset({
+        "GRADUATED_PUMPSWAP",
+        "GRADUATED_PUMPSWAP_SPL",
+        "GRADUATED_PUMPSWAP_T22",
+        "MIGRATION_UNCERTAIN",
+        "MIGRATION_UNCERTAIN_SPL",
+        "MIGRATION_UNCERTAIN_T22",
+    })
+    _RESCUE_ERROR_CLASSES = frozenset({
+        "pumpswap_no_pool",
+        "pumpswap_bad_pool_layout",
+        "pool_not_indexed",
+        "local_build_failed",
+        "local_sim_failed",
+        "pumpswap_simulation_failed",
+        "jupiter_no_route",
+        "graduated_unsellable",
+        "Custom:6005",
+        "Custom:6001",
+    })
+    _RESCUE_REASONS = frozenset({
+        "migration_uncertain_no_pool",
+        "migration_uncertain_retry",
+        "sell_stuck",
+        "graduated_exit",
+        "feed_blind",
+    })
+    if exit_state in _RESCUE_EXIT_STATES:
+        return True
+    if error_class in _RESCUE_ERROR_CLASSES:
+        return True
+    if reason in _RESCUE_REASONS:
+        return True
+    return False
+
+
 class ExitOrchestrator:
     """Single-venue exit controller enforcing R3/R4/R5."""
 
@@ -210,6 +266,53 @@ class ExitOrchestrator:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def dispatch_rescue(self, pos, reason: str):
+        """Dispatch a Jupiter rescue sell through the orchestrator (R4/R5 enforced).
+
+        Internally imports force_jupiter_rescue_sell and classify_rescue_result
+        from memecoin.jupiter_rescue.
+
+        Returns (raw_rescue_dict, rescue_class_str).
+        If R5 blocked (fn never called), returns ({}, "fallback_allowed").
+        """
+        from memecoin.jupiter_rescue import (
+            force_jupiter_rescue_sell as _force_rescue,
+            classify_rescue_result as _classify_rescue,
+        )
+
+        _resc_holder: list = []
+
+        def _fn():
+            raw = _force_rescue(pos, reason)
+            cls = _classify_rescue(raw)
+            _resc_holder.append((raw, cls))
+            # Map rescue class to error_class for RouteOutcome mapping
+            _ec_map = {
+                "sold":          None,
+                "already_sold":  "already_sold",
+                "pending":       "pending",
+                "no_route":      "no_route",
+                "retry_no_send": "retry_no_send",
+                "fatal_no_send": "fatal",
+            }
+            mapped_ec = _ec_map.get(cls, cls)
+            return {
+                "success":      cls == "sold",
+                "sig":          raw.get("tx_sig"),
+                "error_class":  mapped_ec,
+                "fill_price":   raw.get("fill_price"),
+                "sol_received": raw.get("sol_received"),
+            }
+
+        route_result = self.dispatch("jupiter", _fn)
+
+        if not _resc_holder:
+            # R5 blocked — fn never called
+            return {}, "fallback_allowed"
+
+        raw_rescue, rescue_class = _resc_holder[0]
+        return raw_rescue, rescue_class
 
     def _get_or_create_venue_state(self, venue: str) -> VenueState:
         """Must be called with self._lock held."""
