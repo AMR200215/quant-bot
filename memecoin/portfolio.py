@@ -3688,8 +3688,21 @@ class Portfolio:
                 with open(path, newline="") as f:
                     rows.extend(csv.DictReader(f))
 
-        # Sort merged result by exit_time ascending
-        rows.sort(key=lambda r: float(r.get("exit_time") or 0))
+        # Sort merged result by exit_time ascending.
+        # exit_time may be a unix timestamp float OR a legacy datetime string.
+        def _exit_sort_key(r):
+            v = r.get("exit_time") or ""
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                pass
+            try:
+                from datetime import datetime, timezone
+                return datetime.strptime(v[:19], "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=timezone.utc).timestamp()
+            except Exception:
+                return 0.0
+        rows.sort(key=_exit_sort_key)
         return rows
 
 
