@@ -1,0 +1,353 @@
+{
+  "run_at": "2026-07-12T00:43:15.557542+00:00Z",
+  "total": 30,
+  "passed": 30,
+  "failed": 0,
+  "scenarios": [
+    {
+      "id": 1,
+      "name": "GradState: PP fresh observation selected",
+      "category": "C1_graduation_state",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 5.5,
+      "details": {
+        "selected_source": "pp"
+      }
+    },
+    {
+      "id": 2,
+      "name": "GradState: stale PP falls back to curve",
+      "category": "C1_graduation_state",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "selected_source": "curve"
+      }
+    },
+    {
+      "id": 3,
+      "name": "GradState: PP vsol=0 treated as absent",
+      "category": "C1_graduation_state",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "selected_source": "curve"
+      }
+    },
+    {
+      "id": 4,
+      "name": "GradState: decide NONE below threshold",
+      "category": "C1_graduation_state",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "action": "none"
+      }
+    },
+    {
+      "id": 5,
+      "name": "GradState: decide PRE_GRAD_EXIT at threshold",
+      "category": "C1_graduation_state",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "action": "pre_grad_exit",
+        "vsol": 97.75
+      }
+    },
+    {
+      "id": 6,
+      "name": "GradState: decide GRAD_EXIT when complete=True",
+      "category": "C1_graduation_state",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "action": "grad_exit"
+      }
+    },
+    {
+      "id": 7,
+      "name": "GradState: decide ALREADY_GONE when account_missing",
+      "category": "C1_graduation_state",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "action": "already_gone"
+      }
+    },
+    {
+      "id": 8,
+      "name": "Orchestrator: CONFIRMED_SUCCESS",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 1.7,
+      "details": {
+        "outcome": "confirmed_success",
+        "sig": "sig1"
+      }
+    },
+    {
+      "id": 9,
+      "name": "Orchestrator: CONFIRMED_REVERT",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "outcome": "confirmed_revert"
+      }
+    },
+    {
+      "id": 10,
+      "name": "Orchestrator: SENT_PENDING sets global pending (R5)",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "outcome": "sent_pending",
+        "pending_sig": "pend_sig"
+      }
+    },
+    {
+      "id": 11,
+      "name": "Orchestrator: R5 \u2014 second dispatch blocked when SENT_PENDING",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "outcome": "no_send"
+      }
+    },
+    {
+      "id": 12,
+      "name": "Orchestrator: R3 \u2014 no_route does NOT set pending sig",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "outcome": "no_send",
+        "pending_after": null
+      }
+    },
+    {
+      "id": 13,
+      "name": "Orchestrator: clear_pending unblocks next dispatch",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "outcome": "confirmed_success"
+      }
+    },
+    {
+      "id": 14,
+      "name": "Orchestrator: FATAL_PRE_SEND for build_failed",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "outcome": "fatal_pre_send"
+      }
+    },
+    {
+      "id": 15,
+      "name": "Orchestrator: ZERO_BALANCE outcome",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "outcome": "zero_balance"
+      }
+    },
+    {
+      "id": 16,
+      "name": "Orchestrator: venue_attempts track independently",
+      "category": "C3_exit_orchestrator",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "pump_amm_attempts": 3,
+        "jupiter_attempts": 1
+      }
+    },
+    {
+      "id": 17,
+      "name": "EntryGate: SPL token allowed",
+      "category": "C2_entry_gate",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 247.4,
+      "details": {
+        "allowed": true
+      }
+    },
+    {
+      "id": 18,
+      "name": "EntryGate: T22 token blocked",
+      "category": "C2_entry_gate",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "allowed": false,
+        "reason": "T22 buys not supported",
+        "token_program": "T22"
+      }
+    },
+    {
+      "id": 19,
+      "name": "EntryGate: UNKNOWN program blocked",
+      "category": "C2_entry_gate",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "allowed": false,
+        "reason": "unknown token program",
+        "token_program": "UNKNOWN"
+      }
+    },
+    {
+      "id": 20,
+      "name": "EntryGate: None classification blocked",
+      "category": "C2_entry_gate",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "allowed": false,
+        "reason": "unknown program: classification unavailable",
+        "token_program": "UNKNOWN"
+      }
+    },
+    {
+      "id": 21,
+      "name": "EntryGate: classification with error blocked",
+      "category": "C2_entry_gate",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "allowed": false,
+        "reason": "unknown program: classification error \u2014 RPC timeout",
+        "token_program": "UNKNOWN"
+      }
+    },
+    {
+      "id": 22,
+      "name": "Receipts: write and read round-trip",
+      "category": "C5_execution_receipts",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 2.8,
+      "details": {
+        "receipts_count": 1
+      }
+    },
+    {
+      "id": 23,
+      "name": "Receipts: secret fields stripped",
+      "category": "C5_execution_receipts",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.7,
+      "details": {
+        "secret_stripped": true
+      }
+    },
+    {
+      "id": 24,
+      "name": "Receipts: filter by mint",
+      "category": "C5_execution_receipts",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.7,
+      "details": {
+        "filtered_count": 1
+      }
+    },
+    {
+      "id": 25,
+      "name": "Receipts: never raises on None input",
+      "category": "C5_execution_receipts",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.6,
+      "details": {
+        "raised": false
+      }
+    },
+    {
+      "id": 26,
+      "name": "Telemetry: UUID-based trace_id (no collisions)",
+      "category": "C6_telemetry",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 4.5,
+      "details": {
+        "trace_ids_unique": true,
+        "count": 5
+      }
+    },
+    {
+      "id": 27,
+      "name": "Telemetry: timestamp_wall no +00:00Z double suffix",
+      "category": "C6_telemetry",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.9,
+      "details": {
+        "timestamps_checked": 2
+      }
+    },
+    {
+      "id": 28,
+      "name": "Telemetry: secret field redaction",
+      "category": "C6_telemetry",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.9,
+      "details": {
+        "redacted": true
+      }
+    },
+    {
+      "id": 29,
+      "name": "Telemetry: bind_position + link_pair API",
+      "category": "C6_telemetry",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.7,
+      "details": {
+        "pos_id": "pos29_BOUND",
+        "pair_id": "PAIR-29"
+      }
+    },
+    {
+      "id": 30,
+      "name": "Telemetry: 44+ canonical E_* constants defined",
+      "category": "C6_telemetry",
+      "passed": true,
+      "error": "",
+      "elapsed_ms": 0.0,
+      "details": {
+        "constant_count": 45
+      }
+    }
+  ]
+}

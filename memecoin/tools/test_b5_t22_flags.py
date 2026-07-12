@@ -6,10 +6,13 @@ class TestB5T22Flags(unittest.TestCase):
 
     def test_flags_read_from_config(self):
         """T22_GRAD_PUMP_AMM_PROBE_ENABLED and T22_GRAD_PUMP_AMM_ENABLED exist in config."""
-        from memecoin.config import (
-            T22_GRAD_PUMP_AMM_PROBE_ENABLED,
-            T22_GRAD_PUMP_AMM_ENABLED,
-        )
+        import importlib, sys
+        # Force reload in case a test stub corrupted sys.modules["memecoin.config"]
+        sys.modules.pop("memecoin.config", None)
+        import memecoin.config as _cfg
+        importlib.reload(_cfg)
+        T22_GRAD_PUMP_AMM_PROBE_ENABLED = _cfg.T22_GRAD_PUMP_AMM_PROBE_ENABLED
+        T22_GRAD_PUMP_AMM_ENABLED = _cfg.T22_GRAD_PUMP_AMM_ENABLED
         self.assertFalse(T22_GRAD_PUMP_AMM_PROBE_ENABLED,
                          "Probe flag must default False — no receipt yet")
         self.assertFalse(T22_GRAD_PUMP_AMM_ENABLED,

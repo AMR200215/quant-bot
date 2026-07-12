@@ -11,13 +11,16 @@ Usage:
 import argparse
 import csv
 import json
+import statistics
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-TELEMETRY_FILE = Path(__file__).parent.parent.parent / "logs" / "trade_telemetry.jsonl"
-LIVE_JOURNAL   = Path(__file__).parent.parent.parent / "logs" / "memecoin_live_journal.csv"
+TELEMETRY_FILE  = Path(__file__).parent.parent.parent / "logs" / "trade_telemetry.jsonl"
+LIVE_JOURNAL    = Path(__file__).parent.parent.parent / "logs" / "memecoin_live_journal.csv"
+PAPER_JOURNAL   = Path(__file__).parent.parent.parent / "logs" / "memecoin_social_journal.csv"
+ARTIFACTS_DIR   = Path(__file__).parent.parent.parent / "artifacts" / "telemetry"
 
 OUTPUT_FIELDS = [
     "trace_id", "pair_id", "symbol", "mint", "category", "token_program",
@@ -78,6 +81,20 @@ def load_journal() -> dict[str, dict]:
     return rows
 
 
+def load_paper_journal() -> dict[str, dict]:
+    """Load paper (social) journal keyed by pair_id, then id."""
+    rows: dict[str, dict] = {}
+    if not PAPER_JOURNAL.exists():
+        return rows
+    with open(PAPER_JOURNAL) as f:
+        for r in csv.DictReader(f):
+            # Prefer pair_id as key for pairing; fall back to id
+            pid = r.get("pair_id", "") or r.get("id", "")
+            if pid:
+                rows[pid] = r
+    return rows
+
+
 def _get_ts(events: list[dict], event_name: str, field: str = "timestamp_wall") -> float | None:
     """Find first event with given name and return its timestamp as epoch."""
     for e in events:
@@ -100,6 +117,127 @@ def _get_field(events: list[dict], event_name: str, field: str):
         if e.get("event_name") == event_name:
             return e.get(field)
     return None
+
+
+def _get_buy_sent_ts(events: list[dict]) -> float | None:
+    """Return buy_sent timestamp, falling back to buy_build_done if buy_sent absent."""
+    ts = _get_ts(events, "buy_sent")
+    if ts is not None:
+        return ts
+    return _get_ts(events, "buy_build_done")
+
+
+def _get_token_program(events: list[dict]) -> str:
+    """Extract token_program from entry_gate_checked event."""
+    val = _get_field(events, "entry_gate_checked", "token_program")
+    return val if val is not None else ""
+
+
+def pair_traces(
+    live_traces: dict[str, list[dict]],
+    paper_traces: dict[str, list[dict]],
+) -> list[dict]:
+    """
+    Pair live telemetry traces with paper traces.
+
+    Priority:
+    1. pair_id match between live trace and paper trace
+    2. signal_id + mint match
+    3. Legacy: same mint within 60s of each other
+    4. MISSING_PAIR if none found
+
+    Returns list of dicts: {live_trace_id, paper_trace_id, match_method}
+    """
+    results = []
+
+    def _first_field(events: list[dict], field: str):
+        for e in events:
+            v = e.get(field)
+            if v:
+                return v
+        return None
+
+    def _first_ts(events: list[dict]) -> float | None:
+        for e in events:
+            raw = e.get("timestamp_wall")
+            if raw:
+                try:
+                    if isinstance(raw, (int, float)):
+                        return float(raw)
+                    return datetime.fromisoformat(raw.rstrip("Z")).replace(tzinfo=timezone.utc).timestamp()
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    paper_by_pair_id: dict[str, str] = {}
+    paper_by_signal_mint: dict[tuple, str] = {}
+    paper_mint_ts: list[tuple[str, str, float]] = []  # (trace_id, mint, ts)
+
+    for ptid, pevents in paper_traces.items():
+        ppid = _first_field(pevents, "pair_id")
+        if ppid:
+            paper_by_pair_id[ppid] = ptid
+
+        sig = _first_field(pevents, "signal_id")
+        mint = _first_field(pevents, "mint")
+        if sig and mint:
+            paper_by_signal_mint[(sig, mint)] = ptid
+
+        pts = _first_ts(pevents)
+        if mint and pts:
+            paper_mint_ts.append((ptid, mint, pts))
+
+    matched_paper: set[str] = set()
+
+    for ltid, levents in live_traces.items():
+        lpid = _first_field(levents, "pair_id")
+        lsig = _first_field(levents, "signal_id")
+        lmint = _first_field(levents, "mint")
+        lts = _first_ts(levents)
+
+        matched_ptid = None
+        method = "MISSING_PAIR"
+
+        # Priority 1: pair_id match
+        if lpid and lpid in paper_by_pair_id:
+            candidate = paper_by_pair_id[lpid]
+            if candidate not in matched_paper:
+                matched_ptid = candidate
+                method = "pair_id"
+
+        # Priority 2: signal_id + mint
+        if matched_ptid is None and lsig and lmint:
+            key = (lsig, lmint)
+            if key in paper_by_signal_mint:
+                candidate = paper_by_signal_mint[key]
+                if candidate not in matched_paper:
+                    matched_ptid = candidate
+                    method = "signal_id_mint"
+
+        # Priority 3: same mint within 60s
+        if matched_ptid is None and lmint and lts:
+            best_delta = None
+            best_ptid = None
+            for ptid, pmint, pts in paper_mint_ts:
+                if pmint == lmint and ptid not in matched_paper:
+                    delta = abs(lts - pts)
+                    if delta <= 60 and (best_delta is None or delta < best_delta):
+                        best_delta = delta
+                        best_ptid = ptid
+            if best_ptid:
+                matched_ptid = best_ptid
+                method = "mint_within_60s"
+
+        if matched_ptid:
+            matched_paper.add(matched_ptid)
+
+        results.append({
+            "live_trace_id": ltid,
+            "paper_trace_id": matched_ptid or "MISSING_PAIR",
+            "match_method": method,
+        })
+
+    return results
 
 
 def classify_gap(
@@ -167,6 +305,7 @@ def summarize(since: str | None = None, pair_id: str | None = None) -> list[dict
     """Build summary rows."""
     traces = load_telemetry(since=since, pair_id=pair_id)
     journal = load_journal()
+    paper_journal = load_paper_journal()
     rows = []
 
     for tid, events in traces.items():
@@ -174,7 +313,11 @@ def summarize(since: str | None = None, pair_id: str | None = None) -> list[dict
             continue
         first = events[0]
         pos_id = first.get("pos_id", "")
+        trace_pair_id = first.get("pair_id", "")
         jrow = journal.get(pos_id, {})
+
+        # Paper journal: try pair_id first, then pos_id
+        pjrow = paper_journal.get(trace_pair_id, {}) or paper_journal.get(pos_id, {})
 
         # Timing
         timing_fields = {
@@ -182,7 +325,7 @@ def summarize(since: str | None = None, pair_id: str | None = None) -> list[dict
             "preflight_start_ts": _get_ts(events, "preflight_started"),
             "preflight_done_ts": _get_ts(events, "preflight_baseline_selected"),
             "buy_build_start_ts": _get_ts(events, "buy_build_started"),
-            "buy_sent_ts": _get_ts(events, "buy_build_done"),
+            "buy_sent_ts": _get_buy_sent_ts(events),  # Bug 2 fix: buy_sent with fallback
             "buy_confirmed_ts": _get_ts(events, "buy_confirmed"),
             "fill_recorded_ts": _get_ts(events, "buy_fill_recorded"),
             "exit_triggered_ts": _get_ts(events, "exit_triggered"),
@@ -215,6 +358,13 @@ def summarize(since: str | None = None, pair_id: str | None = None) -> list[dict
         except (TypeError, ValueError):
             pass
 
+        # Bug 1 fix: populate paper PnL from paper journal
+        try:
+            paper_pnl_usd = float(pjrow.get("pnl_usd") or 0) if pjrow else None
+            paper_pnl_pct = float(pjrow.get("pnl_pct") or 0) if pjrow else None
+        except (TypeError, ValueError):
+            pass
+
         raw_gap = None
         pct_gap = None
         if live_pnl_usd is not None and paper_pnl_usd is not None:
@@ -226,13 +376,25 @@ def summarize(since: str | None = None, pair_id: str | None = None) -> list[dict
             live_pnl_pct, paper_pnl_pct, live_size, paper_size, events, missing
         )
 
+        # Bug 4: note partial exits in missing_fields / gap_reason
+        n_partial_exits = sum(
+            1 for e in events
+            if e.get("event_name") in ("tp_sell_confirmed", "tp_partial_confirmed")
+        )
+        missing_note = list(missing)
+        if n_partial_exits > 1:
+            missing_note.append(f"partial_exits={n_partial_exits}")
+
+        # Bug 3 fix: extract token_program from entry_gate_checked event
+        token_program = _get_token_program(events)
+
         row = {
             "trace_id": tid,
-            "pair_id": first.get("pair_id", ""),
+            "pair_id": trace_pair_id,
             "symbol": first.get("symbol", ""),
             "mint": first.get("mint", ""),
             "category": first.get("live_or_paper", ""),
-            "token_program": "",
+            "token_program": token_program,
             "route_buy": _get_field(events, "buy_confirmed", "route_used") or "",
             "route_sell": _get_field(events, "sell_confirmed", "route_used") or "",
             **{k: v for k, v in timing_fields.items()},
@@ -248,11 +410,88 @@ def summarize(since: str | None = None, pair_id: str | None = None) -> list[dict
             "raw_dollar_gap": raw_gap,
             "pct_gap": pct_gap,
             "gap_reason": gap_reason,
-            "missing_fields": ",".join(missing),
+            "missing_fields": ",".join(missing_note),
         }
         rows.append(row)
 
     return rows
+
+
+def _write_csv_files(rows: list[dict]) -> None:
+    """Write 6 CSV files to artifacts/telemetry/."""
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1. per_trade.csv
+    with open(ARTIFACTS_DIR / "per_trade.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=OUTPUT_FIELDS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in OUTPUT_FIELDS})
+
+    # 2. missing_data.csv
+    missing_rows = [r for r in rows if r.get("gap_reason") == "missing_data"]
+    with open(ARTIFACTS_DIR / "missing_data.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=OUTPUT_FIELDS)
+        w.writeheader()
+        for r in missing_rows:
+            w.writerow({k: r.get(k, "") for k in OUTPUT_FIELDS})
+
+    # 3. timing_summary.csv
+    timing_keys = ["alert_to_fill_ms", "exit_trigger_to_sell_confirmed_ms"]
+    timing_summary_fields = ["metric", "count", "avg", "p50", "p95"]
+    with open(ARTIFACTS_DIR / "timing_summary.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=timing_summary_fields)
+        w.writeheader()
+        for key in timing_keys:
+            vals = [r[key] for r in rows if r.get(key) is not None]
+            if vals:
+                sorted_vals = sorted(vals)
+                n = len(sorted_vals)
+                avg = round(sum(sorted_vals) / n, 1)
+                p50 = round(statistics.median(sorted_vals), 1)
+                p95_idx = max(0, int(n * 0.95) - 1)
+                p95 = round(sorted_vals[p95_idx], 1)
+            else:
+                avg = p50 = p95 = ""
+            w.writerow({"metric": key, "count": len(vals), "avg": avg, "p50": p50, "p95": p95})
+
+    # 4. gap_attribution.csv
+    gap_counts: dict[str, int] = defaultdict(int)
+    for r in rows:
+        gap_counts[r.get("gap_reason", "unknown")] += 1
+    with open(ARTIFACTS_DIR / "gap_attribution.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["gap_reason", "count"])
+        w.writeheader()
+        for reason, count in sorted(gap_counts.items()):
+            w.writerow({"gap_reason": reason, "count": count})
+
+    # 5. token_program_breakdown.csv
+    tp_counts: dict[str, int] = defaultdict(int)
+    for r in rows:
+        tp = r.get("token_program") or "UNKNOWN"
+        tp_upper = str(tp).upper()
+        if "T22" in tp_upper or "TOKEN2022" in tp_upper or "TOKEN_2022" in tp_upper:
+            key = "T22"
+        elif "SPL" in tp_upper or "TOKEN" in tp_upper:
+            key = "SPL"
+        else:
+            key = "UNKNOWN"
+        tp_counts[key] += 1
+    with open(ARTIFACTS_DIR / "token_program_breakdown.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["token_program", "count"])
+        w.writeheader()
+        for tp, count in sorted(tp_counts.items()):
+            w.writerow({"token_program": tp, "count": count})
+
+    # 6. missing_pair.csv
+    # Traces where we couldn't find paper journal data (paper_pnl_usd is None)
+    missing_pair_rows = [r for r in rows if r.get("paper_pnl_usd") is None]
+    with open(ARTIFACTS_DIR / "missing_pair.csv", "w", newline="") as f:
+        pair_fields = ["trace_id", "pair_id", "symbol", "mint", "gap_reason"]
+        w = csv.DictWriter(f, fieldnames=pair_fields)
+        w.writeheader()
+        for r in missing_pair_rows:
+            w.writerow({k: r.get(k, "") for k in pair_fields})
 
 
 def main():
@@ -269,6 +508,8 @@ def main():
         return
 
     if args.output == "csv":
+        _write_csv_files(rows)
+        # Also write main output to stdout for piping
         w = csv.DictWriter(sys.stdout, fieldnames=OUTPUT_FIELDS)
         w.writeheader()
         for r in rows:
