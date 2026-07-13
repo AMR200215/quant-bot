@@ -136,8 +136,7 @@ def evaluate_live_entry_program_gate(
         - If classification is None or classification.error is set → block (unknown program)
         - If classification.token_program == "UNKNOWN" → block
         - If classification.is_tradeable is False (unsupported extensions) → block
-        - If token_program is "T22" → block (T22 buys not supported)
-        - SPL tokens → allow
+        - SPL or T22_CLEAN → allow (T22 BC sells work; Jupiter rescue handles post-graduation)
     """
     if classification is None:
         return {
@@ -170,14 +169,9 @@ def evaluate_live_entry_program_gate(
             "token_program": tp,
         }
 
-    if tp == "T22":
-        return {
-            "allowed": False,
-            "reason": "T22 buys not supported",
-            "token_program": "T22",
-        }
-
-    # SPL — allow
+    # SPL or T22_CLEAN — allow.
+    # T22 bonding-curve sells work (bonding_curve_t22.py).
+    # Post-graduation PumpSwap local fails for T22, but MU retry escalates to Jupiter rescue.
     return {"allowed": True}
 
 
