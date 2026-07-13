@@ -56,6 +56,10 @@ _KNOWN_EXTENSIONS = frozenset({
     _EXT_CONFIDENTIAL,       # known but blocking
 })
 
+# Case-insensitive lookup: lowercase(ext_name) → canonical name
+# RPC can return "metadataPointer" or "MetadataPointer" for the same extension.
+_EXT_LOWER_MAP: dict[str, str] = {e.lower(): e for e in _KNOWN_EXTENSIONS}
+
 # Extensions that block live trading (unsupported execution paths)
 _BLOCKING_EXTENSIONS = frozenset({
     _EXT_TRANSFER_HOOK,
@@ -179,7 +183,9 @@ def _parse_extensions(account_data: dict) -> list[str]:
                 if isinstance(ext, dict):
                     ext_type = ext.get("extension") or ext.get("type") or ext.get("extensionType")
                     if ext_type:
-                        extensions.append(str(ext_type))
+                        # Normalize to canonical PascalCase (RPC varies: "metadataPointer" vs "MetadataPointer")
+                        canonical = _EXT_LOWER_MAP.get(str(ext_type).lower(), str(ext_type))
+                        extensions.append(canonical)
     except Exception as exc:
         log.debug("_parse_extensions: failed to parse extensions: %s", exc)
     return extensions
