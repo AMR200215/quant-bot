@@ -15,6 +15,7 @@ git add logs/memecoin_live_journal.csv \
         logs/memecoin_journal.csv 2>/dev/null || true
 
 if git diff --cached --quiet; then
+    date +%s > "${LAST_SYNC_FILE}"
     echo "${LOG_PREFIX} no changes"
     exit 0
 fi
