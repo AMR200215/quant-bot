@@ -204,43 +204,60 @@ def _classify_policy(token_program: str, extensions: list[str]) -> str:
 
 # ── RPC fetch ─────────────────────────────────────────────────────────────────
 
+_CLASSIFY_FALLBACK_RPCS = [
+    "https://api.mainnet-beta.solana.com",
+    "https://rpc.ankr.com/solana",
+]
+
+
 def _fetch_mint_owner(mint: str) -> dict:
     """
-    Fetch mint account info from Solana RPC.
+    Fetch mint account info from Solana RPC with fallback chain.
+
+    Tries Helius first; on 429/5xx/timeout falls through to public RPC
+    endpoints so a rate-limit never blocks the entry gate.
     Returns dict with keys: owner (str), data (dict), error (str|None).
     """
-    try:
-        import os, requests
-        helius_key = os.environ.get("HELIUS_API_KEY", "")
-        if helius_key:
-            rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
-        else:
-            rpc_url = "https://api.mainnet-beta.solana.com"
+    import os, requests
 
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getAccountInfo",
-            "params": [
-                mint,
-                {"encoding": "jsonParsed", "commitment": "confirmed"},
-            ],
-        }
-        resp = requests.post(rpc_url, json=payload, timeout=5)
-        resp.raise_for_status()
-        body = resp.json()
-        result = body.get("result", {})
-        value = result.get("value")
-        if value is None:
-            return {"owner": None, "data": {}, "error": "account_not_found"}
-        owner = value.get("owner", "")
-        data = value.get("data", {})
-        if isinstance(data, list):
-            # base64 format — no extension parsing possible without deserializing
-            data = {}
-        return {"owner": owner, "data": data, "error": None, "commitment": "confirmed"}
-    except Exception as exc:
-        return {"owner": None, "data": {}, "error": str(exc), "commitment": "confirmed"}
+    helius_key = os.environ.get("HELIUS_API_KEY", "")
+    primary_url = (
+        f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+        if helius_key
+        else _CLASSIFY_FALLBACK_RPCS[0]
+    )
+    urls_to_try = [primary_url] + [u for u in _CLASSIFY_FALLBACK_RPCS if u != primary_url]
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getAccountInfo",
+        "params": [mint, {"encoding": "jsonParsed", "commitment": "confirmed"}],
+    }
+
+    last_error = None
+    for url in urls_to_try:
+        try:
+            resp = requests.post(url, json=payload, timeout=5)
+            if resp.status_code in (429, 503):
+                last_error = f"rpc_429_or_503 url={url}"
+                log.debug("MINT CLASSIFY 429/503 from %s — trying next RPC", url)
+                continue
+            resp.raise_for_status()
+            body  = resp.json()
+            value = (body.get("result") or {}).get("value")
+            if value is None:
+                return {"owner": None, "data": {}, "error": "account_not_found"}
+            owner = value.get("owner", "")
+            data  = value.get("data", {})
+            if isinstance(data, list):
+                data = {}
+            return {"owner": owner, "data": data, "error": None, "commitment": "confirmed"}
+        except Exception as exc:
+            last_error = str(exc)
+            log.debug("MINT CLASSIFY RPC error (%s): %s — trying next", url, exc)
+
+    return {"owner": None, "data": {}, "error": last_error, "commitment": "confirmed"}
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
