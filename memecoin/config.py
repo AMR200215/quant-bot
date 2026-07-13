@@ -270,8 +270,8 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "time_stop_minutes":   45,
     },
     "social_alert": {
-        "trade_size_usd":      3,       # $3/trade — capital reset to $8
-        "live_trade_size_usd": 3,       # scale up when wallet recovers
+        "trade_size_usd":      2,       # $2/trade — reduced for E1 canary (restore to $3 after)
+        "live_trade_size_usd": 2,       # scale up when wallet recovers
         "hard_stop_pct":       -0.35,
         "time_stop_minutes":   90,
         # ATH-anchored trail tiers (replaces single trailing_stop_pct / trail_activates_pct).
