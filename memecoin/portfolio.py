@@ -745,6 +745,12 @@ class Portfolio:
         _save_positions(self._positions)
         log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s",
                  pos.id, pos.chain, pos.token_symbol, pos.entry_price, pos.dex_id)
+        if signal.signal_type == "social_alert":
+            try:
+                from memecoin.health_monitor import bump_social_alert_paper as _bsap
+                _bsap()
+            except Exception:
+                pass
 
         # ── Live position (parallel, independent — social_alert only) ──
         # Only social_alert (telegram_pump cohort) goes live.
@@ -1443,6 +1449,11 @@ class Portfolio:
 
             # ── C2: Live entry program gate ──────────────────────────────────
             try:
+                from memecoin.health_monitor import bump_live_attempt as _bla
+                _bla()
+            except Exception:
+                pass
+            try:
                 from memecoin import mint_classifier as _mc
                 _mint_cls = _mc.classify_mint(signal.token_address)
             except Exception as _mc_exc:
@@ -1464,6 +1475,11 @@ class Portfolio:
                          live_pos.token_symbol, pp_price=_pp_price if '_pp_price' in dir() else 0.0,
                          signal_price=_sig_price or 0,
                          size_usd=_live_size)
+                except Exception:
+                    pass
+                try:
+                    from memecoin.health_monitor import bump_gate_block as _bgb
+                    _bgb(f"program_gate:{_pg_tp}:{_pg_reason[:60]}")
                 except Exception:
                     pass
                 return
