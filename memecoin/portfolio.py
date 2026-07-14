@@ -252,6 +252,16 @@ class Position:
     fill_price_recorded: float = 0.0  # actual on-chain fill price (0 for paper-only)
     entry_source: str = ""           # "curve"|"pp_tick"|"dex_stale"|""
     baseline_price: float = 0.0   # preflight curve/PP baseline (same ref as stops/sizing)  # Phase 6.1
+    # Z2/Z7: Structured execution state fields (epoch-protective, serialized with position)
+    policy_cohort: str = ""           # strategy_pure_rider | legacy_graduation_guard | paper_reference
+    lifecycle_state: str = ""         # bonding_curve | graduated | unknown | ""
+    exit_intent_reason: str = ""      # original exit reason set when intent created (never overwritten by routing)
+    exit_intent_ts: float = 0.0       # when exit intent was created
+    exit_intent_policy: str = ""      # policy_cohort that created the exit intent
+    venue_state_json: str = ""        # JSON-encoded per-venue state: {"primary": "pump_amm"|"bonding_curve"}
+    pending_signature: str = ""       # last TX sig sent — preserved through restarts for duplicate-sell guard
+    pending_signature_route: str = "" # route used for pending_signature
+    pending_signature_ts: float = 0.0 # when pending_signature was sent
 
     @property
     def pnl_pct(self) -> float:
@@ -289,6 +299,22 @@ def _load_positions() -> dict[str, Position]:
             # 4E backfill: existing positions serialized before is_live field was added
             if "is_live" not in d:
                 d["is_live"] = bool(d.get("notes") and "live|tx:" in d["notes"])
+            # Z2/Z7 backfill: structured execution state fields
+            if "policy_cohort" not in d:
+                d["policy_cohort"] = (
+                    "strategy_pure_rider" if d.get("is_live") else "paper_reference"
+                )
+            if "lifecycle_state" not in d:
+                _notes_bf = d.get("notes", "") or ""
+                if "|cohort:graduated" in _notes_bf:
+                    d["lifecycle_state"] = "graduated"
+                elif "|cohort:bonding_curve" in _notes_bf:
+                    d["lifecycle_state"] = "bonding_curve"
+                else:
+                    d["lifecycle_state"] = ""
+            # Strip unknown keys so Position(**d) doesn't raise on old snapshots
+            _known = set(Position.__dataclass_fields__)  # type: ignore[attr-defined]
+            d = {k: v for k, v in d.items() if k in _known}
             p = Position(**d)
             out[p.id] = p
         return out
@@ -735,6 +761,7 @@ class Portfolio:
             except Exception:
                 pass
 
+        pos.policy_cohort = "paper_reference"  # Z7: paper positions never execute on-chain
         self._positions[pos.id] = pos
         _save_positions(self._positions)
         log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s",
@@ -1634,6 +1661,12 @@ class Portfolio:
                 _canary_tag  = f"|canary_cap:{_canary_max}" if _canary_capped else ""
                 live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}"
                 live_pos.is_live = True   # 4E: set exactly once here; all journal routing keys off this
+                # Z2/Z7: set structured state fields at live buy confirm
+                live_pos.policy_cohort  = "strategy_pure_rider"
+                live_pos.lifecycle_state = (
+                    "graduated" if result.get("pp_silent") and not result.get("oracle_bonding_curve")
+                    else "bonding_curve"
+                )
                 paper_pos.notes = (paper_pos.notes or "") + f"|has_live_twin:{live_pos.id}"  # fix: suppress duplicate paper close alert
                 # ── Paper twin: record fill but do NOT rebase entry ──────────────
                 # P1': paper entry stays at preflight curve baseline (set before buy).
@@ -1884,6 +1917,11 @@ class Portfolio:
             pos.exit_time  = time.time()
             pos.exit_reason = reason
             pos.status = "closed"
+            # Z6: record exit_intent once (never overwritten by routing outcomes)
+            if not pos.exit_intent_reason:
+                pos.exit_intent_reason = reason
+                pos.exit_intent_ts     = pos.exit_time
+                pos.exit_intent_policy = getattr(pos, "policy_cohort", "")
             self._jup_fallback_since.pop(pos_id, None)  # clean up dex_pair_loss tracker
 
         # Live execution gate — only sell on-chain if this position was a live buy
@@ -2056,10 +2094,16 @@ class Portfolio:
                         from memecoin.config import EXIT_ROUTER_ENABLED as _er_enabled
                     except ImportError:
                         _er_enabled = False
+                    # Z4: Fresh venue classification using lifecycle_state field (authoritative).
+                    # Falls back to notes-based cohort tag for positions that predate Z2.
+                    _lifecycle = getattr(pos, "lifecycle_state", "")
                     # True when bonding curve oracle confirmed complete=False at buy time.
                     # T22 tokens are always PP-silent but not graduated — they must use
                     # PumpPortal (escalate=False), not PumpSwap/Jupiter rescue.
-                    _oracle_bc = "|cohort:bonding_curve" in (pos.notes or "")
+                    _oracle_bc = (
+                        _lifecycle == "bonding_curve"             # Z4: authoritative field
+                        or "|cohort:bonding_curve" in (pos.notes or "")  # legacy fallback
+                    )
 
                     if _er_enabled:
                         try:
@@ -2258,7 +2302,8 @@ class Portfolio:
                             pos.notes = (pos.notes or "") + f"|graduation_first_seen_ts:{int(time.time())}"
                             self._positions[pos_id] = pos
                         _is_graduated = (
-                            "|cohort:graduated" in (pos.notes or "")
+                            _lifecycle == "graduated"                # Z4: authoritative field
+                            or "|cohort:graduated" in (pos.notes or "")  # legacy fallback
                             or reason == "graduated_exit"
                             or _er_classified_graduated
                         )
@@ -2384,6 +2429,24 @@ class Portfolio:
                         except Exception:
                             pass
                     elif not _pumpswap_local_succeeded and result.get("reason") == "zero_balance":
+                        # Z5: If pending_signature is set, the zero balance may be from
+                        # a previous TX we haven't confirmed yet — defer rather than close.
+                        _z5_pending = getattr(pos, "pending_signature", "")
+                        if _z5_pending:
+                            log.warning(
+                                "Z5 zero_balance deferred — pending_signature=%s may account "
+                                "for balance  pos=%s",
+                                _z5_pending[:16], pos_id,
+                            )
+                            pos.notes = (pos.notes or "") + f"|z5_zero_balance_deferred:{_z5_pending[:8]}"
+                            pos.status      = "open"
+                            pos.exit_price  = 0.0
+                            pos.exit_time   = 0.0
+                            pos.exit_reason = ""
+                            self._positions[pos_id] = pos
+                            self._sell_stuck_until[pos_id] = time.time() + 30
+                            _save_positions(self._positions)
+                            return pos
                         log.warning("Live sell %s — zero balance, tokens already sold. Closing.",
                                     pos.token_symbol)
                         pos.notes = (pos.notes or "") + "|sell_already_gone"
@@ -2393,7 +2456,11 @@ class Portfolio:
                         pos.status      = "closed"
                         pos.exit_price  = pos.exit_price or 0.0
                         pos.exit_time   = time.time()
-                        pos.exit_reason = "zero_balance"
+                        # Z6: strategy_pure_rider keeps original exit_reason; routing outcome in notes
+                        if getattr(pos, "policy_cohort", "") == "strategy_pure_rider":
+                            pos.notes = (pos.notes or "") + "|routing:zero_balance"
+                        else:
+                            pos.exit_reason = "zero_balance"
                         self._positions[pos_id] = pos
                         _append_journal(pos)
                         del self._positions[pos_id]
@@ -2502,12 +2569,21 @@ class Portfolio:
                                             # Cannot compute USD/token — store 0; reconciler will fix
                                             pos.exit_price = 0.0
                                         pos.sol_received = _gl_sol_delta
-                                        pos.exit_reason = "graduated_recovered"
-                                        pos.notes = (
-                                            (pos.notes or "")
-                                            + f"|graduated_recovered:{_gl_sig[:8]}"
-                                            + f"|sol_received:{_gl_sol_delta:.8f}"
-                                        )
+                                        # Z6: strategy_pure_rider preserves original exit_reason;
+                                        # routing outcome goes to notes instead.
+                                        if getattr(pos, "policy_cohort", "") == "strategy_pure_rider":
+                                            pos.notes = (
+                                                (pos.notes or "")
+                                                + f"|routing:graduated_recovered:{_gl_sig[:8]}"
+                                                + f"|sol_received:{_gl_sol_delta:.8f}"
+                                            )
+                                        else:
+                                            pos.exit_reason = "graduated_recovered"
+                                            pos.notes = (
+                                                (pos.notes or "")
+                                                + f"|graduated_recovered:{_gl_sig[:8]}"
+                                                + f"|sol_received:{_gl_sol_delta:.8f}"
+                                            )
                                         log.warning(
                                             "graduated_recovered: sig confirmed sol_delta=%.6f  "
                                             "exit_price=%.8f USD/tok  sig=%s  pos=%s",
@@ -2548,6 +2624,16 @@ class Portfolio:
                                     self._graduated_mints.discard(pos.token_address)
                                 return pos
 
+                            # Z5: Never write off if pending_signature not yet swept.
+                            _z5_pending_gl = getattr(pos, "pending_signature", "")
+                            if _z5_pending_gl and _z5_pending_gl not in (_gl_sigs if _gl_wallet else []):
+                                log.warning(
+                                    "Z5 graduated_loss deferred — pending_signature=%s not yet swept  pos=%s",
+                                    _z5_pending_gl[:16], pos_id,
+                                )
+                                self._arm_migration_retry(pos.id, 60)
+                                return pos
+
                             # Migration never settled or pool is permanently empty.
                             # Write off as total loss — no more Helius/RPC burn.
                             self._graduated_retry_count.pop(pos_id, None)
@@ -2555,8 +2641,12 @@ class Portfolio:
                             pos.status      = "closed"
                             pos.exit_price  = 0.0
                             pos.exit_time   = time.time()
-                            pos.exit_reason = "graduated_loss"
-                            pos.notes = (pos.notes or "") + f"|graduated_loss_after_{_grad_attempts}_retries"
+                            # Z6: strategy_pure_rider preserves original exit_reason
+                            if getattr(pos, "policy_cohort", "") == "strategy_pure_rider":
+                                pos.notes = (pos.notes or "") + f"|routing:graduated_loss_after_{_grad_attempts}_retries"
+                            else:
+                                pos.exit_reason = "graduated_loss"
+                                pos.notes = (pos.notes or "") + f"|graduated_loss_after_{_grad_attempts}_retries"
                             self._positions[pos_id] = pos
                             _append_journal(pos)          # write CSV before removing from dict
                             del self._positions[pos_id]   # remove from live tracking
@@ -2603,6 +2693,11 @@ class Portfolio:
                         pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
                         reason_tag = "sell_unconf" if result.get("unconfirmed") else "sell_failed"
                         tx_tag = f":{result.get('tx_sig','')}" if result.get("tx_sig") else ""
+                        # Z5/Z2: track pending_signature for restart-safe write-off guard
+                        if result.get("tx_sig"):
+                            pos.pending_signature       = result["tx_sig"]
+                            pos.pending_signature_route = result.get("route", "executor")
+                            pos.pending_signature_ts    = time.time()
                         pos.notes = (pos.notes or "") + f"|{reason_tag}{tx_tag}(attempt {pos.sell_attempts})"
                         if pos.sell_attempts < MAX_SELL_RETRIES:
                             pos.status = "open"

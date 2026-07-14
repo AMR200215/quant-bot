@@ -1416,6 +1416,19 @@ _graduated_exit_fired: set[str] = set()
 _pregrad_exit_fired: set[str] = set()
 
 
+def _should_trigger_graduation(result: dict) -> bool:
+    """Z1: Return True only for VERIFIED graduation signals — not RPC/parse errors.
+
+    RPC errors (ok=False, reason='rpc_error'/'parse_error') return complete=None
+    but must NOT cause graduation.  Only ok=True sources are trusted.
+    """
+    if result.get("complete") is True:
+        return True
+    if result.get("reason") == "account_missing":
+        return True   # verified: ok=True AND bonding curve account is gone
+    return False
+
+
 def select_vsol_source(
     mint: str,
     pp_vsol: float,
@@ -1609,22 +1622,36 @@ def _portfolio_thread():
                             if "|graduation_first_seen_ts:" not in (_cp_pos.notes or ""):
                                 _cp_pos.notes = (_cp_pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
                             log.warning(
-                                "CURVE FEED GRADUATED %s — curve complete=True mid-hold; "
-                                "handing over to graduated exit path",
+                                "CURVE FEED GRADUATED %s — curve complete=True mid-hold",
                                 _cp_pos.token_symbol,
                             )
-                            # B2: Oracle-confirmed graduation — dispatch immediately,
-                            # bypassing the 30s mig_age gate (that gate is for PP-ambiguity only).
-                            if _cp_pos.id not in _graduated_exit_fired and not _cp_pos.exit_reason:
-                                _graduated_exit_fired.add(_cp_pos.id)
+                            # Z3: strategy_pure_rider — graduation updates venue only, no exit.
+                            # legacy_graduation_guard — old behaviour (immediate close_position).
+                            if getattr(_cp_pos, "policy_cohort", "") == "strategy_pure_rider":
+                                import json as _z3_json
+                                _cp_pos.lifecycle_state = "graduated"
+                                _cp_pos.venue_state_json = _z3_json.dumps({"primary": "pump_amm"})
                                 portfolio._positions[_cp_pos.id] = _cp_pos
-                                portfolio.close_position(
-                                    _cp_pos.id, "graduated_exit", _cp_pos.current_price or 0.0
+                                portfolio._save()
+                                log.warning(
+                                    "Z3 strategy_pure_rider %s — lifecycle=graduated venue=pump_amm "
+                                    "(no exit fired, strategy monitors price)",
+                                    _cp_pos.token_symbol,
                                 )
-                    elif _cp_result.get("complete") is None:
-                        # account_missing → curve closed / migrated. Treat exactly like
-                        # complete=True: stop polling and trigger graduation handover.
-                        # Do not silently drop — the position still holds tokens.
+                            else:
+                                # B2: Oracle-confirmed graduation — dispatch immediately,
+                                # bypassing the 30s mig_age gate (PP-ambiguity gate only).
+                                if _cp_pos.id not in _graduated_exit_fired and not _cp_pos.exit_reason:
+                                    _graduated_exit_fired.add(_cp_pos.id)
+                                    portfolio._positions[_cp_pos.id] = _cp_pos
+                                    portfolio.close_position(
+                                        _cp_pos.id, "graduated_exit", _cp_pos.current_price or 0.0
+                                    )
+                    elif _cp_result.get("reason") == "account_missing":
+                        # Z1: VERIFIED account_missing (ok=True) → curve closed / migrated.
+                        # RPC errors return ok=False with reason="rpc_error"/"parse_error" —
+                        # those are NOT graduation signals and must NOT trigger close_position.
+                        # Treat real account_missing exactly like complete=True.
                         _curve_price_overrides.pop(_cp_mint, None)
                         _curve_feed_last_seen.pop(_cp_mint, None)
                         if _cp_pos.notes and "|cohort:bonding_curve" in _cp_pos.notes:
@@ -1635,17 +1662,30 @@ def _portfolio_thread():
                         if "|graduation_first_seen_ts:" not in (_cp_pos.notes or ""):
                             _cp_pos.notes = (_cp_pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
                         log.warning(
-                            "CURVE FEED ACCOUNT_MISSING %s — curve account closed mid-hold; "
-                            "handing over to graduated exit path (account_missing → treat as graduated)",
+                            "CURVE FEED ACCOUNT_MISSING %s — curve account closed mid-hold "
+                            "(account_missing → treat as graduated)",
                             _cp_pos.token_symbol,
                         )
-                        # B2: Oracle-confirmed missing account — dispatch immediately.
-                        if _cp_pos.id not in _graduated_exit_fired and not _cp_pos.exit_reason:
-                            _graduated_exit_fired.add(_cp_pos.id)
+                        # Z3: strategy_pure_rider — update venue state only.
+                        if getattr(_cp_pos, "policy_cohort", "") == "strategy_pure_rider":
+                            import json as _z3_json2
+                            _cp_pos.lifecycle_state = "graduated"
+                            _cp_pos.venue_state_json = _z3_json2.dumps({"primary": "pump_amm"})
                             portfolio._positions[_cp_pos.id] = _cp_pos
-                            portfolio.close_position(
-                                _cp_pos.id, "graduated_exit", _cp_pos.current_price or 0.0
+                            portfolio._save()
+                            log.warning(
+                                "Z3 strategy_pure_rider %s — account_missing, lifecycle=graduated "
+                                "venue=pump_amm (no exit fired)",
+                                _cp_pos.token_symbol,
                             )
+                        else:
+                            # B2: Oracle-confirmed missing account — dispatch immediately.
+                            if _cp_pos.id not in _graduated_exit_fired and not _cp_pos.exit_reason:
+                                _graduated_exit_fired.add(_cp_pos.id)
+                                portfolio._positions[_cp_pos.id] = _cp_pos
+                                portfolio.close_position(
+                                    _cp_pos.id, "graduated_exit", _cp_pos.current_price or 0.0
+                                )
             except Exception as _cf_e:
                 log.debug("curve feed error: %s", _cf_e)
 
@@ -1695,6 +1735,15 @@ def _portfolio_thread():
                     continue
                 _progress = _vsol / _GRAD_SOL
                 if _progress >= _PREGRAD_PCT:
+                    # Z3: strategy_pure_rider skips pre-grad exit.
+                    # Graduation will update lifecycle_state; strategy exits via TP/stop.
+                    if getattr(_pg_pos, "policy_cohort", "") == "strategy_pure_rider":
+                        log.info(
+                            "Z3 pre_grad_skip strategy_pure_rider %s — vSol=%.2f (%.0f%%) "
+                            "graduation will update lifecycle_state",
+                            _pg_pos.token_symbol, _vsol, _progress * 100,
+                        )
+                        continue
                     _pregrad_exit_fired.add(_pg_pos.id)
                     log.warning(
                         "PRE-GRADUATION EXIT %s (%s) — vSol=%.2f SOL (%.0f%% of "
@@ -1749,28 +1798,43 @@ def _portfolio_thread():
                         _grad_dex_id = ""
                     if _grad_dex_id != "pumpswap":
                         continue
-                    # All conditions met — exit via pump-amm
-                    log.error(
-                        "GRADUATED EXIT — %s (%s) migrated to PumpSwap, "
-                        "exiting via pump-amm  mig_age=%.0fs",
-                        pos.token_symbol, pos.id, mig_age,
-                    )
-                    try:
-                        from app.alerts import _send
-                        _send(
-                            f"GRADUATED EXIT {pos.token_symbol} — "
-                            f"migrated to PumpSwap (dex_id=pumpswap). "
-                            f"Selling via pump-amm."
-                        )
-                    except Exception:
-                        pass
-                    _graduated_exit_fired.add(pos.id)
+                    # All conditions met — dex_id=pumpswap confirmed
                     # Swap cohort tag so close_position routes via escalate (pump-amm)
                     if pos.notes and "|cohort:bonding_curve" in pos.notes:
                         pos.notes = pos.notes.replace(
                             "|cohort:bonding_curve", "|cohort:graduated"
                         )
-                    portfolio.close_position(pos.id, "graduated_exit", pos.current_price)
+                    if "|graduation_first_seen_ts:" not in (pos.notes or ""):
+                        pos.notes = (pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
+                    # Z3: strategy_pure_rider — update lifecycle state only, no exit.
+                    if getattr(pos, "policy_cohort", "") == "strategy_pure_rider":
+                        import json as _z3j
+                        pos.lifecycle_state = "graduated"
+                        pos.venue_state_json = _z3j.dumps({"primary": "pump_amm"})
+                        portfolio._positions[pos.id] = pos
+                        portfolio._save()
+                        log.warning(
+                            "Z3 strategy_pure_rider %s — dex_id=pumpswap, lifecycle=graduated "
+                            "venue=pump_amm (no exit fired)",
+                            pos.token_symbol,
+                        )
+                    else:
+                        log.error(
+                            "GRADUATED EXIT — %s (%s) migrated to PumpSwap, "
+                            "exiting via pump-amm  mig_age=%.0fs",
+                            pos.token_symbol, pos.id, mig_age,
+                        )
+                        try:
+                            from app.alerts import _send
+                            _send(
+                                f"GRADUATED EXIT {pos.token_symbol} — "
+                                f"migrated to PumpSwap (dex_id=pumpswap). "
+                                f"Selling via pump-amm."
+                            )
+                        except Exception:
+                            pass
+                        _graduated_exit_fired.add(pos.id)
+                        portfolio.close_position(pos.id, "graduated_exit", pos.current_price)
 
                 # ── Blind-exit check: both feeds silent >20s for live positions ──
                 # Fires a market-sell so we don't hold through an unobservable dump.
