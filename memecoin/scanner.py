@@ -2678,6 +2678,14 @@ def start(daemon: bool = True):
     _health.start()
     _program_monitor.start(daemon=daemon)
 
+    # Z8.6: Start pump.fun compatibility tripwire.
+    # Monitors deploy slot every 30 min; immediately disables local builds if changed.
+    try:
+        from memecoin.pumpfun_compat import start_tripwire_thread as _z8_tripwire
+        _z8_tripwire()
+    except Exception as _z8_err:
+        log.warning("Z8 COMPAT: tripwire start failed: %s", _z8_err)
+
     _pp_monitor.start(daemon=daemon)
     _pp_monitor.add_price_callback(_on_pp_price_tick)
     _pp_monitor.add_creator_sell_callback(_on_pp_creator_sell)

@@ -1343,20 +1343,53 @@ def _get_pumpfun_curve_complete_uncached(mint: str) -> dict:
             return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
         data_b64  = data_list[0]
         raw       = _b64.b64decode(data_b64)
-        # Layout:
-        #   [0:8]  8-byte Anchor discriminator
+        # Layout (V1 49 bytes | V2 151 bytes):
+        #   [0:8]  8-byte Anchor discriminator = sha256("account:BondingCurve")[:8]
         #   [8:16] u64 virtual_token_reserves
         #   [16:24] u64 virtual_sol_reserves
         #   [24:32] u64 real_token_reserves
         #   [32:40] u64 real_sol_reserves
         #   [40:48] u64 token_total_supply
-        #   [48]   bool complete
-        if len(raw) < 49:
-            log.error("GRAD ORACLE short account data len=%d for %s", len(raw), mint[:8])
-            return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
-        complete = bool(raw[48])
-        reason   = "complete_true" if complete else "complete_false"
+        #   [48]   bool complete                 ← UNCHANGED in V2 (confirmed 2026-07-15)
+        #   [49:81] pubkey creator               ← V2-only new field
+        #   [81:89] u64 unknown                  ← V2-only new field
+        #   [89:151] padding                     ← V2-only zeros
+
+        # Z8.4: Validate BC account structure before trusting byte 48.
+        from memecoin.pumpfun_compat import (
+            validate_bc_account as _z8_validate_bc,
+            layout_graduation_allowed as _z8_lga,
+        )
+        _bc_owner = value.get("owner", "")
+        _bc_valid, _bc_reason = _z8_validate_bc(raw, _bc_owner)
+        if not _bc_valid:
+            log.error(
+                "GRAD ORACLE Z8 BC validation FAILED: %s  mint=%s",
+                _bc_reason, mint[:8],
+            )
+            return {
+                "ok": False, "complete": None,
+                "reason": "layout_validation_failed",
+                "bc_pda": bc_pda, "rpc_ms": 0,
+            }
+
         import struct as _struct
+        complete = bool(raw[48])
+
+        # Z8.5: complete=True from BC parse blocked until layout is VERIFIED.
+        # account_missing (value is None, handled above) is NOT gated here.
+        if complete and not _z8_lga():
+            log.warning(
+                "GRAD ORACLE Z8 complete=True BLOCKED (compat state != VERIFIED)  mint=%s",
+                mint[:8],
+            )
+            return {
+                "ok": False, "complete": None,
+                "reason": "layout_unverified",
+                "bc_pda": bc_pda, "rpc_ms": 0,
+            }
+
+        reason = "complete_true" if complete else "complete_false"
         vtr = _struct.unpack_from("<Q", raw, 8)[0]   # virtual_token_reserves
         vsr = _struct.unpack_from("<Q", raw, 16)[0]  # virtual_sol_reserves
         return {
@@ -1878,6 +1911,18 @@ class MemeExecutor:
                 if _tok_prog is None:
                     _tok_prog = _pumpfun_mint_token_program(token_address)
                 _use_local_build = (_tok_prog == _TOKEN_PROGRAM_ID)
+                if _use_local_build:
+                    # Z8: gate on pump.fun compatibility state.
+                    # Interface confirmed changed post-upgrade (sell_v2 discriminator,
+                    # +6 buy accounts).  Disabled until VERIFIED.  PumpPortal fallback below.
+                    from memecoin.pumpfun_compat import local_build_allowed as _z8_lba
+                    from memecoin.pumpfun_compat import get_state as _z8_gs
+                    if not _z8_lba():
+                        log.info(
+                            "LOCAL BUILD buy DISABLED (Z8 compat=%s) — PumpPortal  token=%s",
+                            _z8_gs(), token_address[:8],
+                        )
+                        _use_local_build = False
                 if _use_local_build:
                     log.info("LOCAL BUILD primary  token=%s  tok_prog=SPL", token_address[:8])
                     try:
@@ -2538,6 +2583,18 @@ class MemeExecutor:
                         _sell_tok_prog  = _mint_token_program_cache.get(token_address, _TOKEN22_PROGRAM_ID)
                         _use_lb_sell    = (_tokens_to_sell_local > 0 and
                                            _sell_tok_prog == _TOKEN_PROGRAM_ID)
+                        if _use_lb_sell:
+                            # Z8: gate on pump.fun compatibility state.
+                            # sell_v2 discriminator + account-count change confirmed post-upgrade.
+                            # Disabled until VERIFIED.  PumpPortal fallback below.
+                            from memecoin.pumpfun_compat import local_build_allowed as _z8_lba_sell
+                            from memecoin.pumpfun_compat import get_state as _z8_gs_sell
+                            if not _z8_lba_sell():
+                                log.info(
+                                    "LOCAL BUILD sell DISABLED (Z8 compat=%s) — PumpPortal  token=%s",
+                                    _z8_gs_sell(), token_address[:8],
+                                )
+                                _use_lb_sell = False
                         if _use_lb_sell:
                             try:
                                 _t_lb     = time.time()
