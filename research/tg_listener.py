@@ -11,6 +11,8 @@ Two listener implementations:
 2. FileQueueListener (preferred when scanner is co-located)
    Tails research/data/signal_queue.jsonl written by scanner._on_telegram_signal().
    No Telegram session or OTP required.  Zero risk of session conflicts.
+   Persistent offset: resumes from research/data/.queue_offset on restart.
+   Deadman: fires TG alert if no line (alert OR heartbeat) for >20 min.
 
 research/main.py chooses FileQueueListener automatically when the TG session
 file is absent or empty.
@@ -36,6 +38,11 @@ log = logging.getLogger(__name__)
 _SOL_RE = re.compile(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b')
 
 _SIGNAL_QUEUE_PATH = Path(__file__).parent / "data" / "signal_queue.jsonl"
+_OFFSET_PATH       = Path(__file__).parent / "data" / ".queue_offset"
+
+# Deadman: alert if no line (alert OR heartbeat) seen for this many seconds
+_DEADMAN_THRESHOLD_S = 1200   # 20 minutes
+_DEADMAN_ALERT_REPEAT_S = 1800  # re-alert at most every 30 min
 
 
 @dataclass
@@ -54,22 +61,51 @@ class FileQueueListener:
     """
     Tails research/data/signal_queue.jsonl written by scanner._on_telegram_signal().
 
-    On start: seeks to end of file (skips old alerts already in Supabase).
-    On restart: seeks to end again (Supabase dedup prevents duplicates anyway).
+    Offset persistence: byte offset saved to research/data/.queue_offset after each
+    poll cycle.  On restart, reads from that offset — no data loss on service restart.
+    First-run (no offset file): seeks to end of file so old alerts aren't replayed;
+    Supabase dedup would handle duplicates anyway.
+
+    Deadman: tracks timestamp of last line seen (alert OR heartbeat).  If >20 min
+    without any line, fires a Telegram alert "research feed silent".  Re-alerts every
+    30 min until feed resumes.
+
     Polls every 0.5s — latency is negligible vs DexScreener's 30-90s indexing lag.
     """
 
-    def __init__(self, out_queue: queue.Queue, queue_path: Path = _SIGNAL_QUEUE_PATH):
-        self._q          = out_queue
-        self._path       = queue_path
-        self._seen:      dict[str, float] = {}   # address → last_seen epoch (5-min dedup)
-        self._thread:    Optional[threading.Thread] = None
-        self._last_pos:  int = 0
+    def __init__(
+        self,
+        out_queue:   queue.Queue,
+        queue_path:  Path = _SIGNAL_QUEUE_PATH,
+        offset_path: Path = _OFFSET_PATH,
+    ):
+        self._q            = out_queue
+        self._path         = queue_path
+        self._offset_path  = offset_path
+        self._seen:        dict[str, float] = {}   # address → last_seen epoch (5-min dedup)
+        self._thread:      Optional[threading.Thread] = None
+        self._last_pos:    int   = 0
+        self._last_event:  float = time.time()  # epoch of last alert or heartbeat
+        self._last_alert:  float = 0.0          # epoch of last deadman TG alert
 
     def start(self):
-        # Seek to end on first start — don't replay historical alerts
-        if self._path.exists():
-            self._last_pos = self._path.stat().st_size
+        # Resume from persisted offset; first-run → seek to end of file
+        if self._offset_path.exists():
+            try:
+                self._last_pos = int(self._offset_path.read_text().strip())
+                log.info(
+                    "FileQueueListener: resumed from persisted offset=%d", self._last_pos
+                )
+            except Exception as _oe:
+                log.warning("FileQueueListener: bad offset file, seeking to end: %s", _oe)
+                self._last_pos = self._path.stat().st_size if self._path.exists() else 0
+        else:
+            self._last_pos = self._path.stat().st_size if self._path.exists() else 0
+            log.info(
+                "FileQueueListener: first run, seeking to end (offset=%d)", self._last_pos
+            )
+
+        self._last_event = time.time()  # reset deadman on start
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="research-file-queue"
         )
@@ -90,6 +126,31 @@ class FileQueueListener:
         self._seen[address] = now
         return True
 
+    def _check_deadman(self, now: float) -> None:
+        silence = now - self._last_event
+        if silence < _DEADMAN_THRESHOLD_S:
+            return
+        if now - self._last_alert < _DEADMAN_ALERT_REPEAT_S:
+            return
+        self._last_alert = now
+        msg = (
+            f"research feed silent: no alert or heartbeat for "
+            f"{int(silence // 60)}m — scanner may be down"
+        )
+        log.warning(msg)
+        try:
+            from app.alerts import send_alert as _sa
+            _sa(msg)
+        except Exception as _ae:
+            log.debug("deadman alert failed: %s", _ae)
+
+    def _persist_offset(self) -> None:
+        try:
+            self._offset_path.parent.mkdir(parents=True, exist_ok=True)
+            self._offset_path.write_text(str(self._last_pos))
+        except Exception as _pe:
+            log.debug("FileQueueListener: offset persist failed: %s", _pe)
+
     def _run(self):
         while True:
             try:
@@ -103,7 +164,12 @@ class FileQueueListener:
                         if not line:
                             continue
                         try:
-                            e    = json.loads(line)
+                            e = json.loads(line)
+                            # Heartbeat line — counts as activity for deadman
+                            if e.get("type") == "heartbeat":
+                                self._last_event = time.time()
+                                log.debug("FileQueue heartbeat received ts=%.0f", e.get("ts", 0))
+                                continue
                             addr = e.get("token_address", "")
                             if not addr or len(addr) < 32:
                                 continue
@@ -111,6 +177,7 @@ class FileQueueListener:
                             now   = time.time()
                             if not self._is_fresh(addr, now):
                                 continue
+                            self._last_event = now  # alert = activity
                             raw_ts = e.get("alert_time", "")
                             try:
                                 alert_time = datetime.fromisoformat(
@@ -132,6 +199,8 @@ class FileQueueListener:
                         except Exception:
                             pass
                     self._last_pos = f.tell()
+                self._persist_offset()
+                self._check_deadman(time.time())
             except Exception as _e:
                 log.debug("FileQueueListener read error: %s", _e)
             time.sleep(0.5)

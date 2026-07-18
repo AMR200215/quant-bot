@@ -2776,6 +2776,27 @@ def start(daemon: bool = True):
     else:
         log.info("Telegram monitor disabled — set TELEGRAM_API_ID and TELEGRAM_API_HASH to enable")
 
+    # Research pipeline heartbeat — appends to signal_queue.jsonl every 5 min
+    # so FileQueueListener's deadman timer knows the feed is alive.
+    def _signal_queue_heartbeat():
+        import json as _json
+        import time as _time
+        from pathlib import Path as _Path
+        _hb_path = _Path(__file__).parent.parent / "research" / "data" / "signal_queue.jsonl"
+        while True:
+            _time.sleep(300)
+            try:
+                _entry = _json.dumps({"type": "heartbeat", "ts": _time.time()})
+                with open(_hb_path, "a") as _hf:
+                    _hf.write(_entry + "\n")
+                log.debug("signal_queue heartbeat written")
+            except Exception as _hb_err:
+                log.debug("signal_queue heartbeat failed: %s", _hb_err)
+
+    threading.Thread(
+        target=_signal_queue_heartbeat, daemon=True, name="sq-heartbeat"
+    ).start()
+
     alerts.init()
 
     # ── Auto-gate epoch startup log ───────────────────────────────────────────
