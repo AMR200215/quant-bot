@@ -8,6 +8,9 @@ Queries research_tokens (outcome_complete=True) and prints:
   3. Screener pass/fail vs outcome (v7 filter recomputed at query time)
   4. v7_traded overlap: did v7 trade it, and how did it do vs the full set?
   5. Tick-level peak (pct_change_peak_3m) vs poll-based peak comparison
+  6. [W3a] Missed-winners: screener-rejected tokens that peaked ≥+50%
+  7. [W3b] progress_at_signal buckets: n, %win, time-to-peak by BC progress
+  8. [W3c] Readiness verdicts: clean-n + days-to-300 for candidate V8 rules
 
 Excludes data_partial=True rows from pct analysis by default.
 All Supabase queries are paginated (no silent 1000-row truncation).
@@ -21,8 +24,9 @@ import argparse
 import csv
 import sys
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
-from statistics import median, mean
+from statistics import median, mean, quantiles
 from typing import Optional
 
 # research.config loads .env automatically
@@ -60,6 +64,47 @@ def _fetch_all(sb, include_partial: bool = False) -> list[dict]:
             break
         offset += batch
     return rows
+
+
+def _fetch_all_for_report(sb, include_partial: bool = False) -> list[dict]:
+    """
+    Fetch ALL rows (not just outcome_complete) for missed-winner analysis.
+    Returns (complete_rows, all_rows).
+    """
+    rows: list = []
+    offset, batch = 0, 1000
+    while True:
+        q = sb.table("research_tokens").select("*")
+        if not include_partial:
+            q = q.or_("data_partial.eq.false,data_partial.is.null")
+        chunk = (q.range(offset, offset + batch - 1).execute().data) or []
+        rows.extend(chunk)
+        if len(chunk) < batch:
+            break
+        offset += batch
+    return rows
+
+
+def _screener_failed_filters(row: dict) -> list:
+    """
+    Return list of filter names that block this row.
+    Priority order matches live screener.
+    """
+    failed = []
+    liq  = row.get("liquidity_usd") or 0
+    mcap = row.get("mcap_usd") or 0
+    bsr  = row.get("buy_sell_ratio_5m") or 0
+    vol5 = row.get("volume_5m") or 0
+    pc5  = abs(row.get("price_change_5m") or 0)
+    rug  = row.get("rugcheck_score") or 0
+    if liq  < SCREENER_MIN_LIQUIDITY_USD:      failed.append("liq<8k")
+    if mcap > SCREENER_MAX_MCAP_USD:           failed.append("mcap>8M")
+    if bsr  < SCREENER_MIN_BUY_SELL_RATIO_5M:  failed.append("bsr<0.55")
+    if vol5 < SCREENER_MIN_VOL_5M:             failed.append("vol<2k")
+    if vol5 > SCREENER_MAX_VOL_5M:             failed.append("vol>50k")
+    if pc5  > SCREENER_MAX_PRICE_CHANGE_5M:    failed.append("pc5>500%")
+    if rug  > SCREENER_MAX_RUGCHECK_SCORE:     failed.append("rug>500")
+    return failed
 
 
 def _screener_passed(row: dict) -> bool:
@@ -158,10 +203,12 @@ def main():
         sys.exit(1)
 
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print(f"Fetching complete research_tokens "
+    print(f"Fetching research_tokens "
           f"({'including' if args.include_partial else 'excluding'} partial)…")
-    rows = _fetch_all(sb, include_partial=args.include_partial)
-    print(f"  {len(rows)} rows loaded\n")
+    # Fetch ALL rows for missed-winner analysis, then split into complete/all
+    all_rows = _fetch_all_for_report(sb, include_partial=args.include_partial)
+    rows     = [r for r in all_rows if r.get("outcome_complete")]
+    print(f"  {len(all_rows)} total rows  |  {len(rows)} outcome_complete\n")
 
     if not rows:
         print("No complete rows yet — wait for tokens to finish their poll windows.")
@@ -246,6 +293,166 @@ def main():
                   f"({early/len(t_peaks)*100:.0f}%)")
     else:
         print(f"\n  (No tick-level peak data yet — PeakTracker running)")
+
+    # ── 6. [W3a] Missed-winners ───────────────────────────────────────────────
+    print(f"\n{sep}")
+    print("6. MISSED WINNERS (screener-rejected, pct_change_peak >= +50%)")
+    print(sep)
+    # Use ALL outcome-complete rows regardless of partial flag for missed-winner accuracy
+    complete_rows = [r for r in all_rows if r.get("outcome_complete")]
+    missed = [
+        r for r in complete_rows
+        if not _screener_passed(r) and (_peak(r) or 0) >= 50
+    ]
+    print(f"  Total missed winners (>=+50%):  {len(missed)}")
+    if missed:
+        # Aggregate by binding filter (first failing filter in priority order)
+        by_filter: dict = defaultdict(list)
+        for r in missed:
+            filters = _screener_failed_filters(r)
+            binding = filters[0] if filters else "no_data"
+            by_filter[binding].append(_peak(r))
+
+        print(f"\n  {'Filter':<14} {'Missed':>6}  {'Med peak':>10}  {'Max peak':>10}  {'>=+100%':>7}")
+        print(f"  {'-'*14}  {'-'*6}  {'-'*10}  {'-'*10}  {'-'*7}")
+        for filt, peaks in sorted(by_filter.items(), key=lambda x: -len(x[1])):
+            peaks_nn = [p for p in peaks if p is not None]
+            med  = median(peaks_nn) if peaks_nn else 0
+            mx   = max(peaks_nn)    if peaks_nn else 0
+            ge100 = sum(1 for p in peaks_nn if p >= 100)
+            print(f"  {filt:<14}  {len(peaks):>6}  {med:>+10.1f}%  {mx:>+10.1f}%  {ge100:>7}")
+
+        # Tokens blocked by only ONE filter (single-filter block — most actionable)
+        single_block = [
+            r for r in missed
+            if len(_screener_failed_filters(r)) == 1
+        ]
+        print(f"\n  Single-filter blocks:  {len(single_block)}/{len(missed)}  "
+              f"({len(single_block)/len(missed)*100:.0f}% removable by relaxing one rule)")
+
+    # ── 7. [W3b] progress_at_signal buckets ──────────────────────────────────
+    print(f"\n{sep}")
+    print("7. PROGRESS_AT_SIGNAL BUCKETS  (pp_vsol / 115, bonding-curve completion)")
+    print(sep)
+    # Compute on-the-fly from pp_vsol if progress_at_signal column is missing
+    def _progress(r):
+        p = r.get("progress_at_signal")
+        if p is not None:
+            return p
+        vsol = r.get("pp_vsol")
+        return round(vsol / 115.0, 4) if vsol else None
+
+    _PROG_EDGES = [(0.50, "<50%"), (0.70, "50-70%"), (0.85, "70-85%"), (1.01, "85%+")]
+
+    def _prog_bucket(p):
+        if p is None:
+            return "  NULL"
+        for edge, label in _PROG_EDGES:
+            if p < edge:
+                return label
+        return "85%+"
+
+    prog_rows = [r for r in rows if _progress(r) is not None and _peak(r) is not None]
+    print(f"  Rows with pp_vsol data: {len(prog_rows)} / {len(rows)}")
+    if prog_rows:
+        buckets_p: dict = defaultdict(list)
+        for r in prog_rows:
+            bkt = _prog_bucket(_progress(r))
+            buckets_p[bkt].append(r)
+
+        # Time-to-peak: use peak_interval → minutes, or t_peak_3m_s → seconds
+        def _ttp_min(r):
+            pi = r.get("peak_interval")
+            ttp_map = {"T1m": 1, "T3m": 3, "T5m": 5, "T10m": 10,
+                       "T15m": 15, "T20m": 20, "T30m": 30}
+            return ttp_map.get(pi)
+
+        print(f"\n  {'Bucket':<10} {'n':>5}  {'med peak':>10}  {'>=+30%':>7}  "
+              f"{'>=+50%':>7}  {'p25/p50/p75 TTP (min)':>22}")
+        print(f"  {'-'*10}  {'-'*5}  {'-'*10}  {'-'*7}  {'-'*7}  {'-'*22}")
+        bkt_order = ["<50%", "50-70%", "70-85%", "85%+", "  NULL"]
+        for bkt in bkt_order:
+            bkt_rows = buckets_p.get(bkt, [])
+            if not bkt_rows:
+                continue
+            peaks    = [_peak(r) for r in bkt_rows if _peak(r) is not None]
+            ttp_vals = [_ttp_min(r) for r in bkt_rows if _ttp_min(r) is not None]
+            med      = median(peaks) if peaks else 0
+            ge30     = sum(1 for p in peaks if p >= 30)
+            ge50     = sum(1 for p in peaks if p >= 50)
+            if ttp_vals and len(ttp_vals) >= 3:
+                q = quantiles(ttp_vals, n=4)
+                ttp_str = f"{q[0]:.0f}/{q[1]:.0f}/{q[2]:.0f}"
+            elif ttp_vals:
+                m = median(ttp_vals)
+                ttp_str = f"-/{m:.0f}/-"
+            else:
+                ttp_str = "n/a"
+            print(f"  {bkt:<10}  {len(peaks):>5}  {med:>+10.1f}%  {ge30:>7}  "
+                  f"{ge50:>7}  {ttp_str:>22}")
+
+    # ── 8. [W3c] Readiness verdicts ───────────────────────────────────────────
+    print(f"\n{sep}")
+    print("8. READINESS VERDICTS (clean-n + days-to-n≥300 for candidate V8 rules)")
+    print(sep)
+
+    # Estimate daily alert rate from date range of all_rows
+    dates = sorted(
+        r["alert_time"][:10]
+        for r in all_rows
+        if r.get("alert_time")
+    )
+    if len(dates) >= 2:
+        first_day = datetime.fromisoformat(dates[0]).replace(tzinfo=timezone.utc)
+        last_day  = datetime.now(timezone.utc)
+        span_days = max((last_day - first_day).days, 1)
+        daily_rate = len(all_rows) / span_days
+    else:
+        span_days, daily_rate = 1, 1.0
+
+    complete_nopart = [r for r in rows if not r.get("data_partial")]
+    print(f"  Collection span:  {span_days} days  ({daily_rate:.0f} alerts/day)")
+    print(f"  Complete rows:    {len(rows)}  ({len(complete_nopart)} non-partial)")
+
+    def _verdict(label: str, subset: list, target: int = 300):
+        n = len(subset)
+        if n >= target:
+            days_str = "READY"
+        else:
+            remaining = target - n
+            days_needed = remaining / daily_rate if daily_rate > 0 else 9999
+            days_str = f"{days_needed:.0f}d to go"
+        pcts  = [_peak(r) for r in subset if _peak(r) is not None]
+        med   = f"{median(pcts):+.1f}%" if pcts else "n/a"
+        wins  = f"{sum(1 for p in pcts if p>0)/len(pcts)*100:.0f}%" if pcts else "n/a"
+        print(f"  {label:<40} n={n:>5}  med={med:>8}  wr={wins:>6}  [{days_str}]")
+
+    print()
+    # Baseline
+    _verdict("ALL complete non-partial",            complete_nopart)
+    _verdict("social_alert_bc only",
+             [r for r in complete_nopart if r.get("category") == "social_alert_bc"])
+    _verdict("snapshot_ok=True (DexScreener data)",
+             [r for r in complete_nopart if r.get("snapshot_ok")])
+    _verdict("pp_vsol available (BC real-time)",
+             [r for r in complete_nopart if r.get("pp_vsol")])
+    _verdict("progress_at_signal < 0.5 (early BC)",
+             [r for r in complete_nopart
+              if _progress(r) is not None and _progress(r) < 0.5])
+    _verdict("progress_at_signal 0.5-0.70",
+             [r for r in complete_nopart
+              if _progress(r) is not None and 0.5 <= _progress(r) < 0.70])
+    _verdict("progress_at_signal 0.70-0.85",
+             [r for r in complete_nopart
+              if _progress(r) is not None and 0.70 <= _progress(r) < 0.85])
+    _verdict("screener_passed (v7 filter)",
+             [r for r in complete_nopart if _screener_passed(r)])
+    _verdict("smart_money_hit=True",
+             [r for r in complete_nopart if r.get("smart_money_hit")])
+    _verdict("top10_holder_pct available",
+             [r for r in complete_nopart if r.get("top10_holder_pct") is not None])
+    _verdict("creator_holds_pct available",
+             [r for r in complete_nopart if r.get("creator_holds_pct") is not None])
 
     # ── CSV output ────────────────────────────────────────────────────────────
     if args.output:
