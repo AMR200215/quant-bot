@@ -119,8 +119,13 @@ POLLER_LOOKBACK_HOURS = 2
 # ---------------------------------------------------------------------------
 # Tick-level peak tracker (PeakTracker)
 # ---------------------------------------------------------------------------
-TICK_PEAK_WINDOW_S  = 180                          # 3 min window per token
+TICK_PEAK_WINDOW_S  = 900                          # 15 min window per token
 PP_WS_URL           = "wss://pumpportal.fun/api/data"
+
+# Trade-path persistence (PC1)
+RESEARCH_PATHS_DIR      = Path(__file__).parent.parent / "logs" / "research_paths"
+PATH_DEADMAN_MIN_FILES  = 100   # alert if fewer path files created today while alerts flowed
+PATH_SUB_SAMPLE_INTERVAL = 60   # seconds between concurrent-subscription samples
 
 # Graduation detection: pump.fun bonding curve holds ~85 SOL at graduation.
 # If pp_vsol >= this, the token is near/past graduation → social_alert_grad.

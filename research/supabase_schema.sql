@@ -28,6 +28,8 @@
 -- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS smart_money_hit       BOOL;
 -- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS smart_money_count     INT;
 -- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS progress_at_signal    FLOAT;
+-- ── PC1 migration (2026-07-18) ───────────────────────────────────────────────
+-- DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN path_file TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 -- ── END MIGRATION ─────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS research_tokens (
@@ -92,10 +94,13 @@ CREATE TABLE IF NOT EXISTS research_tokens (
     price_t20m              FLOAT,
     price_t30m              FLOAT,
 
-    -- ── Tick-level peak (3-min window from PumpPortal WebSocket) ─────────────
+    -- ── Tick-level peak (15-min window from PumpPortal WebSocket) ───────────
     price_peak_3m           FLOAT,
     pct_change_peak_3m      FLOAT,
     t_peak_3m_s             INT,
+
+    -- ── Trade-path file (PC1) ─────────────────────────────────────────────
+    path_file               TEXT,             -- relative path: logs/research_paths/YYYY-MM-DD/<mint>.csv
 
     -- ── Derived outcomes (computed when outcome_complete fires) ───────────────
     pct_change_t1m          FLOAT,
