@@ -292,3 +292,45 @@ ENTRY TIMING format (after E1):
 ```
 ENTRY TIMING SYMBOL | ... | build_ms=X.X  sign_ms=X.X  send_ms=X.X  land_ms=X.X  429_ms=X.X  http_build_ms=X.X  confirm_detect_ms=X.X  quote_ms=X.X
 ```
+
+---
+
+## Research Pipeline — P-COLLECT BATCH (2026-07-18, commits 046533d+)
+
+**PC1 — Trade-path persistence (peak_tracker.py)**
+- Watch window extended 3min → 15min (`TICK_PEAK_WINDOW_S=900`)
+- Every PP tick written to `logs/research_paths/YYYY-MM-DD/<mint>.csv` (ts_ms, price_usd, side, sol_amount, vsol)
+- CSV opened in `_drain_pending()` immediately after WS subscribe
+- `path_file` column updated in Supabase after each file opened
+- Daily UTC-midnight rotation: gzip all `.csv` → `.csv.gz` in yesterday's dir
+- Deadman: if <100 path files created while ≥20 tokens scheduled → TG alert
+- Concurrent-subscription p95 sampled every 60s; logged on day rollover
+- **Status: DEPLOYED — live paths accumulating from first alert after restart**
+
+**PC2 — Backfill from Helius history (research/backfill_paths.py)**
+- Fetches `getSignaturesForAddress` (1 credit) + enhanced-TX parse (1 credit/tx) per token
+- Selects 200 winners (pct_change_peak ≥ +50%) + 200 losers (pct_change_peak < 0)
+- Output: `logs/research_paths/backfill/<mint>.csv.gz` (same columns + `source=backfill`)
+- Hard credit cap default 50,000; `--dry-run` prints estimate before any API call
+- Updates `path_file` in Supabase for each written token
+- **Status: NOT YET RUN — run `python -m research.backfill_paths --dry-run` first**
+
+**PC3 — Path statistics (research/analysis/path_stats.py)**
+- A: Shakeout depth before +30/+50/+100%, by progress bucket (p25/50/75/90)
+- B: Post-peak price retention at peak+1m/3m/5m per progress bucket
+- C: Pre-dump net SOL flow (10s window) vs random baseline — Cohen's d + verdict
+- D: Graduation velocity d(vsol)/dt for live paths crossing 85% BC fill
+- Cells with n<100 → INSUFFICIENT
+- **Status: DEPLOYED — will produce INSUFFICIENT until backfill populates paths**
+
+**PC4 — Exit replay harness (research/analysis/replay_exits.py)**
+- Spec A: v7 social_alert (hard_stop=-35%, trail_tiers=[+30%/−25%, +100%/−25%, +300%/−15%], time_stop=90min, profit_lock=40–100%/stall 60s)
+- Spec B (alt1): tighter trail (−20%), shorter time_stop=45min, profit_lock stall=90s
+- Exec lag default 500ms (configurable `--exec-lag-ms`); fills at nearest post-lag tick
+- Output: per-spec stats + side-by-side comparison (win-rate, mean/median/p25/75/90 PnL, exit-reason mix)
+- **Status: DEPLOYED — will run once backfill paths populated**
+
+**Migration needed in Supabase (run once):**
+```sql
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN path_file TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+```
