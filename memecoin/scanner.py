@@ -1015,6 +1015,23 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             _kept.append(_json.dumps(_pp_entry))
             with open(_snap_path, "w") as _sf:
                 _sf.write("\n".join(_kept) + "\n")
+
+            # Also append the raw alert to signal_queue.jsonl for the research pipeline.
+            # FileQueueListener tails this file — no separate TG session needed.
+            try:
+                _queue_path = _Path(__file__).parent.parent / "research" / "data" / "signal_queue.jsonl"
+                _queue_entry = _json.dumps({
+                    "token_address": address,
+                    "chain":         chain,
+                    "alert_time":    _time.strftime("%Y-%m-%dT%H:%M:%S.000Z", _time.gmtime(_t0)),
+                    "raw_text":      (message_text or "")[:500],
+                    "ts":            _t0,
+                })
+                with open(_queue_path, "a") as _qf:
+                    _qf.write(_queue_entry + "\n")
+            except Exception as _qerr:
+                log.debug("signal_queue write failed %s: %s", address[:8], _qerr)
+
         except Exception as _snap_err:
             log.debug("PP research snapshot write failed %s: %s", address[:8], _snap_err)
 
