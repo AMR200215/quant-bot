@@ -89,6 +89,23 @@ SCREENER_MAX_PRICE_CHANGE_5M     = 500      # >500% in 5m = blow-off top risk
 SCREENER_MAX_RUGCHECK_SCORE      = 500      # rugcheck 0-1000: lower = safer; >500 = risky
 
 # ---------------------------------------------------------------------------
+# Helius (Solana RPC + enhanced APIs)
+# ---------------------------------------------------------------------------
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "")
+HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}" if HELIUS_API_KEY else ""
+
+# ---------------------------------------------------------------------------
+# Smart-money config
+# ---------------------------------------------------------------------------
+# A wallet is "smart money" if it appears in the first N buyers of ≥ this many winners
+SMART_MONEY_MIN_WINS    = 2      # must appear early in ≥2 winner tokens
+SMART_MONEY_FIRST_N     = 30     # "first N buyers" window
+SMART_MONEY_WIN_THRESH  = 100.0  # peak ≥ +100% to count as a winner
+
+# Smart wallets file — rebuilt by research/backfill_smart_wallets.py
+SMART_WALLETS_PATH = Path(__file__).parent / "smart_wallets.json"
+
+# ---------------------------------------------------------------------------
 # Dedup window: ignore same token seen within this many hours
 # ---------------------------------------------------------------------------
 DEDUP_WINDOW_HOURS = 24

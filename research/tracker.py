@@ -274,12 +274,35 @@ class Tracker:
         _pp_extras: dict = {}
         if snap.get("pp_snapshot_ok"):
             _pp_extras["pp_snapshot_ok"] = True
-        if snap.get("pp_vsol"):
-            _pp_extras["pp_vsol"] = snap["pp_vsol"]
+        pp_vsol = snap.get("pp_vsol")
+        if pp_vsol:
+            _pp_extras["pp_vsol"] = pp_vsol
+            # Bonding curve completion: pp_vsol / 115 SOL (graduation ~= 115 SOL)
+            _pp_extras["progress_at_signal"] = round(pp_vsol / 115.0, 4)
         if snap.get("top10_holder_pct") is not None:
             _pp_extras["top10_holder_pct"] = snap["top10_holder_pct"]
         if snap.get("creator_holds_pct") is not None:
             _pp_extras["creator_holds_pct"] = snap["creator_holds_pct"]
+
+        # Smart-money: check if any early buyers are known winning wallets
+        if alert.chain == "solana":
+            try:
+                from research.config import HELIUS_API_KEY as _hk
+                from research.snapshot import fetch_first_buyers as _ffb
+                from research.smart_wallets import check_smart_money as _csm
+                if _hk:
+                    _buyers = _ffb(alert.token_address, _hk, n=30)
+                    if _buyers:
+                        _sm_hit, _sm_count = _csm(_buyers)
+                        if _sm_hit:
+                            _pp_extras["smart_money_hit"]   = True
+                            _pp_extras["smart_money_count"] = _sm_count
+                        else:
+                            # Explicitly store False so coverage is trackable
+                            _pp_extras["smart_money_hit"]   = False
+                            _pp_extras["smart_money_count"] = 0
+            except Exception as _sme:
+                log.debug("smart_money check failed %s: %s", alert.token_address[:8], _sme)
 
         def _do_insert(base: dict, extra: dict) -> Optional[str]:
             resp = (

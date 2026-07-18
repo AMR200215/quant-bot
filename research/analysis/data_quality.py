@@ -32,6 +32,8 @@ ENTRY_FEATURES = [
     "price_usd", "mcap_usd", "liquidity_usd", "age_minutes",
     "volume_5m", "buy_sell_ratio_5m", "dex_id",
     "pp_vsol", "channel_velocity_5m",
+    # W2 additions — coverage expected low initially; era boundary auto-detected
+    "progress_at_signal", "top10_holder_pct", "creator_holds_pct", "smart_money_hit",
 ]
 
 OUTCOME_FEATURES = [
@@ -60,6 +62,8 @@ _FULL_COLS = ",".join([
     "snapshot_ok", "price_usd", "mcap_usd", "liquidity_usd", "fdv",
     "age_minutes", "volume_5m", "buy_sell_ratio_5m", "dex_id",
     "pp_vsol", "pp_snapshot_ok", "channel_velocity_5m",
+    "top10_holder_pct", "creator_holds_pct",
+    "progress_at_signal", "smart_money_hit", "smart_money_count",
     "has_twitter", "has_telegram", "has_website", "rugcheck_score",
     "price_t1m", "price_t3m", "price_t5m", "price_t10m",
     "price_t15m", "price_t20m", "price_t30m",

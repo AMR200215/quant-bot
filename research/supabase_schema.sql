@@ -24,6 +24,10 @@
 -- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS channel_velocity_5m   INT;
 -- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS tg_message_text       TEXT;
 -- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS snapshot_attempts     INT   DEFAULT 0;
+-- ── W2 migration (2026-07-18) ────────────────────────────────────────────────
+-- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS smart_money_hit       BOOL;
+-- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS smart_money_count     INT;
+-- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS progress_at_signal    FLOAT;
 -- ── END MIGRATION ─────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS research_tokens (
@@ -73,6 +77,11 @@ CREATE TABLE IF NOT EXISTS research_tokens (
     -- ── PumpPortal realtime fields ────────────────────────────────────────────
     pp_vsol                 FLOAT,          -- vSolInBondingCurve at alert time
     pp_snapshot_ok          BOOL,           -- TRUE if PP data was merged
+    progress_at_signal      FLOAT,          -- pp_vsol / 115 (0→1, bonding-curve completion)
+
+    -- ── Smart-money features (W2, backfilled from Helius early-buyer data) ───
+    smart_money_hit         BOOL,           -- TRUE if ≥1 smart-wallet in first 30 buyers
+    smart_money_count       INT,            -- count of smart wallets in first 30 buyers
 
     -- ── Outcome poll prices (NULL = polled but no price; never set to 0.0) ────
     price_t1m               FLOAT,

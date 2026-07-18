@@ -236,6 +236,98 @@ def fetch_snapshot_with_retry(
     return fetch_snapshot(token_address, chain), retries
 
 
+def fetch_first_buyers(
+    token_address: str,
+    helius_key: str,
+    n: int = 30,
+) -> list:
+    """
+    Return up to n unique early-buyer wallet addresses for a pump.fun token.
+
+    Algorithm:
+      1. getSignaturesForAddress(mint, limit=200) via Helius RPC → DESC order
+      2. Reverse to get oldest-first; filter successful txns only
+      3. Batch-parse via Helius enhanced API → extract feePayer for each SWAP
+         where the feePayer receives the token (= buy, not sell)
+      4. Return deduplicated wallet list (first-seen order = earliest buyers first)
+
+    Works best for fresh tokens (<200 total txns at call time).
+    For backfill of older tokens with many txns, captures the first 200
+    transactions only — sufficient if the token was a quick pump-and-dump.
+
+    Returns [] on any error or if helius_key is empty.
+    """
+    if not helius_key or not token_address:
+        return []
+
+    rpc_url   = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+    parse_url = f"https://api.helius.xyz/v0/transactions/?api-key={helius_key}"
+
+    # Step 1: fetch signatures (DESC = newest first)
+    try:
+        r1 = requests.post(
+            rpc_url,
+            json={
+                "jsonrpc": "2.0", "id": 1,
+                "method":  "getSignaturesForAddress",
+                "params":  [token_address, {"limit": 200, "commitment": "confirmed"}],
+            },
+            timeout=15,
+        )
+        sigs_result = r1.json().get("result") or []
+    except Exception as _e:
+        log.debug("fetch_first_buyers: getSignaturesForAddress failed %s: %s",
+                  token_address[:8], _e)
+        return []
+
+    if not sigs_result:
+        return []
+
+    # Oldest first; skip failed transactions
+    sigs_result.reverse()
+    clean_sigs = [s["signature"] for s in sigs_result if not s.get("err")]
+    if not clean_sigs:
+        return []
+
+    # Step 2: parse oldest min(n*3, 100) sigs
+    batch = clean_sigs[:min(n * 3, 100)]
+    try:
+        r2 = requests.post(
+            parse_url,
+            json={"transactions": batch},
+            timeout=25,
+        )
+        parsed = r2.json()
+        if not isinstance(parsed, list):
+            return []
+    except Exception as _e:
+        log.debug("fetch_first_buyers: Helius parse failed %s: %s",
+                  token_address[:8], _e)
+        return []
+
+    # Step 3: extract buyers — feePayer who RECEIVES the token (not sells)
+    buyers:  list = []
+    seen:    set  = set()
+    for tx in parsed:
+        if not isinstance(tx, dict) or tx.get("type") not in ("SWAP", "UNKNOWN"):
+            continue
+        fee_payer = tx.get("feePayer", "")
+        if not fee_payer:
+            continue
+        token_transfers = tx.get("tokenTransfers") or []
+        for tt in token_transfers:
+            if tt.get("mint") == token_address and tt.get("toUserAccount") == fee_payer:
+                if fee_payer not in seen:
+                    seen.add(fee_payer)
+                    buyers.append(fee_payer)
+                break
+        if len(buyers) >= n:
+            break
+
+    log.debug("fetch_first_buyers: %s → %d buyers", token_address[:8], len(buyers))
+    return buyers[:n]
+
+
 def _jupiter_price(token_address: str) -> Optional[float]:
     """
     Jupiter Price API v2 — fast fallback for tokens not yet indexed by DexScreener.
