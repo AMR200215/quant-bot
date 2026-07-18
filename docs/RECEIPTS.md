@@ -65,6 +65,67 @@ When a new sell route is first proven working end-to-end on mainnet, record it h
 
 ---
 
+## Research Pipeline — W-BATCH (2026-07-18, commits b7b0a6d–81a301e)
+
+**W1 — Queue deadman + persistent offset**
+- Scanner heartbeat thread writing `{type:heartbeat}` every 5 min to `signal_queue.jsonl`: **LIVE** (confirmed `tail -3 signal_queue.jsonl` shows 3 consecutive heartbeats, 300s apart)
+- FileQueueListener persisted offset: **LIVE** (`.queue_offset` file = 572 on VPS after first poll)
+- Deadman alert at >20 min silence: **deployed, untested** (threshold not yet hit; logic in `_check_deadman()`)
+
+**W2 — Smart-money features**
+- `fetch_first_buyers()` in snapshot.py: **deployed** (Helius getSignaturesForAddress + bulk parse)
+- `smart_wallets.py` loader: **deployed** (gracefully returns (False,0) until backfill runs)
+- `progress_at_signal` (pp_vsol/115): **deployed** in tracker.py; awaiting DB migration
+- `smart_money_hit/count`: **deployed** in tracker.py; awaiting DB migration
+- DB migration SQL (run in Supabase SQL editor):
+  ```sql
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS smart_money_hit BOOL;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS smart_money_count INT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS progress_at_signal FLOAT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS channel_velocity_5m INT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS data_partial BOOL DEFAULT FALSE;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS top10_holder_pct FLOAT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS creator_holds_pct FLOAT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS price_peak_3m FLOAT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS pct_change_peak_3m FLOAT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS t_peak_3m_s INT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS pct_change_t1m FLOAT;
+  ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS price_t1m FLOAT;
+  ```
+
+**W3 — Report additions**
+- Section 6 (missed-winners): **live** — 135 tokens peaked >+50% despite screener reject; `liq<8k` binding for 76
+- Section 7 (progress_at_signal buckets): **deployed**; shows 0 rows until migration + data flows
+- Section 8 (readiness verdicts): **live** — screener_passed n=198 (14 days to 300); all W2 segments at 0
+
+**W4 — Run receipts (2026-07-18)**
+
+schema_audit: PASS — all 53 emitted fields present in schema.sql
+
+data_quality snapshot (19,881 rows, Jun 21 – Jul 14):
+| metric | value |
+|---|---|
+| Total rows | 19,881 |
+| outcome_complete=True | 19,881 (100%) |
+| rows with pct_change_peak | 1,058 (5.3%) |
+| rows last 7d | 2,759 |
+| rows last 24h | 0 (scanner crashed Jul 15–18, now fixed) |
+| Clean outcomes_only cohort | 1,058 rows |
+| Clean entry_features cohort | 762 rows |
+| tick_peaks cohort | 0 rows (price_peak_3m col missing) |
+
+Report key findings:
+- Win rate (>0%): 39.5% overall; BC 41.5%, Grad 38.9%
+- >+50% rate: 16.0% overall
+- Vol $20k–$50k bucket: best win rate 52.4% (n=185) — top feature signal
+- Screener PASS vs FAIL: 43.4% vs 38.7% (weak separation; n=198 too small)
+- V7 traded slightly worse than universe (36.7% vs 40.7%)
+- Missed winners: 135 tokens; `liq<8k` most binding (76 tokens, max +1118%)
+- 50% of missed winners blocked by only 1 filter (relaxable)
+- screener_passed readiness: 198/300 clean rows (~14 days to V8 threshold)
+
+---
+
 ## How to use this file
 
 **Before changing an execution path:** check if there is a receipt for the current
