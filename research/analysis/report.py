@@ -54,9 +54,7 @@ def _fetch_all(sb, include_partial: bool = False) -> list[dict]:
             .select("*")
             .eq("outcome_complete", True)
         )
-        if not include_partial:
-            # Exclude rows where data_partial is True
-            # Use .or_ workaround: data_partial=False OR data_partial IS NULL
+        if not include_partial and _HAS_DATA_PARTIAL:
             q = q.or_("data_partial.eq.false,data_partial.is.null")
         chunk = (q.range(offset, offset + batch - 1).execute().data) or []
         rows.extend(chunk)
@@ -66,18 +64,37 @@ def _fetch_all(sb, include_partial: bool = False) -> list[dict]:
     return rows
 
 
+_HAS_DATA_PARTIAL: bool = True   # detected at first query; set False if column missing
+
+
 def _fetch_all_for_report(sb, include_partial: bool = False) -> list[dict]:
     """
     Fetch ALL rows (not just outcome_complete) for missed-winner analysis.
-    Returns (complete_rows, all_rows).
+    Gracefully handles missing data_partial column (column was added via migration).
     """
+    global _HAS_DATA_PARTIAL
     rows: list = []
     offset, batch = 0, 1000
     while True:
         q = sb.table("research_tokens").select("*")
-        if not include_partial:
+        if not include_partial and _HAS_DATA_PARTIAL:
             q = q.or_("data_partial.eq.false,data_partial.is.null")
-        chunk = (q.range(offset, offset + batch - 1).execute().data) or []
+        try:
+            chunk = (q.range(offset, offset + batch - 1).execute().data) or []
+        except Exception as e:
+            if "data_partial" in str(e) and not include_partial:
+                # Column doesn't exist yet — run without the filter
+                _HAS_DATA_PARTIAL = False
+                print("  NOTE: data_partial column missing — migration needed; "
+                      "treating all rows as non-partial")
+                chunk = (
+                    sb.table("research_tokens")
+                    .select("*")
+                    .range(offset, offset + batch - 1)
+                    .execute().data
+                ) or []
+            else:
+                raise
         rows.extend(chunk)
         if len(chunk) < batch:
             break

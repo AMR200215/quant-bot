@@ -57,22 +57,9 @@ OUTCOME_PEAK_FIELDS = [
 
 # ── Supabase loader ───────────────────────────────────────────────────────────
 
-_FULL_COLS = ",".join([
-    "id", "token_address", "symbol", "alert_time", "category", "chain",
-    "snapshot_ok", "price_usd", "mcap_usd", "liquidity_usd", "fdv",
-    "age_minutes", "volume_5m", "buy_sell_ratio_5m", "dex_id",
-    "pp_vsol", "pp_snapshot_ok", "channel_velocity_5m",
-    "top10_holder_pct", "creator_holds_pct",
-    "progress_at_signal", "smart_money_hit", "smart_money_count",
-    "has_twitter", "has_telegram", "has_website", "rugcheck_score",
-    "price_t1m", "price_t3m", "price_t5m", "price_t10m",
-    "price_t15m", "price_t20m", "price_t30m",
-    "price_peak_3m", "pct_change_peak_3m", "t_peak_3m_s",
-    "pct_change_t1m", "pct_change_t3m", "pct_change_t5m",
-    "pct_change_t10m", "pct_change_t20m", "pct_change_t30m",
-    "pct_change_peak", "peak_interval", "outcome_complete", "data_partial",
-    "v7_traded", "created_at",
-])
+# Use select("*") so schema drift (missing columns) doesn't break the load.
+# Missing columns will be absent from row dicts → reported as 0% coverage.
+_FULL_COLS = "*"
 
 _MINIMAL_COLS = "id,token_address,symbol,alert_time,category,snapshot_ok,price_usd,outcome_complete,created_at"
 
@@ -98,13 +85,13 @@ def _load_rows(limit: int = 20000, allow_partial: bool = False) -> tuple:
     sb   = create_client(SUPABASE_URL, SUPABASE_KEY)
     load_meta = {"partial_schema_load": False, "missing_selected_columns": []}
 
-    def _paginate(cols_str: str) -> list:
+    def _paginate() -> list:
         rows   = []
         offset = 0
         batch  = 1000
         while len(rows) < limit:
             resp = sb.table("research_tokens") \
-                .select(cols_str) \
+                .select(_FULL_COLS) \
                 .order("alert_time", desc=False) \
                 .range(offset, offset + batch - 1) \
                 .execute()
@@ -115,28 +102,9 @@ def _load_rows(limit: int = 20000, allow_partial: bool = False) -> tuple:
             offset += batch
         return rows
 
-    try:
-        return _paginate(_FULL_COLS), load_meta
-    except Exception as e:
-        if not allow_partial:
-            raise RuntimeError(
-                f"Full-select failed (schema drift?): {e.__class__.__name__}: {e}\n"
-                "Apply the ALTER TABLE migration in research/supabase_schema.sql,\n"
-                "then re-run.  Use --allow-partial to fall back to minimal columns\n"
-                "(clean cohorts will be disabled)."
-            ) from e
-
-        # Extract missing column names from PostgREST error message (best-effort)
-        import re as _re
-        missing = _re.findall(r"'(\w+)'\s+column", str(e))
-        load_meta["partial_schema_load"]      = True
-        load_meta["missing_selected_columns"] = missing or ["unknown — check schema"]
-        print(f"WARN: Full select failed ({e.__class__.__name__}: {e})")
-        print(f"      partial_schema_load=true")
-        print(f"      missing_selected_columns={load_meta['missing_selected_columns']}")
-        print(f"      Clean cohorts will not be generated (data is not trusted)")
-        rows = _paginate(_MINIMAL_COLS)
-        return rows, load_meta
+    # select("*") always works — schema drift shows as missing keys in row dicts
+    # (coverage will report 0% for unmigrated columns, not an error)
+    return _paginate(), load_meta
 
 
 # ── Coverage helpers ──────────────────────────────────────────────────────────
