@@ -145,9 +145,11 @@ GRAD_SOL_UI             = 115.0  # SOL in curve at graduation (virtual reserves)
 # Same directory as smart_wallets.json for backward compat.
 SMART_WALLETS_BASE_DIR = Path(__file__).parent
 
-# Set to a specific integer version to pin the loaded wallet set.
+# RC2: pinned to v1 — v8_pass scoring reads ONLY this version.
+# Weekly refresh (backfill_smart_wallets.py) writes v2+ into shadow columns.
+# Advance pin only after the Jul 25 read concludes.
 # 0 / empty string → load smart_wallets_latest.json (always current).
-SMART_MONEY_PINNED_VERSION: "int | None" = int(os.getenv("SMART_MONEY_PINNED_VERSION", "0")) or None
+SMART_MONEY_PINNED_VERSION: "int | None" = int(os.getenv("SMART_MONEY_PINNED_VERSION", "1")) or None
 
 # Forward-validation window (ISO timestamps).  Empty string = not set.
 FORWARD_VALIDATION_START = os.getenv("FORWARD_VALIDATION_START", "")

@@ -156,6 +156,44 @@ def _bucket(val, edges: list) -> str:
     return f">={edges[-1]}"
 
 
+# ── RC1 era segmentation ───────────────────────────────────────────────────────
+# "clean"               — row was polled under RF1; price_source/status provenance written
+# "dex_conditioned_preRF1" — polled before RF1; BC tokens' DexScreener NULLs bias outcomes
+
+_ERA_CLEAN    = "clean"
+_ERA_PRERF1   = "dex_conditioned_preRF1"
+
+
+def _era(row: dict) -> str:
+    """
+    Return the measurement era for a row.
+    Clean: at least one price_source or price_status column is non-NULL
+    (means RF1 ran and wrote provenance for this row's polls).
+    PreRF1: all provenance columns are NULL/absent — collected before RF1 deployment.
+    """
+    for interval in ("t1m", "t3m", "t5m", "t10m", "t15m", "t20m", "t30m"):
+        if row.get(f"price_source_{interval}") is not None:
+            return _ERA_CLEAN
+        if row.get(f"price_status_{interval}") is not None:
+            return _ERA_CLEAN
+    return _ERA_PRERF1
+
+
+def _era_split(rows: list) -> tuple[list, list]:
+    """Return (clean_rows, preRF1_rows)."""
+    clean   = [r for r in rows if _era(r) == _ERA_CLEAN]
+    pre_rf1 = [r for r in rows if _era(r) == _ERA_PRERF1]
+    return clean, pre_rf1
+
+
+def _stats_era(label: str, clean: list, pre: list, indent: str = "    ") -> None:
+    """Print stats for clean era; note excluded preRF1 count."""
+    if pre:
+        print(f"{indent}  [RC1] era=clean n={len(clean)}  "
+              f"excl. dex_conditioned_preRF1 n={len(pre)}")
+    _stats(label, clean, indent=indent)
+
+
 def _stats(label: str, rows: list, indent: str = "    ") -> None:
     pcts = [_peak(r) for r in rows if _peak(r) is not None]
     wins  = [p for p in pcts if p > 0]
@@ -170,6 +208,19 @@ def _stats(label: str, rows: list, indent: str = "    ") -> None:
           f">200%={len(s200)/len(pcts)*100:4.1f}%  "
           f"med={median(pcts):+7.1f}%  "
           f"max={max(pcts):+8.1f}%")
+
+
+def _bucket_table_era(clean: list, pre: list, field: str, edges: list, label: str) -> None:
+    """
+    Print a bucket table for the clean era with a side-by-side note for preRF1.
+    The clean-era table is printed in full; preRF1 is summarised as a single
+    exclusion line so the table isn't doubled in length.
+    """
+    pre_priced = [r for r in pre if _peak(r) is not None]
+    if pre:
+        print(f"  [RC1] era=clean n={len(clean)}  "
+              f"excl. dex_conditioned_preRF1 n={len(pre)} ({len(pre_priced)} priced)")
+    _bucket_table(clean, field, edges, label)
 
 
 def _bucket_table(rows: list, field: str, edges: list, label: str) -> None:
@@ -234,6 +285,14 @@ def main():
     partial_n = sum(1 for r in rows if r.get("data_partial"))
     print(f"  {len(rows) - partial_n} full  |  {partial_n} partial (data_partial=True)\n")
 
+    # RC1: era split applied globally — used by sections 2, 7, and section 10
+    clean_rows, preRF1_rows = _era_split(rows)
+    all_clean,  all_preRF1  = _era_split(all_rows)
+    _era_note = (f"  [RC1] era split: {len(clean_rows)} clean "
+                 f"/ {len(preRF1_rows)} dex_conditioned_preRF1 "
+                 f"(of {len(rows)} outcome_complete)")
+    print(_era_note + "\n")
+
     # ── 1. By category ────────────────────────────────────────────────────────
     sep = "=" * 70
     print(sep)
@@ -252,16 +311,17 @@ def main():
 
     # ── 2. Entry-feature bucket analysis ──────────────────────────────────────
     print(f"\n{sep}")
-    print("2. PEAK PCT BY ENTRY FEATURE BUCKETS  (excludes NULL pct rows)")
+    print("2. PEAK PCT BY ENTRY FEATURE BUCKETS  [RC1: clean era only]")
     print(sep)
-    _bucket_table(rows, "buy_sell_ratio_5m", [0.4, 0.55, 0.65, 0.75, 0.85],
-                  "Buy/sell ratio 5m (BSR)")
-    _bucket_table(rows, "volume_5m",         [500, 2_000, 5_000, 10_000, 20_000],
-                  "Volume 5m (USD)")
-    _bucket_table(rows, "pp_vsol",           [5, 20, 40, 60, 79],
-                  "PP vSol (bonding-curve SOL, 0→graduation at ~85)")
-    _bucket_table(rows, "top10_holder_pct",  [20, 40, 60, 80],
-                  "Top-10 holder concentration (%)")
+    _bucket_table_era(clean_rows, preRF1_rows, "buy_sell_ratio_5m",
+                      [0.4, 0.55, 0.65, 0.75, 0.85], "Buy/sell ratio 5m (BSR)")
+    _bucket_table_era(clean_rows, preRF1_rows, "volume_5m",
+                      [500, 2_000, 5_000, 10_000, 20_000], "Volume 5m (USD)")
+    _bucket_table_era(clean_rows, preRF1_rows, "pp_vsol",
+                      [5, 20, 40, 60, 79],
+                      "PP vSol (bonding-curve SOL, 0→graduation at ~85)")
+    _bucket_table_era(clean_rows, preRF1_rows, "top10_holder_pct",
+                      [20, 40, 60, 80], "Top-10 holder concentration (%)")
 
     # ── 3. Screener pass/fail ─────────────────────────────────────────────────
     print(f"\n{sep}")
@@ -349,7 +409,7 @@ def main():
 
     # ── 7. [W3b] progress_at_signal buckets ──────────────────────────────────
     print(f"\n{sep}")
-    print("7. PROGRESS_AT_SIGNAL BUCKETS  (pp_vsol / 115, bonding-curve completion)")
+    print("7. PROGRESS_AT_SIGNAL BUCKETS  [RC1: clean era only]  (pp_vsol / 115)")
     print(sep)
     # Compute on-the-fly from pp_vsol if progress_at_signal column is missing
     def _progress(r):
@@ -369,9 +429,13 @@ def main():
                 return label
         return "85%+"
 
-    prog_rows = [r for r in rows if _progress(r) is not None and _peak(r) is not None]
-    print(f"  Rows with pp_vsol data: {len(prog_rows)} / {len(rows)}")
-    if prog_rows:
+    # Use clean-era rows for this gradient analysis
+    prog_all   = [r for r in rows       if _progress(r) is not None and _peak(r) is not None]
+    prog_rows  = [r for r in clean_rows if _progress(r) is not None and _peak(r) is not None]
+    prog_pre   = [r for r in preRF1_rows if _progress(r) is not None and _peak(r) is not None]
+    print(f"  Rows with pp_vsol data: {len(prog_all)} total  "
+          f"({len(prog_rows)} clean / {len(prog_pre)} preRF1 excluded)")
+    if prog_rows or prog_pre:
         buckets_p: dict = defaultdict(list)
         for r in prog_rows:
             bkt = _prog_bucket(_progress(r))
@@ -551,6 +615,45 @@ def main():
             print("  No outcome_complete rows with realert data yet.")
     else:
         print(f"\n  (No realert_count data yet — RF4 migration may be pending)")
+
+    # ── 10. [RC1] Era data-quality summary ───────────────────────────────────
+    print(f"\n{sep}")
+    print("10. [RC1] ERA DATA-QUALITY SUMMARY")
+    print(sep)
+    print(f"  {'Era':<30}  {'rows':>6}  {'priced':>7}  {'null_t1m':>9}  "
+          f"{'null_t3m':>9}  {'null_t10m':>10}")
+    print(f"  {'-'*30}  {'-'*6}  {'-'*7}  {'-'*9}  {'-'*9}  {'-'*10}")
+
+    def _null_rate(era_rows, col):
+        if not era_rows:
+            return "n/a"
+        n_null = sum(1 for r in era_rows if r.get(col) is None)
+        return f"{n_null/len(era_rows)*100:.0f}%"
+
+    for era_label, era_set in [(_ERA_CLEAN, clean_rows), (_ERA_PRERF1, preRF1_rows)]:
+        priced = sum(1 for r in era_set if _peak(r) is not None)
+        n1  = _null_rate(era_set, "price_t1m")
+        n3  = _null_rate(era_set, "price_t3m")
+        n10 = _null_rate(era_set, "price_t10m")
+        print(f"  {era_label:<30}  {len(era_set):>6}  {priced:>7}  {n1:>9}  "
+              f"{n3:>9}  {n10:>10}")
+
+    # BC-token null drill-down
+    bc_clean  = [r for r in clean_rows  if r.get("category") == "social_alert_bc"]
+    bc_pre    = [r for r in preRF1_rows if r.get("category") == "social_alert_bc"]
+    print()
+    print(f"  BC tokens only (social_alert_bc):")
+    for era_label, era_set in [(_ERA_CLEAN, bc_clean), (_ERA_PRERF1, bc_pre)]:
+        priced = sum(1 for r in era_set if _peak(r) is not None)
+        n1  = _null_rate(era_set, "price_t1m")
+        n3  = _null_rate(era_set, "price_t3m")
+        n10 = _null_rate(era_set, "price_t10m")
+        print(f"    {era_label:<28}  {len(era_set):>6}  {priced:>7}  {n1:>9}  "
+              f"{n3:>9}  {n10:>10}")
+
+    if not clean_rows:
+        print("\n  NOTE: No clean-era rows yet. All outcome data is dex_conditioned_preRF1.")
+        print("        Re-run after RF1 has polled its first completed tokens (~30min window).")
 
     # ── CSV output ────────────────────────────────────────────────────────────
     if args.output:
