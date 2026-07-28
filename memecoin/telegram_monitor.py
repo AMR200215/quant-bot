@@ -103,12 +103,22 @@ class TelegramMonitor:
         log.warning("Telegram monitor thread started — channels: %s", CHANNELS)
 
     def _run_loop(self):
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_until_complete(self._monitor())
-        except Exception as e:
-            log.error("Telegram monitor crashed: %s", e)
+        backoff = 5
+        while True:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            try:
+                self._loop.run_until_complete(self._monitor())
+                log.warning("Telegram monitor exited cleanly — restarting in %ds", backoff)
+            except Exception as e:
+                log.error("Telegram monitor crashed: %s — restarting in %ds", e, backoff)
+            finally:
+                try:
+                    self._loop.close()
+                except Exception:
+                    pass
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 120)   # cap at 2 min
 
     def _screen_and_signal(self, chain: str, address: str, text: str,
                             attempt: int = 1):
