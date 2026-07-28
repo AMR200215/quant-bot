@@ -126,6 +126,39 @@ Report key findings:
 
 ---
 
+## Research Pipeline — RF-BATCH + RC-CLOSURE (2026-07-28–29, commits 580539f–0a42ecb)
+
+### RC2 — smart_wallets_v1.json (created 2026-07-28)
+
+| field | value |
+|---|---|
+| File | `/root/quant-bot/research/smart_wallets_v1.json` |
+| sha256 | `6dc245381106d5b57173f92d9720ac769f0be8f40fd9fdca30dd84a3593c2813` |
+| Wallets | 106 (appeared early in ≥2 of 95 winner tokens, peak ≥+100%) |
+| Winners scanned | 95 (89 with buyer data, 6 missing) |
+| Generated at | 2026-07-28T23:27:17Z |
+| Config pin | `SMART_MONEY_PINNED_VERSION=1` (default in research/config.py) |
+| Shadow columns | `smart_money_hit_v1`, `smart_money_count_v1` (in schema) |
+| v8_pass reads | v1 only — advance pin after Jul 25 read concludes |
+| 70 rows updated | `smart_money_hit=True` backfilled into existing research_tokens rows |
+
+### RC3 — RF1 NULL-rate artifact
+
+**Status: PENDING Supabase migration** — RF1 provenance columns (`price_source_t1m` etc.) have not yet been added to the live DB. The migration block is at the top of `research/supabase_schema.sql` (RF1 section, 22 ALTER TABLE statements).
+
+Once migration is run:
+```bash
+ssh root@178.105.94.113 'cd /root/quant-bot && set -a && source .env && set +a && \
+  .venv/bin/python -m research.scripts.rf1_coverage_check'
+```
+Paste the output table here. If BC T1m NULL-rate for clean-era rows is not materially lower than preRF1, that is a bug in `curve_oracle.py` or the outcome poller venue routing.
+
+### RC1 — Era segmentation in report.py
+
+`report.py` sections 2 (bucket analysis) and 7 (progress_at_signal) now use clean-era rows only, with excluded-n shown. Section 10 prints era data-quality table (NULL rates at T1m/T3m/T10m by era and by category). First clean-era rows will appear ~30min after first post-RF1 signal completes its outcome window.
+
+---
+
 ## How to use this file
 
 **Before changing an execution path:** check if there is a receipt for the current

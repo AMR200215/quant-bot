@@ -25,18 +25,36 @@ from research.config import SUPABASE_URL, SUPABASE_KEY
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+_RF1_COLS_PRESENT: bool = True   # detected at first query
+
+
 def _fetch(sb, complete_only: bool) -> list[dict]:
+    global _RF1_COLS_PRESENT
     rows, offset, batch = [], 0, 1000
+
+    # Try with RF1 provenance columns; fall back to price columns only
+    full_sel  = ("id,category,alert_time,"
+                 "price_t1m,price_t3m,price_t10m,"
+                 "price_source_t1m,price_status_t1m,"
+                 "price_source_t3m,price_status_t3m,"
+                 "price_source_t10m,price_status_t10m")
+    basic_sel = "id,category,alert_time,price_t1m,price_t3m,price_t10m"
+
     while True:
-        q = (sb.table("research_tokens")
-               .select("id,category,alert_time,"
-                       "price_t1m,price_t3m,price_t10m,"
-                       "price_source_t1m,price_status_t1m,"
-                       "price_source_t3m,price_status_t3m,"
-                       "price_source_t10m,price_status_t10m"))
+        sel = full_sel if _RF1_COLS_PRESENT else basic_sel
+        q = sb.table("research_tokens").select(sel)
         if complete_only:
             q = q.eq("outcome_complete", True)
-        chunk = q.range(offset, offset + batch - 1).execute().data or []
+        try:
+            chunk = q.range(offset, offset + batch - 1).execute().data or []
+        except Exception as e:
+            if "does not exist" in str(e) and _RF1_COLS_PRESENT:
+                _RF1_COLS_PRESENT = False
+                print("  WARN: RF1 provenance columns missing — Supabase migration not yet run.")
+                print("        Run the RF1 migration block from research/supabase_schema.sql first.")
+                print("        Falling back to price-only columns; era split will be unavailable.\n")
+                continue   # retry with basic_sel
+            raise
         rows.extend(chunk)
         if len(chunk) < batch:
             break
