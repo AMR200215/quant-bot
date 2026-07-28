@@ -190,10 +190,15 @@ class Tracker:
             log.error("Supabase init failed: %s", e)
             self._sb = None
 
-    def _is_duplicate(self, token_address: str) -> bool:
-        """Return True if token already logged in the last DEDUP_WINDOW_HOURS."""
+    def _check_dedup(self, token_address: str) -> tuple:
+        """
+        Return (is_new_event, existing_id):
+          - (True, None)         — no row in last DEDUP_WINDOW_HOURS → new event, insert
+          - (False, existing_id) — row exists within window → genuine re-alert, update it
+        On DB error: returns (True, None) so the insert path runs (safe default).
+        """
         if not self._sb:
-            return False
+            return (True, None)
         try:
             from datetime import datetime, timezone, timedelta
             cutoff = (
@@ -207,10 +212,38 @@ class Tracker:
                 .limit(1)
                 .execute()
             )
-            return len(resp.data) > 0
+            if resp.data:
+                return (False, resp.data[0]["id"])
+            return (True, None)
         except Exception as e:
             log.debug("Dedup check error for %s: %s", token_address[:8], e)
-            return False
+            return (True, None)
+
+    def _record_realert(self, existing_id: str, alert: "TGAlert"):
+        """Atomically increment realert_count and append to realert_times."""
+        try:
+            # Read current values first
+            resp = self._sb.table("research_tokens") \
+                .select("realert_count, realert_times, realert_message_ids") \
+                .eq("id", existing_id) \
+                .limit(1).execute()
+            if not resp.data:
+                return
+            row = resp.data[0]
+            count = (row.get("realert_count") or 0) + 1
+            times = list(row.get("realert_times") or [])
+            msg_ids = list(row.get("realert_message_ids") or [])
+            times.append(alert.alert_time.isoformat())
+            msg_ids.append(getattr(alert, "tg_message_id", None))
+            self._sb.table("research_tokens").update({
+                "realert_count":       count,
+                "realert_times":       times,
+                "realert_message_ids": [m for m in msg_ids if m is not None],
+                "last_realert_time":   alert.alert_time.isoformat(),
+            }).eq("id", existing_id).execute()
+            log.info("Realert #%d for %s (id=%s)", count, alert.token_address[:8], existing_id[:8])
+        except Exception as e:
+            log.debug("Realert update failed for %s: %s", existing_id[:8], e)
 
     def _get_velocity(self) -> int:
         """Count tokens inserted in the last 5 minutes (before this one)."""
@@ -271,7 +304,13 @@ class Tracker:
         # Optional fields — added to extras so the retry loop strips them on PGRST204
         # rather than failing the whole INSERT.  Add new columns here as they're added
         # to Supabase; the retry loop handles missing ones automatically.
-        _pp_extras: dict = {}
+        _pp_extras: dict = {
+            # RF4 realert tracking — initialised at zero on first insert
+            "realert_count":       0,
+            "realert_times":       [],
+            "realert_message_ids": [],
+            "last_realert_time":   None,
+        }
         if snap.get("pp_snapshot_ok"):
             _pp_extras["pp_snapshot_ok"] = True
         pp_vsol = snap.get("pp_vsol")
@@ -284,23 +323,45 @@ class Tracker:
         if snap.get("creator_holds_pct") is not None:
             _pp_extras["creator_holds_pct"] = snap["creator_holds_pct"]
 
+        # Backfill provenance — stored in extras so missing columns degrade gracefully
+        if alert.backfilled:
+            _pp_extras["backfilled"]        = True
+            _pp_extras["source"]            = alert.source
+            _pp_extras["event_id"]          = alert.event_id
+            if alert.backfill_batch_id:
+                _pp_extras["backfill_batch_id"] = alert.backfill_batch_id
+        else:
+            _pp_extras["backfilled"] = False
+            _pp_extras["source"]     = alert.source
+
         # Smart-money: check if any early buyers are known winning wallets
         if alert.chain == "solana":
             try:
                 from research.config import HELIUS_API_KEY as _hk
                 from research.snapshot import fetch_first_buyers as _ffb
-                from research.smart_wallets import check_smart_money as _csm
+                from research.smart_wallets import (
+                    check_smart_money as _csm,
+                    get_loaded_version as _glv,
+                    check_smart_money_versioned as _csmv,
+                )
                 if _hk:
                     _buyers = _ffb(alert.token_address, _hk, n=30)
                     if _buyers:
+                        # Pinned version scoring (always)
                         _sm_hit, _sm_count = _csm(_buyers)
-                        if _sm_hit:
-                            _pp_extras["smart_money_hit"]   = True
-                            _pp_extras["smart_money_count"] = _sm_count
-                        else:
-                            # Explicitly store False so coverage is trackable
-                            _pp_extras["smart_money_hit"]   = False
-                            _pp_extras["smart_money_count"] = 0
+                        _pp_extras["smart_money_hit"]   = _sm_hit
+                        _pp_extras["smart_money_count"] = _sm_count
+
+                        # RF6: shadow V1 scoring fields (PGRST204-strippable extras)
+                        _pinned_v = _glv()
+                        if _pinned_v:
+                            _pp_extras["smart_money_data_ok_v1"]  = True
+                            _pp_extras["smart_money_hit_v1"]      = _sm_hit
+                            _pp_extras["smart_money_count_v1"]    = _sm_count
+                    else:
+                        # Explicitly store False so coverage is trackable
+                        _pp_extras["smart_money_hit"]   = False
+                        _pp_extras["smart_money_count"] = 0
             except Exception as _sme:
                 log.debug("smart_money check failed %s: %s", alert.token_address[:8], _sme)
 
@@ -383,9 +444,10 @@ class Tracker:
         return None
 
     def _process(self, alert: TGAlert):
-        # 1. Dedup
-        if self._is_duplicate(alert.token_address):
-            log.debug("Dedup skip %s", alert.token_address[:8])
+        # 1. Dedup / realert check
+        is_new, existing_id = self._check_dedup(alert.token_address)
+        if not is_new:
+            self._record_realert(existing_id, alert)
             return
 
         # 2. Fetch snapshot with retry (DexScreener + rugcheck + Jupiter fallback)
@@ -403,6 +465,13 @@ class Tracker:
         row_id = self._insert(alert, snap, attempts)
         if not row_id:
             return
+
+        # Update health timestamp so health_monitor can track research insert activity
+        try:
+            from memecoin.health_monitor import update_health_timestamp
+            update_health_timestamp("_last_research_insert", __import__("time").time())
+        except Exception:
+            pass
 
         # 5. Notify poller + peak_tracker — must happen AFTER successful INSERT
         category = _assign_category(snap, alert.chain)

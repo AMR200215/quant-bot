@@ -27,8 +27,6 @@ Run:
 """
 
 import argparse
-import csv
-import gzip
 import json
 import logging
 import sys
@@ -36,6 +34,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean, median, quantiles
+
+from research.path_schema import load_path_file
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -79,30 +79,40 @@ _ALT1_SPEC = {
 }
 
 
-# ── Path file loader (shared with path_stats) ─────────────────────────────────
+# ── Path file loader (RF5: delegates to canonical load_path_file) ──────────────
 
 def _load_path(p: Path) -> list[dict]:
-    rows = []
-    try:
-        opener = gzip.open(p, "rt", encoding="utf-8") if p.suffix == ".gz" \
-                 else open(p, "r", encoding="utf-8", newline="")
-        with opener as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    rows.append({
-                        "ts_ms":      int(row["ts_ms"]),
-                        "price_usd":  float(row["price_usd"]),
-                        "side":       row.get("side", ""),
-                        "sol_amount": float(row.get("sol_amount") or 0),
-                        "vsol":       float(row.get("vsol") or 0),
-                    })
-                except (ValueError, KeyError):
-                    pass
-    except Exception as e:
-        log.debug("Failed to load %s: %s", p.name, e)
-        return []
-    rows.sort(key=lambda r: r["ts_ms"])
+    """
+    Load a path CSV using the canonical schema loader.
+    Converts canonical string fields to typed values for the replay engine.
+    Partial rows (data_status='partial') are excluded from replay to avoid
+    corrupting simulation with missing price data.
+    Sorted by ts_ms ascending (done by load_path_file).
+    """
+    raw_rows, warnings = load_path_file(p)
+    if warnings:
+        log.debug("load_path_file %s: %d warnings", p.name, len(warnings))
+
+    rows: list[dict] = []
+    partial_skipped = 0
+    for row in raw_rows:
+        # Exclude partial rows from replay simulation
+        if row.get("data_status") == "partial":
+            partial_skipped += 1
+            continue
+        try:
+            rows.append({
+                "ts_ms":      int(row["ts_ms"]),
+                "price_usd":  float(row["price_usd"]),
+                "side":       row.get("side", "unknown"),
+                "sol_amount": float(row.get("sol_amount") or 0),
+                "vsol":       float(row.get("vsol") or 0),
+            })
+        except (ValueError, KeyError):
+            pass
+
+    if partial_skipped:
+        log.debug("Skipped %d partial rows from %s", partial_skipped, p.name)
     return rows
 
 

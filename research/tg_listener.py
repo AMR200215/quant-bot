@@ -51,6 +51,10 @@ class TGAlert:
     chain: str
     alert_time: datetime
     raw_text: str
+    backfilled: bool = False
+    event_id: str = ""
+    source: str = "telegram_live"
+    backfill_batch_id: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +194,10 @@ class FileQueueListener:
                                 chain=chain,
                                 alert_time=alert_time,
                                 raw_text=e.get("raw_text", ""),
+                                backfilled=bool(e.get("backfilled", False)),
+                                event_id=e.get("event_id", ""),
+                                source=e.get("source", "telegram_live"),
+                                backfill_batch_id=e.get("backfill_batch_id", ""),
                             )
                             try:
                                 self._q.put_nowait(alert)

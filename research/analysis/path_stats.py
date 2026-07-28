@@ -24,14 +24,14 @@ Run:
 """
 
 import argparse
-import csv
-import gzip
 import logging
 import math
 import sys
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, median, quantiles, stdev
+
+from research.path_schema import load_path_file
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -56,42 +56,39 @@ _PROGRESS_BUCKETS   = [(0, 0.25), (0.25, 0.50), (0.50, 0.75), (0.75, 0.90), (0.9
 _BUCKET_LABELS      = ["0–25%", "25–50%", "50–75%", "75–90%", "90%+"]
 
 
-# ── Path file loader ───────────────────────────────────────────────────────────
-
-def _open_path_file(p: Path):
-    """Return an open text stream for a .csv or .csv.gz file."""
-    if p.suffix == ".gz":
-        return gzip.open(p, "rt", encoding="utf-8")
-    return open(p, "r", encoding="utf-8", newline="")
-
+# ── Path file loader (RF5: delegates to canonical load_path_file) ──────────────
 
 def _load_path(p: Path) -> list[dict]:
     """
-    Load a path CSV into a list of row dicts.
-    Columns: ts_ms, price_usd, side, sol_amount, vsol [, source]
-    Sorted by ts_ms ascending.
+    Load a path CSV into a list of row dicts using the canonical schema loader.
+    Returns only rows with data_status != 'partial' (complete rows only).
+    Partial-row warnings are counted and logged but rows are not omitted entirely
+    from caller — consumers still receive them; analysis functions decide further.
+    Sorted by ts_ms ascending (done by load_path_file).
     """
-    rows = []
-    try:
-        with _open_path_file(p) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    rows.append({
-                        "ts_ms":      int(row["ts_ms"]),
-                        "price_usd":  float(row["price_usd"]),
-                        "side":       row.get("side", ""),
-                        "sol_amount": float(row.get("sol_amount") or 0),
-                        "vsol":       float(row.get("vsol") or 0),
-                        "source":     row.get("source", "live"),
-                    })
-                except (ValueError, KeyError):
-                    pass
-    except Exception as e:
-        log.warning("Failed to load %s: %s", p.name, e)
-        return []
-    rows.sort(key=lambda r: r["ts_ms"])
-    return rows
+    rows, warnings = load_path_file(p)
+    if warnings:
+        partial_count = sum(1 for w in warnings if "partial" in w or "missing" in w)
+        log.debug("load_path_file %s: %d warnings (%d partial-row)",
+                  p.name, len(warnings), partial_count)
+
+    # Convert canonical string fields to typed values expected by analysis functions
+    typed: list[dict] = []
+    for row in rows:
+        try:
+            typed.append({
+                "ts_ms":      int(row["ts_ms"]),
+                "price_usd":  float(row["price_usd"]),
+                "side":       row.get("side", "unknown"),
+                "sol_amount": float(row.get("sol_amount") or 0),
+                "vsol":       float(row.get("vsol") or 0),
+                "source":     row.get("source", "unknown"),
+                "backfilled": row.get("backfilled", "false"),
+                "data_status": row.get("data_status", "ok"),
+            })
+        except (ValueError, KeyError):
+            pass
+    return typed
 
 
 def _discover_paths(research_paths_dir: Path, live_only: bool) -> dict[str, Path]:

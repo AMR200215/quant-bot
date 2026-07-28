@@ -130,3 +130,28 @@ PATH_SUB_SAMPLE_INTERVAL = 60   # seconds between concurrent-subscription sample
 # Graduation detection: pump.fun bonding curve holds ~85 SOL at graduation.
 # If pp_vsol >= this, the token is near/past graduation → social_alert_grad.
 GRAD_VSOL_THRESHOLD = 79.0
+
+# ---------------------------------------------------------------------------
+# RF1 — bonding-curve oracle constants
+# ---------------------------------------------------------------------------
+SOL_USD_MAX_CACHE_AGE_S = 120    # reject SOL/USD price older than this (seconds)
+CURVE_BATCH_SIZE        = 100    # mints per getMultipleAccounts call
+GRAD_SOL_UI             = 115.0  # SOL in curve at graduation (virtual reserves)
+
+# ---------------------------------------------------------------------------
+# RF6 — Smart-money versioning
+# ---------------------------------------------------------------------------
+# Base directory where smart_wallets_vN.json and metadata files live.
+# Same directory as smart_wallets.json for backward compat.
+SMART_WALLETS_BASE_DIR = Path(__file__).parent
+
+# Set to a specific integer version to pin the loaded wallet set.
+# 0 / empty string → load smart_wallets_latest.json (always current).
+SMART_MONEY_PINNED_VERSION: "int | None" = int(os.getenv("SMART_MONEY_PINNED_VERSION", "0")) or None
+
+# Forward-validation window (ISO timestamps).  Empty string = not set.
+FORWARD_VALIDATION_START = os.getenv("FORWARD_VALIDATION_START", "")
+FORWARD_VALIDATION_END   = os.getenv("FORWARD_VALIDATION_END", "")
+
+# Ruleset version tag written to research_tokens rows (informational).
+V8_RULESET_VERSION = os.getenv("V8_RULESET_VERSION", "")

@@ -471,6 +471,87 @@ def main():
     _verdict("creator_holds_pct available",
              [r for r in complete_nopart if r.get("creator_holds_pct") is not None])
 
+    # ── 9. [RF4] Realert feature analysis ────────────────────────────────────
+    realert_rows = [r for r in all_rows if r.get("realert_count") is not None]
+    if realert_rows:
+        print(f"\n{sep}")
+        print("9. [RF4] REALERT FEATURE ANALYSIS")
+        print(sep)
+
+        def _realert_bucket(count):
+            if count is None or count == 0:
+                return "0"
+            if count == 1:
+                return "1"
+            if count == 2:
+                return "2"
+            return "3+"
+
+        # Complete rows only for outcome analysis
+        complete_realert = [r for r in realert_rows if r.get("outcome_complete")]
+        buckets_ra: dict = defaultdict(list)
+        for r in complete_realert:
+            bkt = _realert_bucket(r.get("realert_count", 0))
+            buckets_ra[bkt].append(r)
+
+        print(f"\n  Rows with realert_count field: {len(realert_rows)} total, "
+              f"{len(complete_realert)} outcome_complete")
+
+        if complete_realert:
+            print(f"\n  {'Bucket':>5}  {'n':>5}  {'valid%':>7}  {'med peak':>10}  "
+                  f"{'>=+30%':>6}  {'>=+50%':>6}  {'>=+100%':>7}  {'med TTP':>8}  {'med prog':>9}")
+            print(f"  {'-----':>5}  {'-----':>5}  {'------':>7}  {'-'*10}  "
+                  f"{'------':>6}  {'------':>6}  {'-------':>7}  {'-------':>8}  {'--------':>9}")
+
+            ttp_map = {"T1m": 1, "T3m": 3, "T5m": 5, "T10m": 10,
+                       "T15m": 15, "T20m": 20, "T30m": 30}
+
+            for bkt in ["0", "1", "2", "3+"]:
+                bkt_rows = buckets_ra.get(bkt, [])
+                if not bkt_rows:
+                    continue
+                pcts  = [_peak(r) for r in bkt_rows if _peak(r) is not None]
+                valid_pct = f"{len(pcts)/len(bkt_rows)*100:.0f}%" if bkt_rows else "n/a"
+                med   = f"{median(pcts):+.1f}%" if pcts else "n/a"
+                ge30  = sum(1 for p in pcts if p >= 30)
+                ge50  = sum(1 for p in pcts if p >= 50)
+                ge100 = sum(1 for p in pcts if p >= 100)
+                ttp_vals = [ttp_map[r["peak_interval"]] for r in bkt_rows
+                            if r.get("peak_interval") and r["peak_interval"] in ttp_map]
+                med_ttp = f"{median(ttp_vals):.0f}min" if ttp_vals else "n/a"
+                prog_vals = [r["progress_at_signal"] for r in bkt_rows
+                             if r.get("progress_at_signal") is not None]
+                med_prog = f"{median(prog_vals):.2f}" if prog_vals else "n/a"
+                print(f"  {bkt:>5}  {len(bkt_rows):>5}  {valid_pct:>7}  {med:>10}  "
+                      f"{ge30:>6}  {ge50:>6}  {ge100:>7}  {med_ttp:>8}  {med_prog:>9}")
+
+            # Overall any_realert vs no_realert
+            any_realert  = [r for r in complete_realert if (r.get("realert_count") or 0) > 0]
+            no_realert   = [r for r in complete_realert if (r.get("realert_count") or 0) == 0]
+            print()
+            _stats("any_realert  (count>=1)", any_realert)
+            _stats("no_realert   (count==0)", no_realert)
+
+            # realert_times distribution — median gap between alert and first realert
+            gaps = []
+            for r in any_realert:
+                times = r.get("realert_times") or []
+                alert_t = r.get("alert_time")
+                if times and alert_t:
+                    try:
+                        t0 = datetime.fromisoformat(alert_t.replace("Z", "+00:00"))
+                        t1 = datetime.fromisoformat(str(times[0]).replace("Z", "+00:00"))
+                        gaps.append(abs((t1 - t0).total_seconds() / 60))
+                    except Exception:
+                        pass
+            if gaps:
+                print(f"\n  Median time to first realert: {median(gaps):.0f}min  "
+                      f"(n={len(gaps)} tokens with realert)")
+        else:
+            print("  No outcome_complete rows with realert data yet.")
+    else:
+        print(f"\n  (No realert_count data yet — RF4 migration may be pending)")
+
     # ── CSV output ────────────────────────────────────────────────────────────
     if args.output:
         out = Path(args.output)

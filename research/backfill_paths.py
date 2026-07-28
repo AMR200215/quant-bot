@@ -45,7 +45,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("backfill_paths")
 
-_CSV_HEADER  = ["ts_ms", "price_usd", "side", "sol_amount", "vsol", "source"]
+# RF5: use canonical schema header
+from research.path_schema import PATH_HEADER as _CSV_HEADER, PATH_SCHEMA_VERSION as _SCHEMA_VER
+
 _SOL_MINT    = "So11111111111111111111111111111111111111112"
 _LAMPORTS    = 1_000_000_000
 _MAX_SIGS    = 1000   # getSignaturesForAddress limit
@@ -151,17 +153,26 @@ def _parse_txs(sigs: list, parse_url: str) -> list:
         return []
 
 
-def _extract_rows(parsed_txs: list, mint: str, sol_price: float) -> list:
+def _extract_rows(parsed_txs: list, mint: str, sol_price: float,
+                  research_event_id: str = "") -> list:
     """
-    Convert Helius enhanced tx list → CSV rows.
+    Convert Helius enhanced tx list → canonical RF5 row dicts.
 
     Price derivation:
       sol_amount = |native balance change of fee payer| in SOL
       token_amount = tokenTransfers for this mint received/sent by fee payer
       price_usd = (sol_amount / token_amount) * sol_price   [per token]
     vsol is not available from history → stored as 0.
-    side: "buy" if feePayer receives token, "sell" if feePayer sends token.
+
+    RF5 notes:
+      source      = "backfill_helius"
+      backfilled  = "true"
+      side        = "unknown"  — direction can't be reliably inferred from Helius
+                                  enhanced TX for most cases
+      venue_state = "UNKNOWN"
+      event_id    = deterministic hash of "backfill:{mint}:{ts_ms}"
     """
+    import hashlib as _hashlib
     rows = []
     for tx in parsed_txs:
         if not isinstance(tx, dict):
@@ -174,22 +185,16 @@ def _extract_rows(parsed_txs: list, mint: str, sol_price: float) -> list:
         ts_ms = int(ts) * 1000
         fee_payer = tx.get("feePayer", "")
 
-        # Determine side and token amount
+        # Determine token amount (side stored as "unknown" per RF5 spec)
         token_amount  = 0.0
-        side          = ""
         for tt in (tx.get("tokenTransfers") or []):
             if tt.get("mint") != mint:
                 continue
             raw_amt = float(tt.get("tokenAmount") or 0)
-            if tt.get("toUserAccount") == fee_payer:
-                side         = "buy"
+            if tt.get("toUserAccount") == fee_payer or tt.get("fromUserAccount") == fee_payer:
                 token_amount = raw_amt
                 break
-            elif tt.get("fromUserAccount") == fee_payer:
-                side         = "sell"
-                token_amount = raw_amt
-                break
-        if not side or token_amount == 0:
+        if token_amount == 0:
             continue
 
         # SOL amount — absolute native balance change for fee payer
@@ -206,22 +211,48 @@ def _extract_rows(parsed_txs: list, mint: str, sol_price: float) -> list:
                     sol_amount += abs(float(nt.get("amount") or 0)) / _LAMPORTS
 
         price_usd = (sol_amount / token_amount * sol_price) if token_amount > 0 else 0.0
+        price_sol = round(price_usd / sol_price, 12) if sol_price > 0 else 0.0
 
-        rows.append([ts_ms, round(price_usd, 12), side, round(sol_amount, 9), 0.0, "backfill"])
+        # Deterministic event_id
+        event_id = _hashlib.sha256(f"backfill:{mint}:{ts_ms}".encode()).hexdigest()[:32]
+
+        # Canonical RF5 dict — fields in PATH_HEADER order
+        rows.append({
+            "schema_version":    str(_SCHEMA_VER),
+            "research_event_id": research_event_id,
+            "event_id":          event_id,
+            "ts_ms":             ts_ms,
+            "price_usd":         round(price_usd, 12),
+            "price_sol":         price_sol,
+            "side":              "unknown",        # RF5: can't reliably infer from Helius
+            "token_amount":      round(token_amount, 0),
+            "sol_amount":        round(sol_amount, 9),
+            "vsol":              0.0,              # not available in history
+            "source":            "backfill_helius",
+            "venue_state":       "UNKNOWN",
+            "backfilled":        "true",
+            "data_status":       "ok",
+        })
 
     # Sort by timestamp ascending
-    rows.sort(key=lambda r: r[0])
+    rows.sort(key=lambda r: r["ts_ms"])
     return rows
 
 
 def _write_csv(mint: str, rows: list, out_dir: Path) -> str:
-    """Write rows to out_dir/<mint>.csv (gzipped). Returns relative path."""
+    """
+    Write canonical RF5 rows to out_dir/<mint>.csv.gz.
+    rows is a list of dicts with keys matching PATH_HEADER.
+    Returns relative path.
+    """
+    from research.path_schema import PATH_HEADER
     out_dir.mkdir(parents=True, exist_ok=True)
     gz_path = out_dir / f"{mint}.csv.gz"
     with gzip.open(gz_path, "wt", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(_CSV_HEADER)
-        writer.writerows(rows)
+        writer.writerow(PATH_HEADER)
+        for row in rows:
+            writer.writerow([row.get(col, "") for col in PATH_HEADER])
     # relative path for DB (callers check .csv or .csv.gz)
     return f"logs/research_paths/backfill/{mint}.csv.gz"
 
@@ -269,7 +300,8 @@ def _process_token(tok: dict, rpc_url: str, parse_url: str, sol_price: float,
         credits_used = len(batch)
         credit_budget[0] -= credits_used
         total_parsed += credits_used
-        rows = _extract_rows(parsed, mint, sol_price)
+        rows = _extract_rows(parsed, mint, sol_price,
+                             research_event_id=tok.get("id", ""))
         all_rows.extend(rows)
         time.sleep(_RATE_SLEEP)
         if credit_budget[0] <= 0:

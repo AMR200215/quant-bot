@@ -13,11 +13,21 @@ Alarms:
       attempts in 3h → "live pipeline silent: last block reasons: <top 3>"
       Detects Bug-1-class silent deaths within 3h instead of 3 days.
 
+Extended pipeline timestamps (set via update_health_timestamp):
+  _last_tg_connected          — last time TG client connected
+  _last_tg_message            — last TG message received
+  _last_queue_alert_written   — last write to signal_queue.jsonl by scanner
+  _last_queue_alert_committed — last dequeue by FileQueueListener
+  _last_research_insert       — last successful Supabase insert by tracker
+  _last_pc1_path_event        — last time peak_tracker opened a new CSV
+  _last_paper_decision        — last time scanner made a screener decision
+
 Usage (from scanner.py / portfolio.py):
     from memecoin.health_monitor import (
         bump_tg_message, bump_live_eligible,
         bump_preflight_no_price, bump_creator_fail,
         bump_social_alert_paper, bump_live_attempt, bump_gate_block,
+        update_health_timestamp,
     )
 """
 
@@ -32,6 +42,26 @@ log = logging.getLogger(__name__)
 # Module-level state (thread-safe via _lock)
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Extended pipeline timestamps — updated via update_health_timestamp()
+# ---------------------------------------------------------------------------
+_pipeline_timestamps: dict[str, float] = {
+    "_last_tg_connected":          0.0,
+    "_last_tg_message":            0.0,
+    "_last_queue_alert_written":   0.0,
+    "_last_queue_alert_committed": 0.0,
+    "_last_research_insert":       0.0,
+    "_last_pc1_path_event":        0.0,
+    "_last_paper_decision":        0.0,
+}
+
+_VALID_TIMESTAMP_KEYS = frozenset(_pipeline_timestamps.keys())
+
+# Stall thresholds
+_QUEUE_STALL_S   = 20 * 60   # 20 min: queue listener not committing while TG is live
+_INSERT_STALL_S  = 30 * 60   # 30 min: no Supabase insert while queue is flowing
+_PC1_STALL_S     = 60 * 60   # 1 h: no path event while inserts are flowing
 
 # Timestamps of recent events (kept for sliding-window rate calcs)
 _TG_WINDOW_SEC      = 2 * 3600    # 2h TG silence alarm
@@ -105,6 +135,23 @@ def bump_creator_attempt():
     """Call on every creator lookup attempt to track the denominator."""
     with _lock:
         _creator_total_times.append(time.time())
+
+
+def update_health_timestamp(key: str, ts: float):
+    """
+    Update a named pipeline timestamp.
+    Called from scanner, tracker, peak_tracker, FileQueueListener.
+
+    Valid keys:
+        _last_tg_connected, _last_tg_message,
+        _last_queue_alert_written, _last_queue_alert_committed,
+        _last_research_insert, _last_pc1_path_event, _last_paper_decision
+    """
+    if key not in _VALID_TIMESTAMP_KEYS:
+        log.debug("update_health_timestamp: unknown key %r (ignored)", key)
+        return
+    with _lock:
+        _pipeline_timestamps[key] = ts
 
 
 # F3 — live-drought alarm bumps
@@ -202,13 +249,50 @@ def _check():
         cutoff_drought = now - _DROUGHT_PAPER_WINDOW
         recent_reasons = [r for t, r in _gate_block_log if t >= cutoff_drought]
 
-    # Alarm (a)
-    if tg_count == 0 and _should_fire("tg_silence"):
-        log.warning("HEALTH ALARM: no TG message in 2h — feed may be disconnected")
-        _send_alert(
-            "🚨 HEALTH: No Telegram message received in 2h. "
-            "TG monitor may be disconnected."
-        )
+        # Pipeline stall timestamps snapshot
+        pts = dict(_pipeline_timestamps)
+
+    # Alarm (a) — distinguish TG states using telegram_monitor state machine
+    tg_state_str = "UNKNOWN"
+    try:
+        from memecoin.telegram_monitor import get_tg_state, TGState
+        tg_info = get_tg_state()
+        tg_state_str = tg_info.get("state", "UNKNOWN")
+    except Exception:
+        pass
+
+    if tg_count == 0:
+        if tg_state_str == "AUTH_REQUIRED":
+            if _should_fire("tg_auth_required"):
+                log.warning("HEALTH ALARM: TELEGRAM_AUTH_REQUIRED — session expired")
+                _send_alert(
+                    "TELEGRAM_AUTH_REQUIRED: session expired or missing. "
+                    "SSH to server and run: python -m research.tg_auth"
+                )
+        elif tg_state_str == "THREAD_DEAD":
+            if _should_fire("tg_thread_dead"):
+                log.warning("HEALTH ALARM: Listener thread dead — tg-monitor not alive")
+                _send_alert(
+                    "HEALTH: Listener thread dead — tg-monitor thread not alive. "
+                    "Restart quantbot."
+                )
+        elif tg_state_str == "CONNECTED_BUT_STALE":
+            if _should_fire("tg_stale"):
+                log.warning("HEALTH ALARM: TG feed connected but channel quiet for >2h")
+                _send_alert(
+                    "HEALTH: TG feed connected but channel quiet for >2h. "
+                    "Check pumpdotfunalert channel manually."
+                )
+        else:
+            if _should_fire("tg_silence"):
+                log.warning(
+                    "HEALTH ALARM: no TG message in 2h — feed may be disconnected (state=%s)",
+                    tg_state_str,
+                )
+                _send_alert(
+                    f"HEALTH: No Telegram message in 2h (state={tg_state_str}). "
+                    "TG monitor may be disconnected."
+                )
 
     # Alarm (b)
     if pf_rate is not None and pf_rate > PREFLIGHT_NO_PRICE_ALARM_PCT:
@@ -255,9 +339,68 @@ def _check():
                 drought_papers, top_str,
             )
             _send_alert(
-                f"🚨 LIVE DROUGHT: {drought_papers} social_alert paper trades, 0 live buy attempts in 3h.\n"
+                f"LIVE DROUGHT: {drought_papers} social_alert paper trades, 0 live buy attempts in 3h.\n"
                 f"Last block reasons: {top_str}\n"
                 f"Check entry gate / kill switch / preflight."
+            )
+
+    # Alarm (f) — Queue listener stalled (no committed alerts for >20 min while TG feed is live)
+    tg_is_live = tg_state_str in ("CONNECTED", "CONNECTED_BUT_STALE")
+    last_written   = pts["_last_queue_alert_written"]
+    last_committed = pts["_last_queue_alert_committed"]
+    if (
+        tg_is_live
+        and last_written > 0
+        and last_committed > 0
+        and now - last_committed > _QUEUE_STALL_S
+    ):
+        if _should_fire("queue_listener_stalled"):
+            stale_min = int((now - last_committed) / 60)
+            log.warning(
+                "HEALTH ALARM: Queue listener stalled — no committed alert for %dm while TG feed is live",
+                stale_min,
+            )
+            _send_alert(
+                f"HEALTH: Queue listener stalled — no committed alert for {stale_min}m "
+                f"while TG feed is live. Check research-file-queue thread."
+            )
+
+    # Alarm (g) — Research insert stalled (no Supabase insert for >30 min while queue is flowing)
+    last_insert = pts["_last_research_insert"]
+    if (
+        last_committed > 0
+        and last_insert > 0
+        and now - last_insert > _INSERT_STALL_S
+        and now - last_committed < _QUEUE_STALL_S   # queue is flowing
+    ):
+        if _should_fire("research_insert_stalled"):
+            stale_min = int((now - last_insert) / 60)
+            log.warning(
+                "HEALTH ALARM: Research insert stalled — no Supabase insert for %dm while queue is flowing",
+                stale_min,
+            )
+            _send_alert(
+                f"HEALTH: Research insert stalled — no Supabase insert for {stale_min}m "
+                f"while queue is flowing. Check Supabase connection / tracker thread."
+            )
+
+    # Alarm (h) — PC1 collector stalled (no path events for >1h while inserts are flowing)
+    last_pc1    = pts["_last_pc1_path_event"]
+    if (
+        last_insert > 0
+        and last_pc1 > 0
+        and now - last_pc1 > _PC1_STALL_S
+        and now - last_insert < _INSERT_STALL_S   # inserts are flowing
+    ):
+        if _should_fire("pc1_collector_stalled"):
+            stale_min = int((now - last_pc1) / 60)
+            log.warning(
+                "HEALTH ALARM: PC1 collector stalled — no path event for %dm while inserts are flowing",
+                stale_min,
+            )
+            _send_alert(
+                f"HEALTH: PC1 collector stalled — no path event for {stale_min}m "
+                f"while inserts are flowing. Check peak_tracker thread."
             )
 
 

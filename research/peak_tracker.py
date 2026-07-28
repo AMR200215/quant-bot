@@ -1,7 +1,7 @@
 """
 PeakTracker — subscribes to PumpPortal token-trade stream for newly alerted
 tokens and records:
-  • The highest price seen in the first TICK_PEAK_WINDOW_S seconds (15 min).
+  • The highest price seen in a tiered watch window (15 min base, up to 60 min).
   • Every trade tick to logs/research_paths/YYYY-MM-DD/<mint>.csv for path analysis.
 
 Columns written to Supabase (must exist):
@@ -9,6 +9,12 @@ Columns written to Supabase (must exist):
   pct_change_peak_3m FLOAT  — % above entry price at alert time
   t_peak_3m_s        INT    — seconds after alert when peak occurred
   path_file          TEXT   — relative path of the per-token trade CSV
+
+RF3 tiered-window columns (separate update dict, PGRST204-safe):
+  path_extension_count  INT
+  path_stop_reason      TEXT
+  path_watch_duration_s INT
+  path_valid_tick_count INT
 
 CSV path columns: ts_ms, price_usd, side, sol_amount, vsol
 
@@ -49,7 +55,48 @@ log = logging.getLogger(__name__)
 
 _SOL_MINT = "So11111111111111111111111111111111111111112"
 _PEAK_COLS = ("price_peak_3m", "pct_change_peak_3m", "t_peak_3m_s")
+
 _CSV_HEADER = ["ts_ms", "price_usd", "side", "sol_amount", "vsol"]
+
+# ── RF3 tiered-window constants ───────────────────────────────────────────────
+BASE_WINDOW_S       = 900   # 15 min
+EXTENSION_INCREMENT_S = 900   # 15 min per extension
+HARD_CAP_S          = 3600  # 60 min absolute maximum
+_MAX_EXTENSIONS     = (HARD_CAP_S - BASE_WINDOW_S) // EXTENSION_INCREMENT_S  # = 3
+
+# Extension condition: last valid tick must be within this many seconds of now
+_RECENT_TICK_WINDOW_S = 180  # 3 minutes
+
+
+def _should_extend(
+    now: float,
+    expiry: float,
+    extension_count: int,
+    last_tick_ts: float,
+    last_valid_price: float,
+    session_peak_price: float,
+) -> bool:
+    """
+    Pure function — can be tested without asyncio.
+
+    Returns True iff both extension conditions are satisfied AND the hard cap
+    has not been reached:
+      1. A valid price tick occurred within the last _RECENT_TICK_WINDOW_S seconds.
+      2. last_valid_price >= 0.50 * session_peak_price.
+
+    Missing data (last_tick_ts == 0 or last_valid_price == 0) counts as NOT active.
+    """
+    if extension_count >= _MAX_EXTENSIONS:
+        return False
+    # Condition 1: recent tick
+    if last_tick_ts <= 0 or (now - last_tick_ts) > _RECENT_TICK_WINDOW_S:
+        return False
+    # Condition 2: price at least 50% of session peak
+    if session_peak_price <= 0 or last_valid_price <= 0:
+        return False
+    if last_valid_price < 0.50 * session_peak_price:
+        return False
+    return True
 
 
 class PeakTracker:
@@ -93,22 +140,43 @@ class PeakTracker:
         token_address: str,
         alert_time: datetime,
         entry_price: Optional[float],
+        research_event_id: str = "",
+        event_id: str = "",
     ):
         """
         Called from tracker thread after a successful INSERT.
-        Adds the token to the 15-min tick-peak tracking window.
+        Adds the token to the tiered tick-peak tracking window.
+
+        research_event_id: UUID of the research_tokens row (RF5 — empty string if unknown).
+        event_id: deterministic event ID (RF5 — empty string if unknown).
+        Both default to "" so existing callers don't break.
         """
         with self._lock:
             if token_address in self._tracked:
                 return
             ep = entry_price or 0.0
+            now = time.time()
+            alert_ts = alert_time.timestamp()
             self._tracked[token_address] = {
-                "entry_price": ep,
-                "max_price":   ep,
-                "max_ts":      alert_time.timestamp(),
-                "alert_ts":    alert_time.timestamp(),
-                "expiry":      time.time() + TICK_PEAK_WINDOW_S,
-                "done":        False,
+                # Core price tracking
+                "entry_price":          ep,
+                "max_price":            ep,
+                "max_ts":               alert_ts,
+                "alert_ts":             alert_ts,
+                # RF5 path schema IDs
+                "research_event_id":    research_event_id,
+                "event_id":             event_id,
+                # RF3 tiered-window fields
+                "expiry":               now + BASE_WINDOW_S,
+                "base_expiry":          now + BASE_WINDOW_S,
+                "done":                 False,
+                "extension_count":      0,
+                "last_tick_ts":         0.0,
+                "last_valid_price":     0.0,
+                "stop_reason":          None,
+                "valid_tick_count":     0,
+                "disconnection_periods": [],
+                "ws_connected":         True,
             }
         with self._pending_lock:
             self._pending.append(token_address)
@@ -257,6 +325,31 @@ class PeakTracker:
             else:
                 log.debug("PeakTracker: path_file update failed for %s: %s", addr[:8], e)
 
+    def _stop_token(self, addr: str, reason: str):
+        """
+        Immediately mark a token as done with a given stop_reason.
+        Called for out-of-band termination events:
+          - curve_account_gone (stub — RF1 hook)
+          - graduated_and_stream_migrated (stub)
+          - no_valid_venue (stub)
+          - websocket_failure (after 5 failed reconnect attempts)
+          - process_restart (set on _write_peak if stop_reason is still None)
+        """
+        with self._lock:
+            st = self._tracked.get(addr)
+            if st is None or st.get("done"):
+                return
+            st["done"] = True
+            st["stop_reason"] = reason
+            snapshot = dict(st)
+
+        self._close_csv(addr)
+        loop = self._loop
+        if loop and not loop.is_closed():
+            loop.run_in_executor(None, self._write_peak, addr, snapshot)
+        else:
+            self._write_peak(addr, snapshot)
+
     # ── Async loops ───────────────────────────────────────────────────────────
 
     async def _ws_loop(self):
@@ -265,6 +358,7 @@ class PeakTracker:
         Subscribes to subscribeTokenTrade for each tracked token.
         Reconnects on any error.
         """
+        _reconnect_attempts = 0
         while True:
             try:
                 import websockets as _ws_lib
@@ -275,6 +369,13 @@ class PeakTracker:
                     close_timeout=5,
                 ) as ws:
                     log.info("PeakTracker: PP WebSocket connected")
+                    _reconnect_attempts = 0
+
+                    # Mark all tracked tokens as ws_connected after reconnect
+                    with self._lock:
+                        for st in self._tracked.values():
+                            if not st["done"] and not st.get("ws_connected"):
+                                st["ws_connected"] = True
 
                     # Re-subscribe all live tokens after reconnect
                     with self._lock:
@@ -299,21 +400,46 @@ class PeakTracker:
                                 with self._lock:
                                     st = self._tracked.get(mint)
                                     if st and not st["done"] and now < st["expiry"]:
-                                        if price is not None and price > st["max_price"]:
-                                            st["max_price"] = price
-                                            st["max_ts"]    = now
-                                # Write tick to CSV (outside lock, asyncio thread only)
+                                        if price is not None:
+                                            # RF3: update tick tracking fields
+                                            st["last_tick_ts"]     = now
+                                            st["last_valid_price"] = price
+                                            st["valid_tick_count"] = st.get("valid_tick_count", 0) + 1
+                                            if price > st["max_price"]:
+                                                st["max_price"] = price
+                                                st["max_ts"]    = now
+                                # Write tick to CSV — RF5 canonical row (outside lock, asyncio thread only)
                                 if price is not None:
                                     csv_entry = self._csv_files.get(mint)
                                     if csv_entry:
-                                        side       = msg.get("txType", "")
+                                        side       = msg.get("txType", "") or "unknown"
                                         sol_amount = float(msg.get("solAmount") or 0)
                                         vsol       = float(msg.get("vSolInBondingCurve") or 0)
                                         ts_ms      = int(now * 1000)
+                                        price_sol  = round(price / self._sol_price, 12) if self._sol_price > 0 else 0.0
+                                        # Retrieve IDs from state (set in schedule_token)
+                                        with self._lock:
+                                            _st = self._tracked.get(mint, {})
+                                            _rev_id = _st.get("research_event_id", "")
+                                            _ev_id  = _st.get("event_id", "")
+                                        # Canonical RF5 row — column order matches PATH_HEADER
                                         try:
-                                            csv_entry["writer"].writerow(
-                                                [ts_ms, round(price, 12), side, sol_amount, vsol]
-                                            )
+                                            csv_entry["writer"].writerow([
+                                                _SCHEMA_VER,          # schema_version
+                                                _rev_id,              # research_event_id
+                                                _ev_id,               # event_id
+                                                ts_ms,                # ts_ms
+                                                round(price, 12),     # price_usd
+                                                price_sol,            # price_sol
+                                                side,                 # side
+                                                0,                    # token_amount (not from PP)
+                                                sol_amount,           # sol_amount
+                                                vsol,                 # vsol
+                                                "live_pp",            # source
+                                                "CURVE_ACTIVE",       # venue_state
+                                                "false",              # backfilled
+                                                "ok",                 # data_status
+                                            ])
                                         except Exception:
                                             pass
                             except Exception:
@@ -347,11 +473,23 @@ class PeakTracker:
                     await asyncio.gather(_recv(), _drain_pending())
 
             except Exception as e:
-                log.warning("PeakTracker WS: %s — reconnect in 3s", e)
+                _reconnect_attempts += 1
+                log.warning("PeakTracker WS: %s — reconnect in 3s (attempt %d)",
+                            e, _reconnect_attempts)
+                # After 5 failed reconnects, mark ws_connected=False on all live tokens
+                if _reconnect_attempts >= 5:
+                    with self._lock:
+                        for addr, st in self._tracked.items():
+                            if not st["done"] and st.get("ws_connected", True):
+                                st["ws_connected"] = False
+                                log.warning(
+                                    "PeakTracker: marking %s websocket_failure after 5 reconnect attempts",
+                                    addr[:8],
+                                )
                 await asyncio.sleep(3)
 
     async def _finalise_loop(self):
-        """Every 10s: write peaks for expired tokens, sample sub counts, purge state."""
+        """Every 10s: check extension conditions, write peaks for expired tokens, purge state."""
         _last_sol_refresh = 0.0
         loop = asyncio.get_event_loop()
 
@@ -371,13 +509,47 @@ class PeakTracker:
                 self._sub_samples.append(active)
                 self._last_sub_sample = now
 
-            # Collect expired tracking windows
-            expired = []
+            # Collect tokens whose current expiry has been reached
+            to_extend = []    # (addr, snapshot) — extension conditions met
+            to_finalise = []  # (addr, snapshot) — done, write peak
+
             with self._lock:
                 for addr, st in list(self._tracked.items()):
-                    if not st["done"] and now >= st["expiry"]:
+                    if st["done"] or now < st["expiry"]:
+                        continue
+
+                    # Expiry reached — check extension conditions
+                    should_ext = _should_extend(
+                        now=now,
+                        expiry=st["expiry"],
+                        extension_count=st["extension_count"],
+                        last_tick_ts=st["last_tick_ts"],
+                        last_valid_price=st["last_valid_price"],
+                        session_peak_price=st["max_price"],
+                    )
+
+                    if should_ext:
+                        # Extend the window
+                        st["extension_count"] += 1
+                        st["expiry"] += EXTENSION_INCREMENT_S
+                        new_expiry_min = (st["expiry"] - st["alert_ts"]) / 60
+                        log.info(
+                            "PeakTracker EXTEND %s | ext=%d | new_expiry=T+%.0fmin",
+                            addr[:8], st["extension_count"], new_expiry_min,
+                        )
+                        # Don't finalise yet — continue collecting
+                    else:
+                        # Determine stop reason
+                        if st["extension_count"] >= _MAX_EXTENSIONS:
+                            stop_reason = "hard_cap_reached"
+                        elif st["extension_count"] > 0:
+                            stop_reason = "extension_condition_failed"
+                        else:
+                            stop_reason = "base_window_expired"
+                        st["stop_reason"] = stop_reason
                         st["done"] = True
-                        expired.append((addr, dict(st)))
+                        to_finalise.append((addr, dict(st)))
+
                 # Purge done entries older than 1 h
                 old = [a for a, s in self._tracked.items()
                        if s["done"] and s["expiry"] < now - 3600]
@@ -385,7 +557,7 @@ class PeakTracker:
                     del self._tracked[a]
 
             # Close CSVs and write peaks for expired tokens
-            for addr, st in expired:
+            for addr, st in to_finalise:
                 self._close_csv(addr)
                 await loop.run_in_executor(None, self._write_peak, addr, st)
 
@@ -423,6 +595,11 @@ class PeakTracker:
     def _write_peak(self, addr: str, st: dict):
         if not self._sb:
             return
+
+        # If stop_reason was never set (e.g. process restart mid-window), label it
+        if st.get("stop_reason") is None:
+            st["stop_reason"] = "process_restart"
+
         entry    = st["entry_price"]
         peak     = st["max_price"]
         alert_ts = st["alert_ts"]
@@ -431,6 +608,7 @@ class PeakTracker:
         pct_peak = ((peak / entry - 1) * 100) if (entry > 0 and peak > entry) else None
         t_peak_s = int(max_ts - alert_ts)      if (peak > entry) else None
 
+        # Primary peak update (existing columns)
         update = {
             "price_peak_3m":       round(peak, 12) if peak > 0 else None,
             "pct_change_peak_3m":  round(pct_peak, 2) if pct_peak is not None else None,
@@ -445,9 +623,14 @@ class PeakTracker:
                     .update(_update) \
                     .eq("token_address", addr) \
                     .execute()
-                log.info("PeakTracker %s | tick_peak=%.2f%% at T+%ds",
-                         addr[:12], pct_peak or 0, t_peak_s or 0)
-                return
+                log.info("PeakTracker %s | tick_peak=%.2f%% at T+%ds | "
+                         "ext=%d stop=%s dur=%ds ticks=%d",
+                         addr[:12], pct_peak or 0, t_peak_s or 0,
+                         st.get("extension_count", 0),
+                         st.get("stop_reason", "?"),
+                         int(time.time() - alert_ts),
+                         st.get("valid_tick_count", 0))
+                break
             except Exception as e:
                 e_str = str(e).lower()
                 if "pgrst204" in e_str or "schema cache" in e_str:
@@ -465,10 +648,47 @@ class PeakTracker:
                     else:
                         log.warning("PeakTracker schema error (unrecognised col) for %s: %s",
                                     addr[:8], e)
-                        return
+                        break
                 else:
                     log.warning("PeakTracker write error for %s: %s", addr[:8], e)
-                    return
+                    break
+
+        # RF3 extension metadata — separate update dict with PGRST204-safe retry
+        watch_duration_s = int(time.time() - alert_ts)
+        rf3_update = {
+            "path_extension_count":  st.get("extension_count", 0),
+            "path_stop_reason":      st.get("stop_reason"),
+            "path_watch_duration_s": watch_duration_s,
+            "path_valid_tick_count": st.get("valid_tick_count", 0),
+        }
+        _rf3 = dict(rf3_update)
+        for _attempt in range(4):
+            try:
+                self._sb.table("research_tokens") \
+                    .update(_rf3) \
+                    .eq("token_address", addr) \
+                    .execute()
+                break
+            except Exception as e:
+                e_str = str(e).lower()
+                if "pgrst204" in e_str or "schema cache" in e_str:
+                    m       = _re.search(r"'(\w+)'\s+column", str(e))
+                    missing = m.group(1) if m else None
+                    if missing and missing in _rf3:
+                        spool_dropped_field(
+                            token_address=addr, symbol="",
+                            table="research_tokens", column=missing,
+                            value=_rf3[missing], source_file="peak_tracker.py",
+                            insert_context="rf3_update",
+                            alert_time=_alert_time_iso,
+                        )
+                        _rf3 = {k: v for k, v in _rf3.items() if k != missing}
+                    else:
+                        log.debug("PeakTracker RF3 schema error for %s: %s", addr[:8], e)
+                        break
+                else:
+                    log.debug("PeakTracker RF3 update failed for %s: %s", addr[:8], e)
+                    break
 
     # ── Thread entry ──────────────────────────────────────────────────────────
 

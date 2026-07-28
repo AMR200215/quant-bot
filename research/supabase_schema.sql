@@ -30,6 +30,48 @@
 -- ALTER TABLE research_tokens ADD COLUMN IF NOT EXISTS progress_at_signal    FLOAT;
 -- ── PC1 migration (2026-07-18) ───────────────────────────────────────────────
 -- DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN path_file TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- ── RF0 backfill provenance migration (2026-07-28) ───────────────────────────
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN backfilled BOOL DEFAULT FALSE; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN source TEXT DEFAULT 'telegram_live'; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN event_id TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN backfill_batch_id TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- ── RF1 migration (2026-07-28) — per-interval provenance ─────────────────────
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_source_t1m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_status_t1m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_observed_at_t1m TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_source_t3m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_status_t3m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_observed_at_t3m TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_source_t5m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_status_t5m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_observed_at_t5m TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_source_t10m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_status_t10m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_observed_at_t10m TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_source_t15m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_status_t15m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_observed_at_t15m TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_source_t20m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_status_t20m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_observed_at_t20m TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_source_t30m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_status_t30m TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN price_observed_at_t30m TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN venue_state_final TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- ── RF3 migration (2026-07-28) — tiered watch window metadata ────────────────
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN path_extension_count  INT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN path_stop_reason      TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN path_watch_duration_s INT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN path_valid_tick_count INT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- ── RF4 migration (2026-07-28) — realert tracking ────────────────────────────
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN realert_count        INT DEFAULT 0; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN realert_times        JSONB DEFAULT '[]'; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN realert_message_ids  JSONB DEFAULT '[]'; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN last_realert_time    TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- ── RF6 migration (2026-07-28) — versioned smart-money scoring ───────────────
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN smart_money_hit_v1 BOOL; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN smart_money_count_v1 INT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN smart_money_data_ok_v1 BOOL; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 -- ── END MIGRATION ─────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS research_tokens (
@@ -94,6 +136,33 @@ CREATE TABLE IF NOT EXISTS research_tokens (
     price_t20m              FLOAT,
     price_t30m              FLOAT,
 
+    -- ── RF1 per-interval provenance ──────────────────────────────────────────
+    -- source: "curve_account" | "dexscreener" | "jupiter" | NULL
+    -- status: failure_reason (e.g. "curve_rpc_error") or NULL if success
+    -- observed_at: UTC timestamp when the poll fired
+    price_source_t1m        TEXT,
+    price_status_t1m        TEXT,
+    price_observed_at_t1m   TIMESTAMPTZ,
+    price_source_t3m        TEXT,
+    price_status_t3m        TEXT,
+    price_observed_at_t3m   TIMESTAMPTZ,
+    price_source_t5m        TEXT,
+    price_status_t5m        TEXT,
+    price_observed_at_t5m   TIMESTAMPTZ,
+    price_source_t10m       TEXT,
+    price_status_t10m       TEXT,
+    price_observed_at_t10m  TIMESTAMPTZ,
+    price_source_t15m       TEXT,
+    price_status_t15m       TEXT,
+    price_observed_at_t15m  TIMESTAMPTZ,
+    price_source_t20m       TEXT,
+    price_status_t20m       TEXT,
+    price_observed_at_t20m  TIMESTAMPTZ,
+    price_source_t30m       TEXT,
+    price_status_t30m       TEXT,
+    price_observed_at_t30m  TIMESTAMPTZ,
+    venue_state_final       TEXT,           -- CURVE_ACTIVE | GRADUATED | UNKNOWN
+
     -- ── Tick-level peak (15-min window from PumpPortal WebSocket) ───────────
     price_peak_3m           FLOAT,
     pct_change_peak_3m      FLOAT,
@@ -115,6 +184,12 @@ CREATE TABLE IF NOT EXISTS research_tokens (
     time_to_peak_min        FLOAT,
     outcome_complete        BOOL DEFAULT FALSE,
     data_partial            BOOL DEFAULT FALSE,  -- TRUE if any expected poll was NULL at finalize
+
+    -- ── Backfill provenance ───────────────────────────────────────────────────
+    backfilled              BOOL DEFAULT FALSE,          -- TRUE if row came from backfill
+    source                  TEXT DEFAULT 'telegram_live', -- 'telegram_live' | 'telegram_history'
+    event_id                TEXT,                        -- sha256(tg:channel:msg_id:addr)[:16]
+    backfill_batch_id       TEXT,                        -- e.g. 'backfill_20260728_001'
 
     -- ── Trading bot overlap ───────────────────────────────────────────────────
     v7_traded               BOOL DEFAULT FALSE,

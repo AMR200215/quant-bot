@@ -6,6 +6,11 @@ __pycache__/
 *.pyc
 .DS_Store
 
+# Telethon session files — contain auth credentials, never commit
+*.session
+memecoin/data/tg_session
+memecoin/data/tg_session.session
+
 # Large raw data file (re-fetchable)
 data/historical_raw.json
 
