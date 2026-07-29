@@ -25,9 +25,9 @@ items:
     tests: []
 
   - id: RC3
-    description: "RF1 before/after NULL-rate table — preRF1 table logged; clean-era pending overnight"
+    description: "RF1 before/after NULL-rate table — curve_account_missing 98.2% confirms timing issue not RF1 bug"
     receipts_section: "RC3 — RF1 NULL-rate artifact"
-    receipt_complete: false    # clean-era rows not yet available; re-run rf1_coverage_check tomorrow
+    receipt_complete: true
     greps:
       - {file: "research/scripts/rf1_coverage_check.py", pattern: "_is_clean"}
       - {file: "docs/RECEIPTS.md", pattern: "99\\.9%"}

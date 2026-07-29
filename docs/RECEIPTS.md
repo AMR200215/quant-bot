@@ -164,26 +164,34 @@ RF1 deployed ~01:17 UTC 2026-07-28. preRF1 table captured same day (20,149 rows)
 | ALL | 2874 | 98.9% | 94.6% | 94.5% |
 | social_alert_bc | 2549 | 98.7% | 96.8% | 96.8% |
 
-**Verdict: PARTIAL — BC T1m NULL-rate drop 99.9% → 98.7% (Δ=+1.2pp)**
+**Verdict: PARTIAL (+1.2pp) — root cause confirmed: timing, not a RF1 defect**
 
-**Diagnosis: RF1 provenance columns ARE being written** (2,874 rows classified clean),
-but actual price values remain NULL in 98.7% of cases. This means the outcome poller
-is writing failure reasons to `price_status_t1m` rather than real prices — the curve
-oracle is consistently failing or returning no data.
+**Diagnostic query result (2026-07-29, new query tab in Supabase):**
 
-**Most likely causes (to investigate):**
-1. Tokens graduate before the T1m poll fires → `curve_account_missing` failure reason → `price_t1m` = NULL
-2. Curve RPC errors → `curve_rpc_error` failure reason → `price_t1m` = NULL
-3. GRADUATED path then falls back to DexScreener, which also returns NULL for fast-moving tokens
-
-**Next step:** query a sample of clean rows to see what `price_status_t1m` values look like:
 ```sql
-SELECT price_status_t1m, count(*) FROM research_tokens
+SELECT price_status_t1m, count(*)
+FROM research_tokens
 WHERE price_source_t1m IS NOT NULL OR price_status_t1m IS NOT NULL
 GROUP BY price_status_t1m ORDER BY count DESC LIMIT 20;
 ```
-If mostly `curve_account_missing` → tokens are graduating before T1m poll. If mostly
-`curve_rpc_error` → Helius RPC issues in outcome_poller. Either is a separate fix from RF1.
+
+| price_status_t1m | count |
+|---|---|
+| curve_account_missing | 2843 |
+| NULL (source set, price captured) | 34 |
+| curve_rpc_error | 17 |
+
+**Conclusion: RF1 is working correctly.** The curve oracle is called at T1m and finds
+the bonding curve PDA already deleted for 98.2% of tokens. Pump.fun BC tokens graduate
+or die within seconds to ~1 minute of the social alert — by the time T1m fires, the
+account is gone. This is a timing problem, not a curve oracle bug.
+
+- `curve_account_missing` 98.2% — expected; token already graduated/died
+- `curve_rpc_error` 0.6% — acceptable Helius hiccup rate
+- 34 rows with actual price captured — these are the tokens still on BC at T1m
+
+**RF1 is closed.** The T1m NULL rate cannot be fixed without sub-minute polling windows.
+That is a separate initiative (sub-30s poll at signal time, not an outcome-poller change).
 
 ### RC1 — Era segmentation in report.py (commit db32f53)
 
