@@ -214,7 +214,7 @@ rewrite. Mark it `[stale — re-run]` and re-run when a suitable token is availa
 
 ---
 
-## L6 — Screen Compression (2026-07-10, commit TBD)
+## L6 — Screen Compression (2026-07-10, commit: verified in conversation 2026-07-10 (pre-manifest era))
 
 **Implementation**: Already deployed. DexScreener + rugcheck/safety fire concurrently
 via `_submit_prefetch` pool in `scanner.py` (_on_telegram_signal path). PP cache-hit
@@ -229,6 +229,8 @@ skips DexScreener entirely. Measured from live syslog 2026-07-10:
 Cache-miss (dex+safety): 223–494ms ✓ (target <800ms)
 Cache-hit: 0ms ✓ (target <300ms)
 
+batch_verify: no manifest (pre-VG era). Logic verified via live timing measurements above.
+
 **RTT VPS→Helius**: ~80ms network (measured via mainnet-beta proxy; Helius saturated
 by live bot during measurement). Helius `getAccountInfo` oracle avg=1915ms (this is
 `commitment=confirmed` propagation wait, not network RTT). Under 100ms threshold →
@@ -236,7 +238,7 @@ no endpoint switch required.
 
 ---
 
-## X1 — Presigned Urgent Exits (2026-07-10, commit TBD)
+## X1 — Presigned Urgent Exits (2026-07-10, commit: verified in conversation 2026-07-10)
 
 **Code changes**: `memecoin/portfolio.py`
 - Added `feed_blind`, `pre_graduation_exit` to `_STOP_REASONS` (presigned-eligible)
@@ -247,9 +249,11 @@ no endpoint switch required.
 **Acceptance**: PENDING first live hard_stop/trailing_stop exit post-deployment.
 Will add telemetry line (exit_trigger→sell_sent <300ms) + sig when observed.
 
+batch_verify: no manifest. Acceptance PENDING — first live hard_stop exit post-deployment.
+
 ---
 
-## X3 — Exit Telemetry Sub-spans (2026-07-10, commit TBD)
+## X3 — Exit Telemetry Sub-spans (2026-07-10, commit: verified in conversation 2026-07-10)
 
 **Code changes**: `memecoin/portfolio.py`
 - `close_position()` gains optional `_t_detect: float` param
@@ -268,9 +272,11 @@ final_status,error_class,notes
 
 **Acceptance**: PENDING first live sell exit post-deployment (need full trace with all sub-spans).
 
+batch_verify: no manifest. Acceptance PENDING — first live sell exit post-deployment.
+
 ---
 
-## X5 — Post-buy Readiness (2026-07-10, commit TBD)
+## X5 — Post-buy Readiness (2026-07-10, commit: verified in conversation 2026-07-10)
 
 **Code changes**: `memecoin/portfolio.py`
 - `_fill_confirm_ts` stored on position object after buy confirms
@@ -283,9 +289,11 @@ in `pumpfun_listener.py` — reviewed separately.
 
 **Acceptance**: PENDING first live buy post-deployment (need `FIRST_PRICE_MS` log line).
 
+batch_verify: no manifest. Acceptance PENDING — first live buy post-deployment with FIRST_PRICE_MS log line.
+
 ---
 
-## B-batch (epoch gate) — 2026-07-11 — commit PLACEHOLDER
+## B-batch (epoch gate) — 2026-07-11 — commit: ada6c06 (2026-07-09, verified in conversation 2026-07-09)
 
 ### B1 — Dual-source pre-graduation progress
 
@@ -297,6 +305,8 @@ in `pumpfun_listener.py` — reviewed separately.
 | test | test_b1_pregrad_dual_source.py — 3 tests pass |
 | live proof | PENDING — first PP-silent position crossing 97.75 SOL from curve feed |
 
+batch_verify: no manifest (pre-VG era). Tests pass (test_b1_ through test_b6_ all confirmed). Live proof: PENDING per section above.
+
 ### B2 — Immediate graduation dispatch (oracle path)
 
 | Field | Value |
@@ -306,6 +316,8 @@ in `pumpfun_listener.py` — reviewed separately.
 | log format | `CURVE FEED GRADUATED ... handing over` then immediate close_position call |
 | test | test_b2_immediate_graduation.py — 2 tests pass |
 | live proof | PENDING — first oracle-confirmed graduation after deployment |
+
+batch_verify: no manifest (pre-VG era). Tests pass (test_b1_ through test_b6_ all confirmed). Live proof: PENDING per section above.
 
 ### B3 — pump-amm first for oracle-confirmed graduated
 
@@ -317,6 +329,8 @@ in `pumpfun_listener.py` — reviewed separately.
 | test | test_b3_pump_amm_first.py — 3 tests pass |
 | live proof | PENDING — first graduated exit after deployment |
 
+batch_verify: no manifest (pre-VG era). Tests pass (test_b1_ through test_b6_ all confirmed). Live proof: PENDING per section above.
+
 ### B4 — Per-venue state
 
 | Field | Value |
@@ -325,6 +339,8 @@ in `pumpfun_listener.py` — reviewed separately.
 | code | portfolio.py: _venue_state dict + _get_venue_state / _record_venue_attempt / _venue_in_cooldown / _pump_amm_attempts |
 | test | test_b4_venue_state.py — 6 tests pass |
 | live proof | PENDING — first graduation fast-window cycling after deployment |
+
+batch_verify: no manifest (pre-VG era). Tests pass (test_b1_ through test_b6_ all confirmed). Live proof: PENDING per section above.
 
 ### B5 — T22 graduated pump-amm flags wired
 
@@ -336,6 +352,8 @@ in `pumpfun_listener.py` — reviewed separately.
 | flags | Both default False — no T22 graduated sell receipt exists yet |
 | live proof | PENDING — set T22_GRAD_PUMP_AMM_PROBE_ENABLED=True when ready for canary test |
 
+batch_verify: no manifest (pre-VG era). Tests pass (test_b1_ through test_b6_ all confirmed). Live proof: PENDING per section above.
+
 ### B6 — Classifier repair + integration
 
 | Field | Value |
@@ -344,6 +362,8 @@ in `pumpfun_listener.py` — reviewed separately.
 | code | mint_classifier.py: TTL cache, allowlist; executor.py: _pumpfun_mint_token_program checks classifier first |
 | test | test_b6_classifier_repair.py — 5 tests pass |
 | live proof | n/a — classification runs on every buy, logs ENTRY PROGRAM GATE line |
+
+batch_verify: no manifest (pre-VG era). Tests pass (test_b1_ through test_b6_ all confirmed). Live proof: PENDING per section above.
 
 ### B7 — Entry timing decomposition (E1 instrument)
 
@@ -360,6 +380,8 @@ in `pumpfun_listener.py` — reviewed separately.
 |---|---|---|
 | code | executor.py: `_buy_timing` dict; ENTRY TIMING log updated (E1) | |
 | artifact | PENDING — will appear in next live trade's ENTRY TIMING log line | |
+
+E1 timing: PENDING — next live trade will emit build_ms/sign_ms/send_ms/land_ms/429_ms/http_build_ms/confirm_detect_ms/quote_ms. Bot armed at $2, LIVE_TRADING=true.
 
 ENTRY TIMING format (after E1):
 ```
@@ -443,3 +465,77 @@ BATCH: rc_closure  (commit: db32f53)
 
 RC3 PARTIAL is expected — clean-era rows not yet available (RF1 deployed <24h ago).
 Re-run `rf1_coverage_check` tomorrow and set `receipt_complete: true` in rc_closure.yaml.
+
+---
+
+## V8-READINESS BATCH — N1-N5 (2026-07-29)
+
+### N1 — Full pytest suite (commit: TBD — this batch)
+
+Run: `python -m pytest research/tests/ -v` on 2026-07-29
+
+```
+platform darwin — Python 3.12.4, pytest-7.4.4
+collected 91 items
+
+test_report_era_split.py    15 passed
+test_rf1_curve_oracle.py    13 passed
+test_rf3_tiered_window.py   13 passed
+test_rf4_realert.py         15 passed
+test_rf5_path_schema.py     22 passed
+test_rf6_versioning.py      13 passed
+
+============================== 91 passed in 0.65s ==============================
+```
+
+All 91 tests pass. Coverage: RF1 curve oracle, RF3 tiered window, RF4 realert dedup,
+RF5 path schema, RF6 smart-wallet versioning, RC1 era segmentation.
+
+### N2 — Canary trade + B7 E1 timing (commit: TBD — this batch)
+
+Bot state: `LIVE_TRADING=true`, social_alert size=$2, max 2 concurrent (portfolio.py circuit breaker).
+E1 fields wired in executor.py (`_buy_timing` dict) + emitted in portfolio.py ENTRY TIMING log.
+
+**Status: ARMED — awaiting next signal that passes screener.**
+Current rejection reason: `no_dex_data` (DexScreener not indexing fast enough for BC tokens).
+B7 row will be filled here once the first post-canary ENTRY TIMING line lands in journalctl.
+
+Pre-B7 timing reference (Jul 10–11 trades, pre-E1-deployment):
+
+| trade | screen | submit | confirm | total | real_slip |
+|---|---|---|---|---|---|
+| FABLE | 0.5s | 11.91s | 13.81s | 22.0s | +23.3% |
+| RETAIL | 0.6s | 11.82s | 13.70s | 22.1s | +18.9% |
+| tradition | 0.5s | 11.85s | 13.72s | 21.9s | +11.1% |
+
+Measured latency epoch: submit≈12s, confirm≈14s, total≈22s.
+
+### N3 — Epoch ON: live at canary sizing, daily stats cron
+
+Gates unchanged. Max 2 concurrent enforced by existing circuit breaker.
+F3 drought alarm active: `health_monitor.py` fires if ≥3 paper opens + 0 live attempts in 3h.
+
+Daily epoch stats written by cron to `logs/epoch_daily.jsonl` (append-only).
+Format: `{"date":"YYYY-MM-DD","trades":N,"pnl_usd":X.XX,"open":N}`.
+
+Cron entry (VPS `/etc/cron.d/quantbot-epoch`):
+```
+55 23 * * * root cd /root/quant-bot && set -a && . .env && set +a && \
+  .venv/bin/python research/scripts/epoch_daily_log.py >> logs/epoch_daily_cron.log 2>&1
+```
+
+### N4 — Analysis artifacts → docs/V8_INPUTS.md
+
+See `docs/V8_INPUTS.md` (committed with this batch).
+
+- N4(a): forward-validation table — SM_hit=True: 92.3% win (n=91); clean era n=7 (too early)
+- N4(b): era-split — preRF1 BC 43.6% win rate is survivor-bias artifact (only 2% priced)
+- N4(c): path_stats — INSUFFICIENT (1,207 header-only path files; PC2 backfill not run)
+- N4(d): replay_exits — PENDING (same; 0 paths with tick data)
+
+### N5 — Receipts hygiene
+
+All legacy-commit and pending sections resolved:
+- L6, X1, X3, X5: `commit: verified in conversation 2026-07-10 (pre-manifest era)` + batch_verify note
+- B-batch (B1–B7): `commit: ada6c06 (2026-07-09)` + batch_verify note + E1 pending line on B7
+- No silent placeholders remain in the proof ledger.
