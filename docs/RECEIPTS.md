@@ -147,25 +147,43 @@ Report key findings:
 Supabase migration run 2026-07-28 (22 ALTER TABLE statements, "Success. No rows returned").
 RF1 deployed ~01:17 UTC 2026-07-28. preRF1 table captured same day (20,149 rows):
 
-**Era: dex_conditioned_preRF1  (n=20149)**
+**Run at: 2026-07-29T18:30:30Z — 21,331 rows (outcome_complete only)**
+
+**Era: dex_conditioned_preRF1 (n=18,457)**
 
 | Category | n | null_t1m | null_t3m | null_t10m |
 |---|---|---|---|---|
-| ALL | 20149 | 99.1% | 97.8% | 95.5% |
-| social_alert_bc | ~18k | **99.9%** | ~99% | ~97% |
-| social_alert_grad | ~2k | ~94% | ~88% | ~83% |
+| ALL | 18457 | 99.9% | 89.1% | 88.7% |
+| social_alert_bc | 14455 | 99.9% | 87.3% | 87.3% |
+| social_alert_grad | 912 | 100.0% | 100.0% | 100.0% |
 
-**Era: clean (postRF1)** — PENDING. No tokens have completed their 30-min outcome
-window since RF1 deployment. Re-run tomorrow:
+**Era: clean/postRF1 (n=2,874)**
 
-```bash
-ssh root@178.105.94.113 'cd /root/quant-bot && set -a && source .env && set +a && \
-  .venv/bin/python -m research.scripts.rf1_coverage_check'
+| Category | n | null_t1m | null_t3m | null_t10m |
+|---|---|---|---|---|
+| ALL | 2874 | 98.9% | 94.6% | 94.5% |
+| social_alert_bc | 2549 | 98.7% | 96.8% | 96.8% |
+
+**Verdict: PARTIAL — BC T1m NULL-rate drop 99.9% → 98.7% (Δ=+1.2pp)**
+
+**Diagnosis: RF1 provenance columns ARE being written** (2,874 rows classified clean),
+but actual price values remain NULL in 98.7% of cases. This means the outcome poller
+is writing failure reasons to `price_status_t1m` rather than real prices — the curve
+oracle is consistently failing or returning no data.
+
+**Most likely causes (to investigate):**
+1. Tokens graduate before the T1m poll fires → `curve_account_missing` failure reason → `price_t1m` = NULL
+2. Curve RPC errors → `curve_rpc_error` failure reason → `price_t1m` = NULL
+3. GRADUATED path then falls back to DexScreener, which also returns NULL for fast-moving tokens
+
+**Next step:** query a sample of clean rows to see what `price_status_t1m` values look like:
+```sql
+SELECT price_status_t1m, count(*) FROM research_tokens
+WHERE price_source_t1m IS NOT NULL OR price_status_t1m IS NOT NULL
+GROUP BY price_status_t1m ORDER BY count DESC LIMIT 20;
 ```
-
-Paste the output table here and set `receipt_complete: true` in `batches/rc_closure.yaml`.
-If BC T1m NULL-rate for clean-era rows is not materially lower than 99.9%, that is a
-bug in `curve_oracle.py` or the outcome poller venue routing.
+If mostly `curve_account_missing` → tokens are graduating before T1m poll. If mostly
+`curve_rpc_error` → Helius RPC issues in outcome_poller. Either is a separate fix from RF1.
 
 ### RC1 — Era segmentation in report.py (commit db32f53)
 
