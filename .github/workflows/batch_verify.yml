@@ -22,7 +22,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install pyyaml pytest
+        run: pip install pyyaml
 
-      - name: Run batch_verify (greps + tests, no Supabase)
-        run: python tools/batch_verify.py --verbose
+      - name: Run batch_verify (greps + receipt check only — tests need full env)
+        run: python tools/batch_verify.py --no-tests --verbose
