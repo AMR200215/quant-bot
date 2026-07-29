@@ -12,6 +12,7 @@
 - **Validate filters with clean data.** Remove outliers and null values before concluding a filter doesn't work.
 - **Trace the full execution flow before every fix or feature** — signal→buy→monitor→TP→stop→sell→journal→wallet. Flag every blocking call and lag failure mode before writing code.
 - **docs/RECEIPTS.md is a living document.** Any commit touching an execution path (executor.py, portfolio.py exit/close/abort, exit_router.py, bonding_curve_t22.py, verify_execution.py, any sell route) must add a receipt row in the same commit. "Proven" = row with real on-chain sig. "Not proven" = no row, regardless of what tests say.
+- **Batch manifests (`batches/*.yaml`) gate completeness.** Before committing a message that claims a batch/item is complete, run `python tools/batch_verify.py batches/<batch>.yaml` locally and confirm GREEN. If a batch is PARTIAL (e.g. `receipt_complete: false`), the commit message MUST begin with `PARTIAL:` and name every open item. Claiming something is complete while `batch_verify` exits 1 is a named failure mode — do not do it.
 - **Responses should be short and concise.**
 
 ---

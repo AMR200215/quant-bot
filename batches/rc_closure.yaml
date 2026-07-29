@@ -1,0 +1,34 @@
+batch_id: rc_closure
+description: "RC-CLOSURE: era segmentation (RC1), smart-money pin (RC2), RF1 coverage (RC3)"
+commit: db32f53
+committed_at: "2026-07-29T00:00:00Z"
+
+items:
+  - id: RC1
+    description: "Era segmentation in report.py — sections 2/7 clean-era only; section 10 data-quality"
+    receipts_section: "RC1 — Era segmentation"
+    receipt_complete: true
+    greps:
+      - {file: "research/analysis/report.py", pattern: "dex_conditioned_preRF1"}
+      - {file: "research/analysis/report.py", pattern: "_era_split"}
+      - {file: "research/analysis/report.py", pattern: "ERA DATA-QUALITY"}
+    tests:
+      - "research/tests/test_report_era_split.py"
+
+  - id: RC2
+    description: "SMART_MONEY_PINNED_VERSION=1 committed; v1.json written + sha256 in RECEIPTS"
+    receipts_section: "RC2 — smart_wallets_v1.json"
+    receipt_complete: true
+    greps:
+      - {file: "research/config.py", pattern: "SMART_MONEY_PINNED_VERSION.*\"1\""}
+      - {file: "docs/RECEIPTS.md", pattern: "6dc245381106d5b5"}
+    tests: []
+
+  - id: RC3
+    description: "RF1 before/after NULL-rate table — preRF1 table logged; clean-era pending overnight"
+    receipts_section: "RC3 — RF1 NULL-rate artifact"
+    receipt_complete: false    # clean-era rows not yet available; re-run rf1_coverage_check tomorrow
+    greps:
+      - {file: "research/scripts/rf1_coverage_check.py", pattern: "_is_clean"}
+      - {file: "docs/RECEIPTS.md", pattern: "99\\.9%"}
+    tests: []

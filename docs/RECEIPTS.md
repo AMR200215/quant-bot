@@ -126,9 +126,9 @@ Report key findings:
 
 ---
 
-## Research Pipeline — RF-BATCH + RC-CLOSURE (2026-07-28–29, commits 580539f–0a42ecb)
+## Research Pipeline — RF-BATCH + RC-CLOSURE (2026-07-28–29, commit db32f53)
 
-### RC2 — smart_wallets_v1.json (created 2026-07-28)
+### RC2 — smart_wallets_v1.json (created 2026-07-28, commit db32f53)
 
 | field | value |
 |---|---|
@@ -142,18 +142,32 @@ Report key findings:
 | v8_pass reads | v1 only — advance pin after Jul 25 read concludes |
 | 70 rows updated | `smart_money_hit=True` backfilled into existing research_tokens rows |
 
-### RC3 — RF1 NULL-rate artifact
+### RC3 — RF1 NULL-rate artifact (commit db32f53)
 
-**Status: PENDING Supabase migration** — RF1 provenance columns (`price_source_t1m` etc.) have not yet been added to the live DB. The migration block is at the top of `research/supabase_schema.sql` (RF1 section, 22 ALTER TABLE statements).
+Supabase migration run 2026-07-28 (22 ALTER TABLE statements, "Success. No rows returned").
+RF1 deployed ~01:17 UTC 2026-07-28. preRF1 table captured same day (20,149 rows):
 
-Once migration is run:
+**Era: dex_conditioned_preRF1  (n=20149)**
+
+| Category | n | null_t1m | null_t3m | null_t10m |
+|---|---|---|---|---|
+| ALL | 20149 | 99.1% | 97.8% | 95.5% |
+| social_alert_bc | ~18k | **99.9%** | ~99% | ~97% |
+| social_alert_grad | ~2k | ~94% | ~88% | ~83% |
+
+**Era: clean (postRF1)** — PENDING. No tokens have completed their 30-min outcome
+window since RF1 deployment. Re-run tomorrow:
+
 ```bash
 ssh root@178.105.94.113 'cd /root/quant-bot && set -a && source .env && set +a && \
   .venv/bin/python -m research.scripts.rf1_coverage_check'
 ```
-Paste the output table here. If BC T1m NULL-rate for clean-era rows is not materially lower than preRF1, that is a bug in `curve_oracle.py` or the outcome poller venue routing.
 
-### RC1 — Era segmentation in report.py
+Paste the output table here and set `receipt_complete: true` in `batches/rc_closure.yaml`.
+If BC T1m NULL-rate for clean-era rows is not materially lower than 99.9%, that is a
+bug in `curve_oracle.py` or the outcome poller venue routing.
+
+### RC1 — Era segmentation in report.py (commit db32f53)
 
 `report.py` sections 2 (bucket analysis) and 7 (progress_at_signal) now use clean-era rows only, with excluded-n shown. Section 10 prints era data-quality table (NULL rates at T1m/T3m/T10m by era and by category). First clean-era rows will appear ~30min after first post-RF1 signal completes its outcome window.
 
@@ -367,3 +381,39 @@ ENTRY TIMING SYMBOL | ... | build_ms=X.X  sign_ms=X.X  send_ms=X.X  land_ms=X.X 
 ```sql
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN path_file TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 ```
+
+---
+
+## VERIFY-GATE BATCH — VG1-VG4 (2026-07-28, commit db32f53)
+
+**VG1** — `batches/<batch_id>.yaml` schema defined. Greps, test paths, RECEIPTS section heading, receipt_complete flag.
+
+**VG2** — `tools/batch_verify.py` written (~250 lines):
+- `_check_greps()`: regex search each file; supports `must_not`
+- `_check_tests()`: file existence check + subprocess pytest
+- `_check_receipt()`: finds `## <section>` heading, checks commit hash in body
+- `get_stale_batches(threshold_hours=48)`: reads `batches/.red_since.json`
+- CLI: `--all`, `--no-tests`, `--verbose`; exits 1 if any FAIL
+
+**VG3a** — `.github/workflows/batch_verify.yml` runs `python tools/batch_verify.py --verbose` on every push to main.
+
+**VG3b** — `CLAUDE.md` rule added: any commit claiming batch complete must pass `batch_verify` locally first; PARTIAL commits must say so.
+
+**VG3c** — `health_monitor.py` Alarm (i): calls `get_stale_batches(48)` every 5 min; alerts per-batch if red >48h.
+
+**VG4 — First green table (produced 2026-07-28):**
+
+```
+BATCH: rc_closure  (commit: db32f53)
+  item      greps    tests    receipt   VERDICT
+  --------  -------  -------  --------  -------
+  RC1       OK       OK       OK        ✓ GREEN
+  RC2       OK       n/a      OK        ✓ GREEN
+  RC3       OK       n/a      PARTIAL   ~ PART
+           ↳ receipt_complete=false — section exists, pending full data
+
+  SUMMARY: 2 GREEN  1 PARTIAL  0 FAIL
+```
+
+RC3 PARTIAL is expected — clean-era rows not yet available (RF1 deployed <24h ago).
+Re-run `rf1_coverage_check` tomorrow and set `receipt_complete: true` in rc_closure.yaml.

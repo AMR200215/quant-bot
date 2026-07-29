@@ -403,6 +403,22 @@ def _check():
                 f"while inserts are flowing. Check peak_tracker thread."
             )
 
+    # Alarm (i) — Batch manifest red >48h (any batches/*.yaml failing greps/tests/receipt)
+    try:
+        from tools.batch_verify import get_stale_batches
+        stale = get_stale_batches(threshold_hours=48.0)
+        if stale:
+            for bid in stale:
+                alarm_key = f"batch_red_{bid}"
+                if _should_fire(alarm_key):
+                    log.warning("HEALTH ALARM: batch %r has been red for >48h", bid)
+                    _send_alert(
+                        f"BATCH RED >48h: manifest `{bid}` has been failing for over 48 hours.\n"
+                        f"Run: python tools/batch_verify.py batches/{bid}.yaml --verbose"
+                    )
+    except Exception as e:
+        log.debug("health_monitor: batch_verify check failed: %s", e)
+
 
 def _monitor_loop():
     """Background thread: check alarms every CHECK_INTERVAL_SEC."""
