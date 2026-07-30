@@ -1,8 +1,15 @@
 venv/
+.venv/
 .env
+.claude/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Telethon session files — contain auth credentials, never commit
+*.session
+memecoin/data/tg_session
+memecoin/data/tg_session.session
 
 # Large raw data file (re-fetchable)
 data/historical_raw.json
@@ -13,3 +20,6 @@ data/historical_raw.json
 !logs/memecoin_live_journal.csv
 !logs/memecoin_social_journal.csv
 !logs/memecoin_journal.csv
+!logs/exit_route_attempts.csv
+!logs/gate_blocks.csv
+!logs/trade_telemetry_summary.csv

@@ -25,6 +25,24 @@ import requests as _requests
 
 log = logging.getLogger(__name__)
 
+
+def compute_fill_price(
+    sol_delta: float,
+    tokens_sold_raw: int,
+    sol_usd: float,
+    token_decimals: int = 6,
+) -> float:
+    """
+    Canonical fill-price helper. One formula, all callers.
+
+    Returns USD per token from on-chain SOL received.
+    Returns 0.0 if any input is missing/zero.
+    """
+    if sol_delta <= 0 or tokens_sold_raw <= 0 or sol_usd <= 0:
+        return 0.0
+    return (sol_delta * sol_usd) / (tokens_sold_raw / (10 ** token_decimals))
+
+
 # Retry schedule: cumulative seconds from start before each attempt fires.
 # attempt 1: immediately (0s), attempt 2: 1.5s, attempt 3: 3.5s, attempt 4: 6s
 _RETRY_DELAYS = [0.0, 1.5, 3.5, 6.0]

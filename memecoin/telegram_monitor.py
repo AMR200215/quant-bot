@@ -11,9 +11,18 @@ Signals are tagged config_tag="social" and use $1 paper size for data collection
 Goal: measure whether social/CT-driven entries outperform pure volume signals.
 
 Runs as a background asyncio thread inside the scanner process.
+
+State machine:
+  AUTH_REQUIRED      — session missing/expired; operator must run tg_auth.py
+  NETWORK_ERROR      — transient connection failure; retrying with backoff
+  RATE_LIMITED       — Telegram rate limit hit; backing off
+  CONNECTED          — live, receiving messages
+  CONNECTED_BUT_STALE — connected but no message for >2h
+  THREAD_DEAD        — tg-monitor thread is not alive
 """
 
 import asyncio
+import enum
 import logging
 import os
 import re
@@ -46,6 +55,77 @@ _SEEN_COOLDOWN = 300  # 5 minutes
 _NO_DEX_RETRY_DELAY = 45   # seconds between retries
 _NO_DEX_MAX_RETRIES = 8    # 8 × 45s = 360s window; covers DexScreener worst-case lag (~120s)
 
+# Stale threshold: CONNECTED_BUT_STALE after this many seconds with no message
+_STALE_THRESHOLD_S = 2 * 3600   # 2 hours
+
+# Auth-failure keywords in exception strings — do not retry fast on these
+_AUTH_ERROR_KEYWORDS = ("eof when reading", "auth_key", "phone", "401",
+                        "session", "unauthorized")
+
+
+# ---------------------------------------------------------------------------
+# State machine
+# ---------------------------------------------------------------------------
+
+class TGState(enum.Enum):
+    AUTH_REQUIRED       = "AUTH_REQUIRED"
+    NETWORK_ERROR       = "NETWORK_ERROR"
+    RATE_LIMITED        = "RATE_LIMITED"
+    CONNECTED           = "CONNECTED"
+    CONNECTED_BUT_STALE = "CONNECTED_BUT_STALE"
+    THREAD_DEAD         = "THREAD_DEAD"
+
+
+# Module-level state (written by monitor thread, read by health endpoint)
+_state_lock = threading.Lock()
+_tg_state: TGState = TGState.NETWORK_ERROR
+_last_connected: float = 0.0
+_last_message_received: float = 0.0
+_monitor_start: float = time.time()
+
+
+def _set_state(new_state: TGState):
+    global _tg_state
+    with _state_lock:
+        _tg_state = new_state
+
+
+def _update_last_connected():
+    global _last_connected
+    with _state_lock:
+        _last_connected = time.time()
+
+
+def _update_last_message():
+    global _last_message_received
+    with _state_lock:
+        _last_message_received = time.time()
+
+
+def get_tg_state() -> dict:
+    """Return current TG monitor state. Used by health endpoint."""
+    with _state_lock:
+        st   = _tg_state
+        lc   = _last_connected
+        lm   = _last_message_received
+        up   = time.time() - _monitor_start
+    return {
+        "state":         st.value,
+        "last_connected": lc or None,
+        "last_message":  lm or None,
+        "uptime_s":      round(up, 1),
+    }
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    """Return True if the exception string matches known auth/session failure patterns."""
+    s = str(exc).lower()
+    return any(kw in s for kw in _AUTH_ERROR_KEYWORDS)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _is_fresh(address: str) -> bool:
     """Return True if we haven't successfully processed this address recently."""
@@ -73,6 +153,50 @@ def _extract_addresses(text: str) -> list[tuple[str, str]]:
     return results
 
 
+def _send_alert(msg: str):
+    try:
+        from app.alerts import send_alert as _sa
+        _sa(msg)
+    except Exception as e:
+        log.debug("tg_monitor: alert send failed: %s", e)
+
+
+def _check_auth_sync(api_id: int, api_hash: str, session_file: str) -> bool:
+    """
+    Synchronously check if the Telethon session is authorised.
+    Creates a temporary event loop to run the async check.
+    Returns True if authorised, False otherwise.
+    """
+    try:
+        from telethon import TelegramClient
+    except ImportError:
+        return False
+
+    async def _inner():
+        client = TelegramClient(session_file, api_id, api_hash)
+        await client.connect()
+        try:
+            return await client.is_user_authorized()
+        finally:
+            await client.disconnect()
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_inner())
+    except Exception as e:
+        log.debug("auth check error: %s", e)
+        return False
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# TelegramMonitor
+# ---------------------------------------------------------------------------
+
 class TelegramMonitor:
     """
     Async Telegram monitor. Runs in a dedicated thread with its own event loop.
@@ -93,6 +217,9 @@ class TelegramMonitor:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Thread pool for running synchronous screening without blocking event loop
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tg-screen")
+        # Alarm cooldown: don't spam AUTH_REQUIRED alerts
+        self._last_auth_alert: float = 0.0
+        self._auth_alert_interval = 300   # 5 minutes between auth alerts
 
     def start(self, daemon: bool = True):
         """Start the monitor in a background thread."""
@@ -101,14 +228,96 @@ class TelegramMonitor:
         )
         self._thread.start()
         log.warning("Telegram monitor thread started — channels: %s", CHANNELS)
+        # Start watchdog thread
+        _wt = threading.Thread(
+            target=self._watchdog, daemon=True, name="tg-watchdog"
+        )
+        _wt.start()
+
+    def _watchdog(self):
+        """Watchdog: detect THREAD_DEAD and alert once per 30-min interval."""
+        _last_dead_alert: float = 0.0
+        while True:
+            time.sleep(60)
+            if self._thread is None:
+                continue
+            if not self._thread.is_alive():
+                _set_state(TGState.THREAD_DEAD)
+                now = time.time()
+                if now - _last_dead_alert > 1800:
+                    _last_dead_alert = now
+                    log.error("HEALTH: tg-monitor thread is dead")
+                    _send_alert("TELEGRAM THREAD_DEAD — tg-monitor thread not alive. Restart quantbot.")
+            else:
+                # Check for stale connection
+                with _state_lock:
+                    current_state = _tg_state
+                    lm = _last_message_received
+                if current_state == TGState.CONNECTED and lm > 0:
+                    if time.time() - lm > _STALE_THRESHOLD_S:
+                        _set_state(TGState.CONNECTED_BUT_STALE)
+                        log.warning("TG feed connected but no message for >2h — CONNECTED_BUT_STALE")
 
     def _run_loop(self):
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_until_complete(self._monitor())
-        except Exception as e:
-            log.error("Telegram monitor crashed: %s", e)
+        global _monitor_start
+        _monitor_start = time.time()
+        backoff = 5
+
+        while True:
+            session_file = os.path.join(
+                os.path.dirname(__file__), "data", "tg_session"
+            )
+
+            # Auth check before attempting connection
+            authorized = _check_auth_sync(self.api_id, self.api_hash, session_file)
+            if not authorized:
+                _set_state(TGState.AUTH_REQUIRED)
+                now = time.time()
+                if now - self._last_auth_alert > self._auth_alert_interval:
+                    self._last_auth_alert = now
+                    log.error(
+                        "TELEGRAM_AUTH_REQUIRED — session not authorised. "
+                        "Run: python -m research.tg_auth"
+                    )
+                    _send_alert(
+                        "TELEGRAM_AUTH_REQUIRED — Telethon session expired or missing. "
+                        "SSH to server and run: python -m research.tg_auth"
+                    )
+                time.sleep(300)
+                continue
+
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            try:
+                self._loop.run_until_complete(self._monitor())
+                log.warning("Telegram monitor exited cleanly — restarting in %ds", backoff)
+                _set_state(TGState.NETWORK_ERROR)
+            except Exception as e:
+                if _is_auth_error(e):
+                    _set_state(TGState.AUTH_REQUIRED)
+                    now = time.time()
+                    if now - self._last_auth_alert > self._auth_alert_interval:
+                        self._last_auth_alert = now
+                        log.error(
+                            "TELEGRAM_AUTH_REQUIRED (exception: %s) — run tg_auth.py", e
+                        )
+                        _send_alert(
+                            "TELEGRAM_AUTH_REQUIRED — session error detected. "
+                            "SSH to server and run: python -m research.tg_auth"
+                        )
+                    time.sleep(300)
+                    continue
+                else:
+                    _set_state(TGState.NETWORK_ERROR)
+                    log.error("Telegram monitor crashed: %s — restarting in %ds", e, backoff)
+            finally:
+                try:
+                    self._loop.close()
+                except Exception:
+                    pass
+
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 120)   # cap at 2 min
 
     def _screen_and_signal(self, chain: str, address: str, text: str,
                             attempt: int = 1):
@@ -167,10 +376,19 @@ class TelegramMonitor:
         )
 
         async with TelegramClient(session_file, self.api_id, self.api_hash) as client:
+            _set_state(TGState.CONNECTED)
+            _update_last_connected()
             log.warning("Telegram client connected")
 
             @client.on(events.NewMessage(chats=CHANNELS))
             async def handler(event):
+                _update_last_message()
+                # If we were stale, flip back to CONNECTED on new message
+                with _state_lock:
+                    if _tg_state == TGState.CONNECTED_BUT_STALE:
+                        pass
+                _set_state(TGState.CONNECTED)
+
                 text = event.raw_text or ""
                 extra_urls = []
                 if event.message and event.message.entities:

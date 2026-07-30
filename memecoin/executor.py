@@ -132,6 +132,14 @@ SOLANA_RPC           = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.sol
 SOLANA_RPC_FALLBACK  = "https://api.mainnet-beta.solana.com"   # Solana public (free)
 SOLANA_RPC_FALLBACK2 = "https://rpc.ankr.com/solana"           # Ankr free tier (no auth)
 
+# P6': T22 native bonding-curve sell path — always disabled.
+# pump.fun uses non-standard ATA derivation (curve-PDA as owner, off-curve owner),
+# combined with Token-2022 program — the native path always fails with bad ATA.
+# T22 native BC sell flag — sourced from config.T22_NATIVE_BC_SELL_ENABLED.
+# When False (default): skip native path entirely, zero RPC spent, PumpPortal primary.
+# Code kept intact behind the flag for harness-gated re-enablement.
+_T22_NATIVE_SELL_LOGGED = False  # log once per process start
+
 # Which execution backend to use.  "pumpportal" is the default; set to
 # "jupiter" to fall back to the old path (useful for A/B testing).
 try:
@@ -161,6 +169,79 @@ _RENT_RESERVE      = 2_039_280   # token-account rent exemption
 _FEE_RESERVE       = 100_000    # tx priority-fee budget
 _PRESIGNED_RESERVE = 50_000     # headroom for presigned emergency exit
 
+# Thread-local 429 wait accumulator.  buy() resets this to 0 before TX build
+# and reads it after confirmation to populate _buy_timing["rpc_429_wait_ms"].
+_tl_429 = threading.local()
+
+
+def _rpc_429_reset() -> None:
+    _tl_429.wait_ms = 0.0
+
+
+def _rpc_429_accum(ms: float) -> None:
+    _tl_429.wait_ms = getattr(_tl_429, "wait_ms", 0.0) + ms
+
+
+def _rpc_429_read() -> float:
+    return getattr(_tl_429, "wait_ms", 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Shared RPC helper — defined early so _fetch_latest_blockhash_inline (called
+# by the blockhash-cache thread at import time) can use it without a NameError.
+# ---------------------------------------------------------------------------
+def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
+    """POST to SOLANA_RPC with a three-tier fallback chain.
+
+    Tier 1 — Helius (primary, paid):
+      429 burst → retry once after 1.5s before escalating.
+      Timeout or persistent 429 → Tier 2.
+
+    Tier 2 — Solana public RPC (api.mainnet-beta.solana.com):
+      Timeout or 429 → Tier 3.
+
+    Tier 3 — Ankr free RPC (rpc.ankr.com/solana):
+      Last resort; response returned regardless of status.
+    """
+    # ── Tier 1: Helius ──────────────────────────────────────────────────────
+    _primary_failed = False
+    try:
+        resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
+        if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
+            _429_wait_ms = 500.0  # exponential base: 0.5s first retry; Tier-2 on second
+            log.warning("Primary RPC 429 — retrying in %.0fms then Tier-2", _429_wait_ms)
+            time.sleep(_429_wait_ms / 1000.0)
+            _rpc_429_accum(_429_wait_ms)
+            resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
+        if resp.status_code not in (429, 503) or SOLANA_RPC == SOLANA_RPC_FALLBACK:
+            return resp
+        _primary_failed = True
+    except requests.exceptions.Timeout:
+        log.warning("Primary RPC unavailable (timeout) — falling back to mainnet-beta")
+        _primary_failed = True
+    except requests.exceptions.RequestException as e:
+        log.warning("Primary RPC unavailable (%s) — falling back to mainnet-beta", e)
+        _primary_failed = True
+
+    if not _primary_failed:
+        return resp  # type: ignore[return-value]  # 503 path falls through
+
+    # ── Tier 2: Solana public RPC ───────────────────────────────────────────
+    log.warning("Primary RPC still failing — falling back to mainnet-beta")
+    try:
+        resp2 = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
+        if resp2.status_code not in (429, 503):
+            return resp2
+        log.warning("mainnet-beta also failing (%d) — trying Ankr", resp2.status_code)
+    except requests.exceptions.Timeout:
+        log.warning("mainnet-beta timeout — trying Ankr")
+    except requests.exceptions.RequestException as e:
+        log.warning("mainnet-beta unavailable (%s) — trying Ankr", e)
+
+    # ── Tier 3: Ankr free RPC ───────────────────────────────────────────────
+    log.warning("Primary RPC unavailable (429) — falling back to publicnode")
+    return requests.post(SOLANA_RPC_FALLBACK2, json=payload, timeout=timeout)
+
 
 # ---------------------------------------------------------------------------
 # Blockhash cache — refreshed every 2s by background thread.
@@ -172,7 +253,43 @@ _blockhash_cache: dict = {"blockhash": None, "ts": 0.0}
 _blockhash_lock  = threading.Lock()
 
 
+def _get_cached_blockhash() -> str | None:
+    """Return cached blockhash if < 5s old, else None."""
+    with _blockhash_lock:
+        if time.time() - _blockhash_cache["ts"] < 5.0:
+            return _blockhash_cache["blockhash"]
+    return None
+
+
+def _fetch_latest_blockhash_inline() -> str | None:
+    """
+    One synchronous getLatestBlockhash call. Writes result into the cache.
+    Called only when cache is cold. No sleep/retry.
+    Uses _rpc_post() so Helius→mainnet-beta→Ankr fallback applies.
+    Returns blockhash string, or None if RPC fails.
+    """
+    try:
+        resp = _rpc_post(
+            {"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash",
+             "params": [{"commitment": "confirmed"}]},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        bh = resp.json()["result"]["value"]["blockhash"]
+        with _blockhash_lock:
+            _blockhash_cache["blockhash"] = bh
+            _blockhash_cache["ts"] = time.time()
+        log.info("blockhash inline-fetched (cache cold)")
+        return bh
+    except Exception as _e:
+        log.warning("blockhash inline fetch failed: %s", _e)
+        return None
+
+
 def _blockhash_refresher():
+    # Warm blockhash cache before first build
+    if not _get_cached_blockhash():
+        _fetch_latest_blockhash_inline()
     while True:
         try:
             resp = requests.post(
@@ -194,14 +311,6 @@ def _blockhash_refresher():
 
 threading.Thread(target=_blockhash_refresher, daemon=True,
                  name="blockhash-cache").start()
-
-
-def _get_cached_blockhash() -> str | None:
-    """Return cached blockhash if < 5s old, else None."""
-    with _blockhash_lock:
-        if time.time() - _blockhash_cache["ts"] < 5.0:
-            return _blockhash_cache["blockhash"]
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +370,18 @@ def _pumpfun_mint_token_program(mint_str: str) -> str:
     with _mint_token_program_lock:
         if mint_str in _mint_token_program_cache:
             return _mint_token_program_cache[mint_str]
+    # B6(c): prefer authoritative mint_classifier over internal heuristic
+    try:
+        from memecoin.mint_classifier import get_token_program as _clf_gtp
+        _clf_prog = _clf_gtp(mint_str)
+        if _clf_prog in ("SPL", "T22"):
+            _prog = (_TOKEN22_PROGRAM_ID if _clf_prog == "T22" else _TOKEN_PROGRAM_ID)
+            with _mint_token_program_lock:
+                _mint_token_program_cache[mint_str] = _prog
+            return _prog
+    except Exception:
+        pass
+    # Fallback to RPC heuristic
     try:
         resp = _rpc_post({
             "jsonrpc": "2.0", "id": 1,
@@ -418,7 +539,9 @@ def _pumpfun_local_build_tx(
 
     blockhash = _get_cached_blockhash()
     if not blockhash:
-        raise RuntimeError("Blockhash cache empty — local build blocked (refreshes every 2s)")
+        blockhash = _fetch_latest_blockhash_inline()
+        if not blockhash:
+            raise RuntimeError("blockhash unavailable: cache cold and inline fetch failed")
 
     msg = MessageV0.try_compile(
         payer=keypair.pubkey(),
@@ -462,60 +585,6 @@ def _get_keypair():
             raise RuntimeError("SOLANA_PRIVATE_KEY env var not set")
         _keypair_cache = Keypair.from_bytes(base58.b58decode(raw))
         return _keypair_cache
-
-
-# ---------------------------------------------------------------------------
-# Shared RPC helpers
-# ---------------------------------------------------------------------------
-def _rpc_post(payload: dict, timeout: int = 10) -> requests.Response:
-    """POST to SOLANA_RPC with a three-tier fallback chain.
-
-    Tier 1 — Helius (primary, paid):
-      429 burst → retry once after 1.5s before escalating.
-      Timeout or persistent 429 → Tier 2.
-
-    Tier 2 — Solana public RPC (api.mainnet-beta.solana.com):
-      Timeout or 429 → Tier 3.
-
-    Tier 3 — Ankr free RPC (rpc.ankr.com/solana):
-      Last resort; response returned regardless of status.
-    """
-    # ── Tier 1: Helius ──────────────────────────────────────────────────────
-    _primary_failed = False
-    try:
-        resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
-        if resp.status_code == 429 and SOLANA_RPC != SOLANA_RPC_FALLBACK:
-            log.warning("Primary RPC 429 — retrying Helius in 1.5s")
-            time.sleep(1.5)
-            resp = requests.post(SOLANA_RPC, json=payload, timeout=timeout)
-        if resp.status_code not in (429, 503) or SOLANA_RPC == SOLANA_RPC_FALLBACK:
-            return resp
-        _primary_failed = True
-    except requests.exceptions.Timeout:
-        log.warning("Primary RPC unavailable (timeout) — falling back to mainnet-beta")
-        _primary_failed = True
-    except requests.exceptions.RequestException as e:
-        log.warning("Primary RPC unavailable (%s) — falling back to mainnet-beta", e)
-        _primary_failed = True
-
-    if not _primary_failed:
-        return resp  # type: ignore[return-value]  # 503 path falls through
-
-    # ── Tier 2: Solana public RPC ───────────────────────────────────────────
-    log.warning("Primary RPC still failing — falling back to mainnet-beta")
-    try:
-        resp2 = requests.post(SOLANA_RPC_FALLBACK, json=payload, timeout=timeout)
-        if resp2.status_code not in (429, 503):
-            return resp2
-        log.warning("mainnet-beta also failing (%d) — trying Ankr", resp2.status_code)
-    except requests.exceptions.Timeout:
-        log.warning("mainnet-beta timeout — trying Ankr")
-    except requests.exceptions.RequestException as e:
-        log.warning("mainnet-beta unavailable (%s) — trying Ankr", e)
-
-    # ── Tier 3: Ankr free RPC ───────────────────────────────────────────────
-    log.warning("Primary RPC unavailable (429) — falling back to publicnode")
-    return requests.post(SOLANA_RPC_FALLBACK2, json=payload, timeout=timeout)
 
 
 def _token_balance(wallet_pubkey: str, token_mint: str, retries: int = 1) -> int:
@@ -925,13 +994,8 @@ def _helius_priority_fee(token_mint: str, level: str = "High") -> float:
 
 def _send_transaction(signed_bytes: bytes) -> str:
     """
-    Send a signed tx to primary (Helius) and fallback (mainnet-beta) RPC
-    simultaneously (L2c) — first signature wins. Same signed bytes → same
-    on-chain tx signature regardless of which RPC relays it first, so this
-    is a pure latency race, not a double-send risk: whichever RPC responds
-    first returns the (identical) sig, the loser's request is left to
-    complete in the background and its result is discarded (dedupe = we
-    only ever look at/return one sig).
+    Send a signed tx via Helius RPC.
+    Returns the transaction signature string.
     Does NOT use Jito — Helius priority fee in the tx is sufficient for $1-5 trades.
     """
     payload = {
@@ -943,30 +1007,12 @@ def _send_transaction(signed_bytes: bytes) -> str:
             {"encoding": "base64", "skipPreflight": True, "maxRetries": 0},
         ],
     }
-
-    def _post_one(url: str) -> str:
-        resp = requests.post(url, json=payload, timeout=20)
-        resp.raise_for_status()
-        result = resp.json()
-        if "error" in result:
-            raise RuntimeError(f"sendTransaction RPC error ({url}): {result['error']}")
-        return result["result"]
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
-        _futs = {
-            _pool.submit(_post_one, SOLANA_RPC):          "primary",
-            _pool.submit(_post_one, SOLANA_RPC_FALLBACK): "fallback",
-        }
-        _errs = []
-        for _fut in concurrent.futures.as_completed(_futs, timeout=20):
-            _src = _futs[_fut]
-            try:
-                _sig = _fut.result()
-                log.debug("sendTransaction race won by %s", _src)
-                return _sig
-            except Exception as _e:
-                _errs.append(f"{_src}:{_e}")
-        raise RuntimeError(f"sendTransaction RPC error (both failed): {_errs}")
+    resp = _rpc_post(payload, timeout=20)
+    resp.raise_for_status()
+    result = resp.json()
+    if "error" in result:
+        raise RuntimeError(f"sendTransaction RPC error: {result['error']}")
+    return result["result"]
 
 
 # ---------------------------------------------------------------------------
@@ -1207,12 +1253,11 @@ def _record_buy_gate(action: str, reason: str):
 _GRAD_ORACLE_CACHE: dict = {}   # mint → (timestamp, result_dict)
 _GRAD_ORACLE_TTL = 5.0          # seconds
 
-# pump.fun classic bonding-curve graduation threshold in real SOL reserves.
-# Used only to compute curve_progress_at_entry telemetry (0.0-1.0-ish, not a
-# gate). NOT independently re-verified on-chain in this change — cross-check
-# against a live curve account with a known-recent graduation before trusting
-# this number for anything beyond a rough progress indicator.
-PUMPFUN_GRADUATION_SOL_THRESHOLD = 85.0
+# 4D(b): multi-token kill switch guard
+# Kill switch only fires if >=2 DISTINCT tokens fail within 10 minutes.
+# One storming token cannot kill the desk.
+_KS_FAIL_TOKENS: dict[str, float] = {}   # token_address → last failure timestamp
+_KS_FAIL_WINDOW = 600.0                  # 10 minutes
 
 
 def get_pumpfun_curve_complete(mint: str) -> dict:
@@ -1298,28 +1343,59 @@ def _get_pumpfun_curve_complete_uncached(mint: str) -> dict:
             return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
         data_b64  = data_list[0]
         raw       = _b64.b64decode(data_b64)
-        # Layout:
-        #   [0:8]  8-byte Anchor discriminator
+        # Layout (V1 49 bytes | V2 151 bytes):
+        #   [0:8]  8-byte Anchor discriminator = sha256("account:BondingCurve")[:8]
         #   [8:16] u64 virtual_token_reserves
         #   [16:24] u64 virtual_sol_reserves
         #   [24:32] u64 real_token_reserves
         #   [32:40] u64 real_sol_reserves
         #   [40:48] u64 token_total_supply
-        #   [48]   bool complete
-        if len(raw) < 49:
-            log.error("GRAD ORACLE short account data len=%d for %s", len(raw), mint[:8])
-            return {"ok": False, "complete": None, "reason": "parse_error", "bc_pda": bc_pda, "rpc_ms": 0}
-        complete = bool(raw[48])
-        reason   = "complete_true" if complete else "complete_false"
+        #   [48]   bool complete                 ← UNCHANGED in V2 (confirmed 2026-07-15)
+        #   [49:81] pubkey creator               ← V2-only new field
+        #   [81:89] u64 unknown                  ← V2-only new field
+        #   [89:151] padding                     ← V2-only zeros
+
+        # Z8.4: Validate BC account structure before trusting byte 48.
+        from memecoin.pumpfun_compat import (
+            validate_bc_account as _z8_validate_bc,
+            layout_graduation_allowed as _z8_lga,
+        )
+        _bc_owner = value.get("owner", "")
+        _bc_valid, _bc_reason = _z8_validate_bc(raw, _bc_owner)
+        if not _bc_valid:
+            log.error(
+                "GRAD ORACLE Z8 BC validation FAILED: %s  mint=%s",
+                _bc_reason, mint[:8],
+            )
+            return {
+                "ok": False, "complete": None,
+                "reason": "layout_validation_failed",
+                "bc_pda": bc_pda, "rpc_ms": 0,
+            }
+
         import struct as _struct
+        complete = bool(raw[48])
+
+        # Z8.5: complete=True from BC parse blocked until layout is VERIFIED.
+        # account_missing (value is None, handled above) is NOT gated here.
+        if complete and not _z8_lga():
+            log.warning(
+                "GRAD ORACLE Z8 complete=True BLOCKED (compat state != VERIFIED)  mint=%s",
+                mint[:8],
+            )
+            return {
+                "ok": False, "complete": None,
+                "reason": "layout_unverified",
+                "bc_pda": bc_pda, "rpc_ms": 0,
+            }
+
+        reason = "complete_true" if complete else "complete_false"
         vtr = _struct.unpack_from("<Q", raw, 8)[0]   # virtual_token_reserves
         vsr = _struct.unpack_from("<Q", raw, 16)[0]  # virtual_sol_reserves
-        rsr = _struct.unpack_from("<Q", raw, 32)[0]  # real_sol_reserves
         return {
             "ok": True, "complete": complete, "reason": reason, "bc_pda": bc_pda, "rpc_ms": 0,
             "virtual_token_reserves": vtr,
             "virtual_sol_reserves":   vsr,
-            "real_sol_reserves":      rsr,
         }
     except Exception as e:
         log.error("GRAD ORACLE parse error for %s: %s", mint[:8], e)
@@ -1364,6 +1440,8 @@ def get_pumpfun_curve_price(mint: str) -> dict:
             "price_sol": price_sol,
             "complete":  result.get("complete"),
             "reason":    result.get("reason", "ok"),
+            "virtual_sol_reserves_raw": vsr,
+            "virtual_sol_reserves_ui":  vsr / 1e9,
         }
     except Exception as e:
         log.debug("get_pumpfun_curve_price error for %s: %s", mint[:8], e)
@@ -1422,6 +1500,7 @@ class MemeExecutor:
         signal_price: float = 0.0,
         max_slippage_pct: float = 0.50,
         dex_id: str = "",
+        preflight_oracle_result: dict | None = None,
     ) -> dict:
         """
         Swap SOL → token_address worth size_usd USD.
@@ -1517,29 +1596,25 @@ class MemeExecutor:
             sol_amount = size_usd / sol_price          # SOL to spend (float)
             lamports   = int(sol_amount * 10 ** SOL_DECIMALS)
 
-            # ── Parallel pre-flight: SOL balance + priority fee (blocking) ────────
-            # Jupiter quote is fired async (L1a) — it is informational only now:
-            # telemetry/journal, never a gate. Abort reference = baseline_price
-            # (signal_price param, i.e. pos.baseline_price / P5'), not this quote.
+            # ── Parallel pre-flight: SOL balance + Jupiter quote + priority fee ──
+            # Three independent network calls fired simultaneously.
+            # Critical path = max(~150ms, ~350ms, ~150ms) ≈ 350ms
+            # vs old sequential order (~150ms + ~350ms = ~500ms).
             # SOL balance is collected first since RuntimeError there is fatal for buy.
+            _quote_gate         = SLIPPAGE_GATE_DEX_PCT
             jupiter_quote_price = 0.0
+            _quote_fetch_err    = None
             _buy_fee            = PRIORITY_FEE_SOL
             _free_sol_lam       = 0
 
-            def _async_quote_worker(_mint=token_address, _lam=lamports, _size=size_usd, _t_start=time.time()):
-                try:
-                    _q  = _jup_get_quote(SOL_MINT, _mint, _lam)
-                    _td = int(_q.get("outputDecimals") or 6)
-                    _to = int(_q["outAmount"]) / (10 ** _td)
-                    _qp = _size / _to if _to > 0 else 0
-                    log.info("ASYNC QUOTE token=%s price=%.10f elapsed_ms=%d (telemetry only, not gated)",
-                              _mint[:8], _qp, int((time.time() - _t_start) * 1000))
-                except Exception as _qe:
-                    log.debug("ASYNC QUOTE failed token=%s: %s", _mint[:8], _qe)
+            # L1a: Jupiter quote is off the critical path for PP backend.
+            # Fire async; result attaches to telemetry/journal only after confirm.
+            # Jupiter backend collects it before build (still needs quote for swap route).
+            _quote_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            _t_quote_start = time.time()
+            _quote_fut  = _quote_exec.submit(_jup_get_quote, SOL_MINT, token_address, lamports)
 
-            threading.Thread(target=_async_quote_worker, daemon=True,
-                              name=f"async-quote-{token_address[:8]}").start()
-
+            # Critical path: sol_balance + priority fee only (quote removed)
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
                 _sol_fut = None if LIVE_DRY_RUN else _pool.submit(_sol_balance, wallet)
                 _fee_fut = _pool.submit(_helius_priority_fee, token_address, "High")
@@ -1588,21 +1663,67 @@ class MemeExecutor:
                 except Exception:
                     pass
 
-            # Gate 1 (no_quote) and Gate 2 (quote-drift) removed — L1a: Jupiter quote
-            # is fired async and is no longer available synchronously here. The
-            # "jupiter backend" path still fetches a synchronous quote at tx-build
-            # time (below) and fails naturally there if unquotable, before any SOL
-            # is spent, so no protection is lost. PP backend already skipped Gate 1.
-            # Gate 2's job (catch tokens that spiked before send) is superseded by
-            # the post-fill abort tripwire in portfolio.py, now anchored to
-            # baseline_price (signal_price) instead of this quote.
-            _pp_active = False
+            # Gate 1: no quote → unquotable token, block before spending.
+            # Exception: PumpPortal backend routes directly via pump.fun bonding curve
+            # and does NOT use Jupiter for the actual swap. Jupiter HTTP 400 for these
+            # tokens means they are still on the bonding curve — exactly what PP handles.
+            # Blocking on no_quote for PP backend creates a systematic selection bias:
+            # it blocks fresh bonding-curve tokens (the fast pumpers / best performers)
+            # and only allows through older tokens that Jupiter can already route
+            # (later in their cycle, past peak). Skip Gate 1 for PP backend.
+            if signal_price > 0 and jupiter_quote_price == 0:
+                if EXECUTOR_BACKEND != "pumpportal":
+                    log.warning(
+                        "BUY blocked — no_quote  token=%s  err=%s",
+                        token_address[:8], _quote_fetch_err,
+                    )
+                    return {
+                        "success":             False,
+                        "reason":              "no_quote",
+                        "jupiter_quote_price": 0,
+                        "error":               str(_quote_fetch_err),
+                    }
+                else:
+                    log.info(
+                        "Jupiter no_quote (PP backend) — bonding-curve token, proceeding via PumpPortal  "
+                        "token=%s  err=%s",
+                        token_address[:8], _quote_fetch_err,
+                    )
+
+            # Gate 2: drift gate — only fires when PP live price is available.
+            #
+            # When PP has a price: same-venue comparison (PP vs Jupiter, both real-time).
+            # Blocks if Jupiter quote is >SLIPPAGE_GATE_RT_PCT above PP. Legitimate
+            # protection — catches tokens that spiked between PP tick and quote fetch.
+            #
+            # When PP is silent (pp=0): skip drift gate entirely.
+            # Comparing Jupiter (real-time) to signal_price (stale DexScreener, possibly
+            # 30s+ old) measures indexer lag, not real drift. The most common case is a
+            # token that graduated from the pump.fun bonding curve to Raydium before the
+            # alert fired — PP has no data, DexScreener has pre-graduation price, Jupiter
+            # routes through Raydium at post-graduation price. The "drift" is the bonding
+            # curve graduation jump, which is real price movement but not a reason to block.
+            # Signal filters (pc5m, vol_5m, bs) already validated this token; Gate 1
+            # (no_quote) ensures it's tradeable. That is sufficient.
+            # Gate 2 baseline priority:
+            # 1. PP live price — same-venue, sub-second fresh (best)
+            # 2. Jupiter quote — real current market price (when PP silent)
+            # 3. DexScreener signal_price — NEVER used as baseline: 10-30s stale minimum,
+            #    makes drift measurement meaningless and blocks valid entries.
+            _gate_baseline = jupiter_quote_price   # floor: always live
+            _pp_active     = False
             try:
                 from memecoin.pumpportal_monitor import monitor as _pp_exec
                 _pp_now = _pp_exec.get_prices().get(token_address, 0)
                 if _pp_now > 0:
-                    _pp_active = True
-                    log.debug("Gate 2 baseline: PP live $%.10f", _pp_now)
+                    _gate_baseline = _pp_now
+                    _quote_gate    = SLIPPAGE_GATE_RT_PCT
+                    _pp_active     = True
+                    log.debug("Gate 2 baseline: PP live $%.10f (same-venue gate %.0f%%)",
+                              _pp_now, _quote_gate * 100)
+                else:
+                    log.debug("Gate 2 baseline: Jupiter quote $%.10f (PP silent, DexScreener skipped)",
+                              jupiter_quote_price)
             except Exception:
                 pass
 
@@ -1624,14 +1745,48 @@ class MemeExecutor:
             if _dex_lower == "pumpswap":
                 _is_graduated  = True
                 _grad_evidence = ["dex_id=pumpswap"]
-            elif not _pp_active:
-                # PP is silent. Use pump.fun bonding curve oracle as the single
-                # source of truth — decoupled from jupiter_quote_price (L1a: quote
-                # is async now and must never gate whether this safety check runs).
+            elif not _pp_active and jupiter_quote_price > 0:
+                # PP is silent and Jupiter can quote this token.
+                # Use pump.fun bonding curve oracle as the single source of truth.
                 # BUY INVARIANT: MIGRATION_UNCERTAIN is not graduation proof.
                 # It is a sell-side routing state only. Do not re-add it as a buy blocker.
                 # Graduation proof comes exclusively from curve.complete or account_missing.
-                _curve = get_pumpfun_curve_complete(token_address)
+                #
+                # FIX: Reuse preflight oracle result if fresh (<3s) and mint matches.
+                # portfolio.py preflight calls get_pumpfun_curve_snapshot() which populates
+                # the same _GRAD_ORACLE_CACHE — so the cache already covers the common case.
+                # The passthrough is an explicit belt-and-suspenders guarantee that removes
+                # the RPC entirely when conditions are met (e.g. cache evicted under load).
+                _oracle_reused = False
+                _pf = preflight_oracle_result
+                _dex_lower_safe = _dex_lower  # already set above
+                if (
+                    _pf
+                    and _pf.get("ok")
+                    and _pf.get("complete") is False
+                    and _dex_lower_safe not in ("pumpswap", "raydium", "orca")
+                    and (time.time() - _pf.get("_preflight_ts", 0)) <= 3.0
+                ):
+                    _curve = _pf
+                    _oracle_reused = True
+                    _oracle_age_ms = int((time.time() - _pf["_preflight_ts"]) * 1000)
+                    log.info(
+                        "BUY GATE oracle_reuse token=%s age_ms=%d source=preflight_curve_snapshot",
+                        token_address[:8], _oracle_age_ms,
+                    )
+                else:
+                    _curve = get_pumpfun_curve_complete(token_address)
+                    _skip_reason = (
+                        "stale_or_missing_preflight" if _pf is None
+                        else "preflight_complete_not_false" if not (_pf.get("ok") and _pf.get("complete") is False)
+                        else "dex_not_pumpfun"  if _dex_lower_safe in ("pumpswap", "raydium", "orca")
+                        else "age_exceeded"
+                    )
+                    log.info(
+                        "BUY GATE oracle_fresh token=%s reason=%s",
+                        token_address[:8], _skip_reason,
+                    )
+
                 if _curve["complete"] is False:
                     # Still on bonding curve — not graduated. Allow buy through normal gates.
                     _grad_evidence = []
@@ -1640,15 +1795,6 @@ class MemeExecutor:
                     # complete=True (graduated), None/account_missing, or oracle error
                     _is_graduated  = True
                     _grad_evidence = [f"grad_oracle:{_curve['reason']}"]
-
-            # L3: curve_progress_at_entry telemetry — how far along the bonding
-            # curve this token was at buy time (rough, see threshold caveat above).
-            _curve_progress_at_entry = None
-            _rsr = _curve.get("real_sol_reserves")
-            if _rsr is not None:
-                _curve_progress_at_entry = round(
-                    min(1.0, (_rsr / 1e9) / PUMPFUN_GRADUATION_SOL_THRESHOLD), 4
-                )
 
             _curve_reason = _curve.get("reason", "n/a")
             log.info(
@@ -1676,14 +1822,31 @@ class MemeExecutor:
                     "grad_evidence":      _grad_evidence,
                 }
 
-            # Gate 2 (quote-drift) removed with L1a — see comment at _pp_active above.
+            if _pp_active and signal_price > 0 and jupiter_quote_price > 0:
+                # Same-venue gate: PP live vs Jupiter quote (measures real movement only)
+                slippage = (jupiter_quote_price / _gate_baseline - 1)
+                if slippage > _quote_gate:
+                    log.warning(
+                        "BUY blocked — quote drift %.1f%% > %.0f%%  "
+                        "token=%s  pp=$%.10f  quote=$%.10f",
+                        slippage * 100, _quote_gate * 100,
+                        token_address[:8], _gate_baseline, jupiter_quote_price,
+                    )
+                    return {
+                        "success":             False,
+                        "reason":              "blocked_quote_drift",
+                        "slippage_pct":        round(slippage * 100, 1),
+                        "jupiter_quote_price": jupiter_quote_price,
+                        "gate_baseline":       _gate_baseline,
+                        "pp_used":             True,
+                    }
 
             # ── Shadow-live / dry-run mode ────────────────────────────────────
             # LIVE_DRY_RUN = True → full live path traversal (pre-flight + quote)
-            # but tx is NOT sent.  Returns synthetic fill at baseline_price.
+            # but tx is NOT sent.  Returns synthetic fill at Jupiter quote price.
             # Every gate decision was already logged above with real values.
             if LIVE_DRY_RUN:
-                _dry_fill = signal_price or jupiter_quote_price or 0
+                _dry_fill = jupiter_quote_price if jupiter_quote_price > 0 else (signal_price or 0)
                 log.warning(
                     "DRY_RUN BUY (not sent) — token=%s  size=$%.2f  "
                     "jup_quote=$%.10f  backend=%s",
@@ -1729,6 +1892,18 @@ class MemeExecutor:
             #   Sell legs for T22 positions are experimental: the exit router tests
             #   Jupiter sell then pump-amm sell and logs which venue clears. This
             #   buy block acquires real inventory; sell routing is data collection.
+            # B7: buy timing decomposition
+            _rpc_429_reset()
+            _buy_timing = {
+                "build_ms":          0.0,
+                "sign_ms":           0.0,
+                "send_ms":           0.0,
+                "land_ms":           0.0,
+                "rpc_429_wait_ms":   0.0,
+                "http_build_ms":     0.0,   # PP API HTTP POST only (0 for local build path)
+                "confirm_detect_ms": 0.0,   # alias for land_ms — detection lag, not slot settlement
+                "quote_ms":          0.0,   # how long the Jupiter quote took (off critical path)
+            }
             if EXECUTOR_BACKEND == "pumpportal":
                 _sig_sent = False
                 # Check token program — local build only works for classic SPL Token mints
@@ -1736,11 +1911,22 @@ class MemeExecutor:
                 if _tok_prog is None:
                     _tok_prog = _pumpfun_mint_token_program(token_address)
                 _use_local_build = (_tok_prog == _TOKEN_PROGRAM_ID)
-                # L2a: submit decomposition — build_ms / sign_ms / send_ms / land_ms
-                _t_build0 = time.time()
-                _build_ms = _sign_ms = _send_ms = 0.0
                 if _use_local_build:
+                    # Z8: gate on pump.fun compatibility state.
+                    # Interface confirmed changed post-upgrade (sell_v2 discriminator,
+                    # +6 buy accounts).  Disabled until VERIFIED.  PumpPortal fallback below.
+                    from memecoin.pumpfun_compat import local_build_allowed as _z8_lba
+                    from memecoin.pumpfun_compat import get_state as _z8_gs
+                    if not _z8_lba():
+                        log.info(
+                            "LOCAL BUILD buy DISABLED (Z8 compat=%s) — PumpPortal  token=%s",
+                            _z8_gs(), token_address[:8],
+                        )
+                        _use_local_build = False
+                if _use_local_build:
+                    log.info("LOCAL BUILD primary  token=%s  tok_prog=SPL", token_address[:8])
                     try:
+                        _t_lb     = time.time()
                         _lb_bytes = _pumpfun_local_build_tx(
                             action="buy",
                             wallet_pubkey=wallet,
@@ -1750,14 +1936,13 @@ class MemeExecutor:
                             slippage_pct=SLIPPAGE_BUY_PCT,
                             priority_fee_sol=_buy_fee,
                         )
-                        # Local build signs internally — build_ms includes sign_ms
-                        # for this path (no separate boundary available).
-                        _build_ms = (time.time() - _t_build0) * 1000
+                        _buy_timing["build_ms"] = (time.time() - _t_lb) * 1000
+                        _buy_timing["sign_ms"] = 0.0  # signing is inside local build
                         log.info("LOCAL BUILD buy  token=%s  build_ms=%.0f",
-                                 token_address[:8], _build_ms)
-                        _t_send0 = time.time()
+                                 token_address[:8], _buy_timing["build_ms"])
+                        _t_send_start = time.time()
                         sig       = _send_transaction(_lb_bytes)
-                        _send_ms  = (time.time() - _t_send0) * 1000
+                        _buy_timing["send_ms"] = (time.time() - _t_send_start) * 1000
                         _sig_sent = True
                     except Exception as _lb_err:
                         log.warning("LOCAL BUILD buy failed (%s) — PumpPortal fallback  token=%s",
@@ -1766,54 +1951,63 @@ class MemeExecutor:
                     log.info("LOCAL BUILD buy SKIPPED (Token-2022) — PumpPortal  token=%s",
                              token_address[:8])
                 if not _sig_sent:
-                    _t_build0 = time.time()
+                    _t_pp_build = time.time()
                     tx_bytes  = _pumpportal_build_tx(
                         wallet_pubkey=wallet, action="buy", token_mint=token_address,
                         amount=sol_amount, denominated_in_sol=True,
                         slippage_pct=SLIPPAGE_BUY_PCT, priority_fee_sol=_buy_fee,
                     )
-                    _build_ms = (time.time() - _t_build0) * 1000
-                    _t_sign0  = time.time()
+                    _buy_timing["build_ms"] = (time.time() - _t_pp_build) * 1000
+                    _buy_timing["http_build_ms"] = _buy_timing["build_ms"]  # entire build is the HTTP call for PP path
+                    _t_sign_start = time.time()
                     tx        = VersionedTransaction.from_bytes(tx_bytes)
                     signed_tx = VersionedTransaction(tx.message, [keypair])
-                    _sign_ms  = (time.time() - _t_sign0) * 1000
-                    _t_send0  = time.time()
+                    _buy_timing["sign_ms"] = (time.time() - _t_sign_start) * 1000
+                    _t_send_start = time.time()
                     sig       = _send_transaction(bytes(signed_tx))
-                    _send_ms  = (time.time() - _t_send0) * 1000
+                    _buy_timing["send_ms"] = (time.time() - _t_send_start) * 1000
             else:
-                # Jupiter fallback backend
-                _t_build0 = time.time()
-                if not jupiter_quote_price:
+                # Jupiter fallback backend — collect async quote (may already be done)
+                try:
+                    quote = _quote_fut.result(timeout=10)
+                    token_decimals_q = int(quote.get("outputDecimals") or 6)
+                    tokens_out_q     = int(quote["outAmount"]) / (10 ** token_decimals_q)
+                    jupiter_quote_price = size_usd / tokens_out_q if tokens_out_q > 0 else 0
+                except Exception as _jup_qe:
+                    log.warning("Jupiter pre-flight quote failed: %s", _jup_qe)
                     quote = _jup_get_quote(SOL_MINT, token_address, lamports)
                 tx_bytes  = _jup_build_swap_tx(quote, wallet)
-                _build_ms = (time.time() - _t_build0) * 1000
-                _t_sign0  = time.time()
                 tx        = VersionedTransaction.from_bytes(tx_bytes)
                 signed_tx = VersionedTransaction(tx.message, [keypair])
-                _sign_ms  = (time.time() - _t_sign0) * 1000
-                _t_send0  = time.time()
                 sig       = _send_transaction(bytes(signed_tx))
-                _send_ms  = (time.time() - _t_send0) * 1000
             _t_submitted = time.time()
             log.info("BUY tx sent  sig=%s  token=%s  size=$%.2f  backend=%s",
                      sig[:16], token_address[:8], size_usd, EXECUTOR_BACKEND)
 
             # ── Confirm — check meta.err ──────────────────────────────────────
-            _t_confirm0    = time.time()
-            confirmed, err = _confirm_tx(sig, t_sent=_t_confirm0)
+            _t_land_start = time.time()
+            confirmed, err = _confirm_tx(sig)
             _t_confirmed   = time.time()
-            _land_ms       = (_t_confirmed - _t_confirm0) * 1000
-            _largest       = max(
-                [("build_ms", _build_ms), ("sign_ms", _sign_ms),
-                 ("send_ms", _send_ms), ("land_ms", _land_ms)],
-                key=lambda kv: kv[1],
-            )
-            log.info(
-                "SUBMIT SPANS token=%s build_ms=%.0f sign_ms=%.0f send_ms=%.0f "
-                "land_ms=%.0f largest=%s(%.0f)",
-                token_address[:8], _build_ms, _sign_ms, _send_ms, _land_ms,
-                _largest[0], _largest[1],
-            )
+            _buy_timing["land_ms"] = (_t_confirmed - _t_land_start) * 1000
+            _buy_timing["confirm_detect_ms"] = _buy_timing["land_ms"]  # same measurement, clearer name
+            _buy_timing["rpc_429_wait_ms"] += _rpc_429_read()
+
+            # L1a: collect async Jupiter quote for telemetry (PP backend)
+            # Quote has been running since pre-build (~12s ago) — usually already done.
+            if EXECUTOR_BACKEND == "pumpportal":
+                try:
+                    _q = _quote_fut.result(timeout=1.0)
+                    _tq_dec = int(_q.get("outputDecimals") or 6)
+                    _tq_out = int(_q["outAmount"]) / (10 ** _tq_dec)
+                    jupiter_quote_price = size_usd / _tq_out if _tq_out > 0 else 0
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        _quote_exec.shutdown(wait=False)
+                    except Exception:
+                        pass
+                _buy_timing["quote_ms"] = (time.time() - _t_quote_start) * 1000
 
             if not confirmed:
                 if err is not None:
@@ -1927,12 +2121,10 @@ class MemeExecutor:
                     log.debug("BUY sol_spent calc failed (non-blocking): %s", _sfee_e)
 
             if fill_price is None:
-                # jupiter_quote_price is async now (L1a) and usually still 0 here —
-                # fall back to baseline_price (signal_price), not the unreliable quote.
-                fill_price = signal_price or jupiter_quote_price
+                fill_price = jupiter_quote_price
                 log.warning(
                     "BUY confirmed but tx parse failed — "
-                    "opening at baseline $%.10f (entry_estimated)  sig=%s",
+                    "opening at Jupiter quote $%.10f (entry_estimated)  sig=%s",
                     fill_price, sig[:16],
                 )
 
@@ -1959,15 +2151,20 @@ class MemeExecutor:
                 # Used by portfolio.py to tag cohort:bonding_curve even when PP is silent
                 # (T22 tokens are always PP-silent but may still be on bonding curve).
                 "oracle_bonding_curve": _curve.get("complete") is False,
-                "curve_progress_at_entry": _curve_progress_at_entry,   # L3 telemetry
                 "timing": {
                     "t_quote":   round(_t_quoted    - _t0, 3),
                     "t_submit":  round(_t_submitted - _t0, 3),
                     "t_confirm": round(_t_confirmed - _t0, 3),
-                    "build_ms":  round(_build_ms, 1),
-                    "sign_ms":   round(_sign_ms, 1),
-                    "send_ms":   round(_send_ms, 1),
-                    "land_ms":   round(_land_ms, 1),
+                    # B7: granular timing decomposition
+                    "build_ms":          round(_buy_timing["build_ms"], 1),
+                    "sign_ms":           round(_buy_timing["sign_ms"], 1),
+                    "send_ms":           round(_buy_timing["send_ms"], 1),
+                    "land_ms":           round(_buy_timing["land_ms"], 1),
+                    "rpc_429_wait_ms":   round(_buy_timing["rpc_429_wait_ms"], 1),
+                    # E1: sub-part decomposition
+                    "http_build_ms":     round(_buy_timing["http_build_ms"], 1),
+                    "confirm_detect_ms": round(_buy_timing["confirm_detect_ms"], 1),
+                    "quote_ms":          round(_buy_timing["quote_ms"], 1),
                 },
             }
 
@@ -1985,7 +2182,13 @@ class MemeExecutor:
         escalate: bool = False,
         known_token_count: int = 0,
         urgent: bool = False,
+        skip_pumpswap: bool = False,
+        skip_pump_amm: bool = False,
     ) -> dict:
+        """
+        skip_pump_amm: C4 — explicit orchestrator instruction to bypass pump-amm
+        (e.g. for T22 tokens). Replaces internal T22 cache lookup (C4).
+        """
         """
         Swap all held token_address → SOL.
 
@@ -2149,16 +2352,15 @@ class MemeExecutor:
                 _grad_fee_floor = 0.0005
                 _grad_fee = max(_helius_priority_fee(token_address, _grad_fee_level), _grad_fee_floor)
 
-                # ── T22 check: pump-amm cannot handle Token-2022 ATAs ────────────
-                # pump-amm uses SPL ATA derivation → always reverts with Custom:6001
-                # for T22 tokens. Skip directly to Jupiter for T22 graduated tokens.
-                _skip_pamm_t22 = (
-                    _mint_token_program_cache.get(token_address) == _TOKEN22_PROGRAM_ID
-                    or "TokenzQ" in _mint_token_program_cache.get(token_address, "")
-                )
-                if _skip_pamm_t22:
+                # ── C4: pump-amm skip decision comes from orchestrator (not internal cache) ─
+                # skip_pump_amm is passed explicitly by portfolio/orchestrator.
+                # T22 tokens: orchestrator sets skip_pump_amm=True (pump-amm always
+                # reverts Custom:6001 for T22 due to wrong ATA program derivation).
+                # Also honour legacy skip_pumpswap flag from call sites not yet migrated.
+                _skip_pump_amm_final = skip_pump_amm or skip_pumpswap
+                if _skip_pump_amm_final:
                     log.warning(
-                        "SELL escalate (graduated T22) — pump-amm SKIPPED, going direct to Jupiter  token=%s",
+                        "SELL escalate — pump-amm SKIPPED (orchestrator decision)  token=%s",
                         token_address[:8],
                     )
                 else:
@@ -2169,10 +2371,9 @@ class MemeExecutor:
                 _pamm_conf = False
                 _pamm_err  = None
                 try:
-                    if _skip_pamm_t22:
-                        # pump-amm always reverts Custom:6001 for T22 (wrong ATA program).
-                        # Set err so the fallback condition below evaluates naturally.
-                        _pamm_err = "pump_amm_skipped_t22"
+                    if _skip_pump_amm_final:
+                        # Orchestrator says skip — set err so fallback evaluates naturally.
+                        _pamm_err = "pump_amm_skipped_orchestrator"
                     else:
                         _t_pamm = time.time()
                         _pamm_bytes = _pumpportal_build_tx(
@@ -2383,6 +2584,18 @@ class MemeExecutor:
                         _use_lb_sell    = (_tokens_to_sell_local > 0 and
                                            _sell_tok_prog == _TOKEN_PROGRAM_ID)
                         if _use_lb_sell:
+                            # Z8: gate on pump.fun compatibility state.
+                            # sell_v2 discriminator + account-count change confirmed post-upgrade.
+                            # Disabled until VERIFIED.  PumpPortal fallback below.
+                            from memecoin.pumpfun_compat import local_build_allowed as _z8_lba_sell
+                            from memecoin.pumpfun_compat import get_state as _z8_gs_sell
+                            if not _z8_lba_sell():
+                                log.info(
+                                    "LOCAL BUILD sell DISABLED (Z8 compat=%s) — PumpPortal  token=%s",
+                                    _z8_gs_sell(), token_address[:8],
+                                )
+                                _use_lb_sell = False
+                        if _use_lb_sell:
                             try:
                                 _t_lb     = time.time()
                                 _lb_bytes = _pumpfun_local_build_tx(
@@ -2402,29 +2615,33 @@ class MemeExecutor:
                                 log.warning("LOCAL BUILD sell step %d failed (%s) — PumpPortal  token=%s",
                                             step, _lb_err, token_address[:8])
                         elif _tokens_to_sell_local > 0:
-                            # T22 bonding-curve sell: use T22-native local path first.
-                            # bonding_curve_t22.run_bc_t22_sell() derives user ATA with Token-2022
-                            # token program — fixes Custom:6001 from wrong ATA derivation.
-                            _bc_t22_result = None
-                            try:
-                                from memecoin.bonding_curve_t22 import run_bc_t22_sell as _run_bc_t22
-                                from memecoin.exit_router import TokenExitState as _TES, _log_route_attempt as _lra
-                                # executor.sell() has no `pos` param — use token_address as fallback
-                                _fake_pos = type("P", (), {
-                                    "token_address": token_address, "token_symbol": token_address[:8],
-                                    "id": token_address, "tokens_held": _tokens_to_sell_local,
-                                    "notes": "",
-                                })()
-                                _bc_t22_result = _run_bc_t22(_fake_pos, "auto_sell", rpc_url=CHAINS.get("solana", {}).get("rpc", "https://api.mainnet-beta.solana.com"))
-                                _lra(_bc_t22_result, _fake_pos, _TES.BONDING_CURVE_T22)
-                            except Exception as _t22_err:
-                                log.warning("BC T22 sell call failed (%s) — PumpPortal fallback  token=%s",
-                                            _t22_err, token_address[:8])
-                            # If T22 local path succeeded, skip PumpPortal
-                            if _bc_t22_result and _bc_t22_result.get("success"):
-                                log.info("BC T22 LOCAL SELL success  token=%s", token_address[:8])
-                                _sig_sent_local = True
-                                sig = _bc_t22_result.get("tx_sig", "")
+                            # Phase 1: check config.T22_NATIVE_BC_SELL_ENABLED before any
+                            # native path code. When False: zero RPC spent, no sim, no
+                            # run_bc_t22_sell call. Code kept intact behind flag.
+                            from memecoin.config import T22_NATIVE_BC_SELL_ENABLED as _t22_enabled
+                            global _T22_NATIVE_SELL_LOGGED
+                            if not _t22_enabled:
+                                if not _T22_NATIVE_SELL_LOGGED:
+                                    log.info(
+                                        "T22 native BC sell disabled — PumpPortal primary"
+                                    )
+                                    _T22_NATIVE_SELL_LOGGED = True
+                                # skip: no run_bc_t22_sell, no sim, zero RPC
+                            else:
+                                # Native path enabled — attempt bc_t22 sell (harness-gated)
+                                try:
+                                    from memecoin.bonding_curve_t22 import run_bc_t22_sell as _bct22
+                                    _bct22_result = _bct22(
+                                        token_address, _tokens_to_sell_local, slip_pct, fee_sol
+                                    )
+                                    if _bct22_result and _bct22_result.get("success"):
+                                        sig = _bct22_result.get("tx_sig", "")
+                                        _sig_sent_local = bool(sig)
+                                except Exception as _bct22_err:
+                                    log.warning("bc_t22_sell failed (%s) — PumpPortal  token=%s",
+                                                _bct22_err, token_address[:8])
+                            if not _sig_sent_local:
+                                log.info("BC T22 sell — PumpPortal  token=%s", token_address[:8])
                         if not _sig_sent_local:
                             tx_bytes  = _pumpportal_build_tx(
                                 wallet_pubkey=wallet, action="sell", token_mint=token_address,
@@ -2573,7 +2790,7 @@ class MemeExecutor:
             #   Skips the remaining bonding-curve ladder steps (already broken out).
             # _graduated_detected=False: all 3 PP steps failed (non-6005 reverts).
             #   Route: Jupiter directly (existing behaviour for dead/rugged tokens).
-            if _graduated_detected:
+            if _graduated_detected and not skip_pumpswap:
                 # ── Try local PumpSwap first (correct account structure) ──────────────
                 log.warning("SELL 6005-detected → trying local PumpSwap first  token=%s", token_address[:8])
                 try:
@@ -2780,11 +2997,39 @@ class MemeExecutor:
                 token_address[:8], all_sigs,
             )
             # ── Kill switch: auto-disable live buys on unknown sell failure ───────────
+            # 4D(b): only fires when >=2 DISTINCT tokens fail within 10 min window.
+            # One token storming its own sell ladder cannot kill the entire desk.
             try:
                 from memecoin.config import AUTO_DISABLE_ON_UNKNOWN_SELL_FAILURE as _auto_disable
                 if _auto_disable:
-                    import memecoin.kill_switch as _ks
-                    _ks.disable_live_buys(f"unknown sell failure: token={token_address[:8]}")
+                    _now = time.time()
+                    # Record failure for this token
+                    _KS_FAIL_TOKENS[token_address] = _now
+                    # Purge entries outside the window
+                    _expired = [t for t, ts in _KS_FAIL_TOKENS.items() if _now - ts > _KS_FAIL_WINDOW]
+                    for t in _expired:
+                        _KS_FAIL_TOKENS.pop(t, None)
+                    _distinct_failing = len(_KS_FAIL_TOKENS)
+                    if _distinct_failing >= 2:
+                        import memecoin.kill_switch as _ks
+                        _trigger_tokens = list(_KS_FAIL_TOKENS.keys())
+                        _ks.disable_live_buys(f"unknown sell failure: {_distinct_failing} tokens")
+                        try:
+                            from app.alerts import _send as _ks_send
+                            _ks_send(
+                                f"🔴 KILL SWITCH: live buys disabled\n"
+                                f"Reason: sell ladder exhausted on {_distinct_failing} tokens "
+                                f"within {int(_KS_FAIL_WINDOW/60)} min\n"
+                                f"Tokens: {', '.join(t[:8] for t in _trigger_tokens)}"
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        log.warning(
+                            "SELL ladder exhausted for %s — kill switch NOT fired "
+                            "(only 1 distinct failing token in window; need >=2)",
+                            token_address[:8],
+                        )
             except Exception:
                 pass
             return {

@@ -1,0 +1,68 @@
+batch_id: v8_readiness
+description: "V8-READINESS closing batch: test suite (N1), canary+B7 (N2), epoch ON (N3), analysis artifacts (N4), receipts hygiene (N5)"
+commit: ""   # filled after commit
+committed_at: "2026-07-29T00:00:00Z"
+
+# All items share the single ## section heading in RECEIPTS.md.
+# batch_verify finds "## V8-READINESS BATCH" and checks within its body.
+
+items:
+
+  - id: N1
+    description: "Full pytest suite 91/91 — RF0-RF6 + RC1 coverage"
+    receipts_section: "V8-READINESS BATCH"
+    receipt_complete: true
+    greps:
+      - {file: "research/tests/test_rf1_curve_oracle.py",  pattern: "TestCurveOracle"}
+      - {file: "research/tests/test_rf3_tiered_window.py", pattern: "_should_extend"}
+      - {file: "research/tests/test_rf4_realert.py",       pattern: "TestCheckDedup"}
+      - {file: "research/tests/test_rf5_path_schema.py",   pattern: "TestLoadPathFile"}
+      - {file: "research/tests/test_rf6_versioning.py",    pattern: "TestGetLoadedVersion"}
+      - {file: "research/tests/test_report_era_split.py",  pattern: "TestEraConstants"}
+    tests:
+      - "research/tests/test_report_era_split.py"
+      - "research/tests/test_rf1_curve_oracle.py"
+      - "research/tests/test_rf3_tiered_window.py"
+      - "research/tests/test_rf4_realert.py"
+      - "research/tests/test_rf5_path_schema.py"
+      - "research/tests/test_rf6_versioning.py"
+
+  - id: N2
+    description: "Canary trade armed at $2 + B7 E1 timing pending next live trade"
+    receipts_section: "V8-READINESS BATCH"
+    receipt_complete: false   # complete when first post-E1 ENTRY TIMING log line captured
+    greps:
+      - {file: "memecoin/executor.py",  pattern: "_buy_timing"}
+      - {file: "memecoin/executor.py",  pattern: "build_ms"}
+      - {file: "memecoin/portfolio.py", pattern: "confirm_detect_ms"}
+      - {file: "memecoin/config.py",    pattern: "trade_size_usd.*2"}
+
+  - id: N3
+    description: "Epoch ON: canary sizing live, daily cron, F3 drought alarm active"
+    receipts_section: "V8-READINESS BATCH"
+    receipt_complete: true
+    greps:
+      - {file: "research/scripts/epoch_daily_log.py", pattern: "epoch_daily"}
+      - {file: "memecoin/health_monitor.py",          pattern: "_DROUGHT_MIN_PAPERS"}
+      - {file: "memecoin/portfolio.py",               pattern: "_count_open_live"}
+
+  - id: N4
+    description: "Four analysis artifacts committed to docs/V8_INPUTS.md"
+    receipts_section: "V8-READINESS BATCH"
+    receipt_complete: false   # complete when path_stats + replay_exits have data (post PC2 backfill)
+    greps:
+      - {file: "docs/V8_INPUTS.md", pattern: "Forward-Validation"}
+      - {file: "docs/V8_INPUTS.md", pattern: "Survivorship-Bias"}
+      - {file: "docs/V8_INPUTS.md", pattern: "path_stats"}
+      - {file: "docs/V8_INPUTS.md", pattern: "replay_exits"}
+
+  - id: N5
+    description: "RECEIPTS.md hygiene — all legacy-commit sections resolved, no silent blanks"
+    receipts_section: "V8-READINESS BATCH"
+    receipt_complete: true
+    greps:
+      - {file: "docs/RECEIPTS.md", pattern: "verified in conversation 2026-07-10"}
+      - {file: "docs/RECEIPTS.md", pattern: "ada6c06"}
+      - {file: "docs/RECEIPTS.md", pattern: "E1 timing: PENDING"}
+      - {file: "docs/RECEIPTS.md", pattern: "91 passed"}
+      - {file: "docs/RECEIPTS.md", pattern: "PLACEHOLDER", must_not: true}

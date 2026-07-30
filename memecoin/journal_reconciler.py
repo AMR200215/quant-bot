@@ -261,9 +261,10 @@ def _compute_correction(
 
         exit_price_new = None
         if tokens_held > 0 and sol_price > 0:
-            tokens_human = tokens_held * remaining_fraction / 1e6
-            if tokens_human > 0:
-                exit_price_new = (sol_received / tokens_human) * sol_price
+            from memecoin.tx_meta import compute_fill_price
+            _raw_tokens = int(tokens_held * remaining_fraction)
+            if _raw_tokens > 0:
+                exit_price_new = compute_fill_price(sol_received, _raw_tokens, sol_price)
 
         # Old pnl for delta stats (only count delta once per sig across files)
         usd_delta = 0.0
@@ -283,6 +284,26 @@ def _compute_correction(
             round(pnl_usd_new, 4) if pnl_usd_new is not None else "n/a",
             round(pnl_pct_new, 2) if pnl_pct_new is not None else "n/a",
         )
+
+        # ── Telemetry: journal corrected ──
+        try:
+            from memecoin import telemetry as _tel
+            _pos_id = row.get("id", "")
+            _rt = _tel.get_trace_id_for_pos(_pos_id)
+            if _rt:
+                _old_pnl = 0.0
+                try:
+                    _old_pnl = float(row.get("pnl_usd") or 0)
+                except (TypeError, ValueError):
+                    pass
+                _tel.event(_rt, "journal_corrected",
+                    row_id=_pos_id,
+                    old_pnl=round(_old_pnl, 4),
+                    new_pnl=round(pnl_usd_new, 4) if pnl_usd_new is not None else None,
+                    sol_delta=round(sol_received, 8),
+                )
+        except Exception:
+            pass
 
         return {
             "exit_price":    exit_price_new,
@@ -479,6 +500,15 @@ def run_reconciler_pass(
     total_checked = 0
     total_corrected = 0
     total_usd = 0.0
+
+    # Phase 4.2: self-heal missing rows before normal reconciliation (runs under JOURNAL_LOCK inside)
+    try:
+        from memecoin.reconcile import _self_heal_missing_journal_rows
+        _healed = _self_heal_missing_journal_rows()
+        if _healed:
+            log.warning("journal_reconciler: self-heal added %d missing row(s)", _healed)
+    except Exception as _sh_err:
+        log.debug("self_heal in journal_reconciler failed: %s", _sh_err)
 
     # Shared set: confirmed sigs seen across files so USD delta is not double-counted
     # when the same live trade appears in both live and social journals.

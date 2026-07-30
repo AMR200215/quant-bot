@@ -98,6 +98,8 @@ EXECUTOR_BACKEND = "pumpportal"
 # Sell-stuck retry cooldown: seconds before retrying the full sell ladder
 # on a position that exhausted all sell attempts.
 SELL_STUCK_RETRY_SEC = 60
+GRAD_FAST_WINDOW_SEC   = 60    # first N seconds after graduation — use fast retry cadence
+GRAD_FAST_RETRY_SEC    = 5     # retry every N seconds in fast window (vs 60s MU ladder)
 MIGRATION_UNCERTAIN_MANUAL_TIMEOUT_SEC = 600  # 10 min before manual-check alert fires
 
 def _stage(capital: float) -> int:
@@ -202,10 +204,18 @@ PREGRAD_TRIGGER_PCT = 0.85   # exit when vSol/GRAD_SOL_UI >= this (default 85%)
 # Exit logic
 # ---------------------------------------------------------------------------
 HARD_STOP_PCT        = -0.35   # -35% from entry → immediate exit
+MAX_LOSS_FROM_FILL_PCT = 0.50  # max loss from fill price (caps fill-anchored stop floor)
 TRAILING_STOP_PCT    = -0.40   # -40% from peak once in profit
 TRAIL_ACTIVATES_PCT  =  0.75   # trailing stop activates at +75% (was +100%)
 TIME_STOP_MINUTES    =  90     # exit if flat >90 min with < +30% gain (was 45)
 TIME_STOP_MIN_GAIN   =  0.30   # if gain > 30% don't apply time stop
+
+# CATCH-UP TP REJECTED (Part 1 of spec):
+# A catch-up TP after a high-drift live fill reduces exposure only after:
+# the worse entry has already occurred, entry fees were paid, an extra exit fee is paid,
+# and additional execution latency is introduced. The correct mechanisms are better entry
+# execution, ex-ante size normalization, entry drift blocking where justified, and
+# accurate paper/live comparison. No behavioral TP changes in this patch.
 
 # Take-profit ladder (only when no whale exit signal)
 # Fractions are of remaining position at each level.
@@ -260,8 +270,8 @@ SIGNAL_SETTINGS: dict[str, dict] = {
         "time_stop_minutes":   45,
     },
     "social_alert": {
-        "trade_size_usd":      3,       # $3/trade — capital reset to $8
-        "live_trade_size_usd": 3,       # scale up when wallet recovers
+        "trade_size_usd":      2,       # $2/trade — reduced for E1 canary (restore to $3 after)
+        "live_trade_size_usd": 2,       # scale up when wallet recovers
         "hard_stop_pct":       -0.35,
         "time_stop_minutes":   90,
         # ATH-anchored trail tiers (replaces single trailing_stop_pct / trail_activates_pct).
@@ -368,6 +378,8 @@ JUPITER_JITTER_MS         = 100   # governor jitter (separate from executor back
 
 # Phase-gate: keep False until real-wallet simulation passes for T22 exits
 JUPITER_T22_GRAD_PRIMARY_ENABLED = False
+T22_GRAD_PUMP_AMM_PROBE_ENABLED = False  # Part 14: not proven, gate until receipt exists
+T22_GRAD_PUMP_AMM_ENABLED       = False  # Part 14: promote only after valid on-chain receipt
 
 # ── Live buy kill switch ─────────────────────────────────────────────────────
 LIVE_BUYS_ENABLED              = True    # master switch — auto-disabled on unknown sell failure
@@ -395,6 +407,13 @@ PUMPSWAP_LOCAL_SIM_ONLY      = True    # simulate, log result, then fall through
 PUMPSWAP_LOCAL_REQUIRE_SIM_OK = True   # if sim fails, do not send (always respected)
 ALLOW_ZERO_MIN_OUT_EMERGENCY   = False  # if True, skip min_sol_out check (last resort only)
 LOCAL_PUMPSWAP_MAX_SLIPPAGE_PCT = 35    # max slippage for min_sol_out computation (35%)
+# ---------------------------------------------------------------------------
+# T22 bonding-curve native sell path
+# ---------------------------------------------------------------------------
+T22_NATIVE_BC_SELL_ENABLED = False
+# Native T22 BC sell disabled: assoc bonding-curve ATA derivation broken
+# (curve-PDA owner, off-curve, TOKEN_2022 program). Fix is issue-tracked and
+# harness-gated. PumpPortal is primary for T22 BC sells.
 
 # ---------------------------------------------------------------------------
 # Execution RPC — multi-RPC failover for rescue sell path only
@@ -433,6 +452,13 @@ JUPITER_RESCUE_REBROADCAST_MAX_RPC      = 3     # max extra RPCs to broadcast to
 # Read from env so it can be set without code changes.
 # Falls back to the known trading wallet; override with WALLET_PUBKEY env var.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Telemetry — append-only event log for trade lifecycle instrumentation
+# ---------------------------------------------------------------------------
+TELEMETRY_ENABLED       = True
+TELEMETRY_HEARTBEAT_SEC = 10
+TELEMETRY_FILE          = "logs/trade_telemetry.jsonl"
+
 WALLET_PUBKEY: str = os.getenv(
     "WALLET_PUBKEY",
     "8PNHvFWeMT7CqpUvJjAwVgAK545t5KV3uCPd8DUfaTiM",

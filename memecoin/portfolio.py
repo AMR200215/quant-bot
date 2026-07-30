@@ -45,6 +45,23 @@ from app import alerts
 
 log = logging.getLogger(__name__)
 
+
+def effective_hard_stop_level(signal_price: float, entry_price: float, hard_stop_pct: float) -> float:
+    """Compute effective hard-stop level = max(signal-anchored stop, fill-loss floor).
+
+    Prevents TROONCH-style losses when slippage is high, while preserving
+    signal structure when fill is close to signal.
+    Paper behaviour unchanged: paper entry_price == signal_price.
+    """
+    try:
+        from memecoin.config import MAX_LOSS_FROM_FILL_PCT as _mlffp
+    except ImportError:
+        _mlffp = 0.50  # default: 50% max loss from fill (stub-safe fallback)
+    _sa = signal_price * (1 + hard_stop_pct) if signal_price > 0 else 0.0
+    _fl = entry_price * (1 - _mlffp)
+    return max(_sa, _fl)
+
+
 JOURNAL_FIELDS = [
     # identity
     "id", "signal_id", "chain", "token_address", "token_symbol",
@@ -81,6 +98,11 @@ JOURNAL_FIELDS = [
     # accounting v3 fields (added 2026-07-06)
     "sol_received",          # raw SOL received from chain at exit (from tx_meta / reconciler)
     "accounting_epoch",      # which accounting logic produced this row
+    # P1': three-price benchmark fields (added 2026-07-09)
+    "signal_dex_price",      # DexScreener price at signal time (stale indexer snapshot)
+    "baseline_curve_price",  # preflight curve/PP baseline price at decision time
+    "fill_price_field",      # actual on-chain fill price (blank for paper-only signals)
+    "entry_source",          # "curve" | "pp_tick" | "dex_stale" | ""
 ]
 
 # Stamp applied to every trade written from this session onward
@@ -92,6 +114,65 @@ CONFIG_TAG = "v7_entry_filters_2026-06-06"
 # e2_pp_exits             : commit 81de8da — PP real-time exits wired to paper
 # e3_pp_entries_anchored_stops: commit 9a2a332 — signal-anchored stops + this accounting fix
 ACCOUNTING_EPOCH = "e4_rt_feed_quote_gate"
+
+
+# ---------------------------------------------------------------------------
+# C2 — Live entry program gate
+# ---------------------------------------------------------------------------
+
+def evaluate_live_entry_program_gate(
+    classification,   # MintClassification from mint_classifier.py
+    curve_observation=None,  # dict with "complete" key, or None
+    config=None,      # unused for now, reserved
+) -> dict:
+    """
+    Gate a live buy based on mint classification.
+
+    Returns:
+        {"allowed": True}  — proceed with buy
+        {"allowed": False, "reason": str, "token_program": str}  — block buy
+
+    Rules:
+        - If classification is None or classification.error is set → block (unknown program)
+        - If classification.token_program == "UNKNOWN" → block
+        - If classification.is_tradeable is False (unsupported extensions) → block
+        - SPL or T22_CLEAN → allow (T22 BC sells work; Jupiter rescue handles post-graduation)
+    """
+    if classification is None:
+        return {
+            "allowed": False,
+            "reason": "unknown program: classification unavailable",
+            "token_program": "UNKNOWN",
+        }
+
+    if classification.error is not None:
+        return {
+            "allowed": False,
+            "reason": f"unknown program: classification error — {classification.error}",
+            "token_program": getattr(classification, "token_program", "UNKNOWN"),
+        }
+
+    tp = classification.token_program
+
+    if tp == "UNKNOWN":
+        return {
+            "allowed": False,
+            "reason": "unknown token program",
+            "token_program": "UNKNOWN",
+        }
+
+    if not classification.is_tradeable:
+        unsup = getattr(classification, "unsupported_extensions", [])
+        return {
+            "allowed": False,
+            "reason": f"unsupported extensions: {unsup}",
+            "token_program": tp,
+        }
+
+    # SPL or T22_CLEAN — allow.
+    # T22 bonding-curve sells work (bonding_curve_t22.py).
+    # Post-graduation PumpSwap local fails for T22, but MU retry escalates to Jupiter rescue.
+    return {"allowed": True}
 
 
 @dataclass
@@ -128,6 +209,8 @@ class Position:
     remaining_fraction: float = 1.0  # 1.0 = full position still open
     realized_pnl_usd: float = 0.0   # locked-in USD from partial TP sells
     notes: str = ""
+    is_live: bool = False          # 4E: set True exactly once at live buy confirm; all routing keys off this
+    mu_sell_total: int = 0         # 4D: cumulative sell windows attempted across all sell_stuck re-arms
     sell_attempts: int = 0    # retry counter — if > MAX_SELL_RETRIES give up
     # --- model training features (captured at entry) ---
     price_change_5m: float = 0.0
@@ -163,6 +246,22 @@ class Position:
     creator_wallet: str = ""   # token deployer — triggers dev_dump exit if they sell
     tokens_held: int = 0       # raw token count from buy tx delta — used for known-balance TP sells
     sol_received: float = 0.0  # raw SOL received at exit (from on-chain delta — accounting only)
+    # P1': price benchmark fields
+    signal_dex_price: float = 0.0    # DexScreener price at signal time (stale)
+    baseline_curve_price: float = 0.0  # preflight curve/PP baseline at decision time
+    fill_price_recorded: float = 0.0  # actual on-chain fill price (0 for paper-only)
+    entry_source: str = ""           # "curve"|"pp_tick"|"dex_stale"|""
+    baseline_price: float = 0.0   # preflight curve/PP baseline (same ref as stops/sizing)  # Phase 6.1
+    # Z2/Z7: Structured execution state fields (epoch-protective, serialized with position)
+    policy_cohort: str = ""           # strategy_pure_rider | legacy_graduation_guard | paper_reference
+    lifecycle_state: str = ""         # bonding_curve | graduated | unknown | ""
+    exit_intent_reason: str = ""      # original exit reason set when intent created (never overwritten by routing)
+    exit_intent_ts: float = 0.0       # when exit intent was created
+    exit_intent_policy: str = ""      # policy_cohort that created the exit intent
+    venue_state_json: str = ""        # JSON-encoded per-venue state: {"primary": "pump_amm"|"bonding_curve"}
+    pending_signature: str = ""       # last TX sig sent — preserved through restarts for duplicate-sell guard
+    pending_signature_route: str = "" # route used for pending_signature
+    pending_signature_ts: float = 0.0 # when pending_signature was sent
 
     @property
     def pnl_pct(self) -> float:
@@ -177,6 +276,14 @@ class Position:
         # remaining portion: pnl_pct on whatever fraction is still open/being closed
         return self.realized_pnl_usd + self.pnl_pct * self.size_usd * self.remaining_fraction
 
+    @pnl_pct.setter
+    def pnl_pct(self, _):
+        raise AttributeError("pnl_pct is computed — set exit_price or realized_pnl_usd instead")
+
+    @pnl_usd.setter
+    def pnl_usd(self, _):
+        raise AttributeError("pnl_usd is computed — set exit_price or realized_pnl_usd instead")
+
 
 # ---------------------------------------------------------------------------
 # Persistence
@@ -189,6 +296,25 @@ def _load_positions() -> dict[str, Position]:
         raw = json.loads(POSITIONS_FILE.read_text())
         out = {}
         for d in raw:
+            # 4E backfill: existing positions serialized before is_live field was added
+            if "is_live" not in d:
+                d["is_live"] = bool(d.get("notes") and "live|tx:" in d["notes"])
+            # Z2/Z7 backfill: structured execution state fields
+            if "policy_cohort" not in d:
+                d["policy_cohort"] = (
+                    "strategy_pure_rider" if d.get("is_live") else "paper_reference"
+                )
+            if "lifecycle_state" not in d:
+                _notes_bf = d.get("notes", "") or ""
+                if "|cohort:graduated" in _notes_bf:
+                    d["lifecycle_state"] = "graduated"
+                elif "|cohort:bonding_curve" in _notes_bf:
+                    d["lifecycle_state"] = "bonding_curve"
+                else:
+                    d["lifecycle_state"] = ""
+            # Strip unknown keys so Position(**d) doesn't raise on old snapshots
+            _known = set(Position.__dataclass_fields__)  # type: ignore[attr-defined]
+            d = {k: v for k, v in d.items() if k in _known}
             p = Position(**d)
             out[p.id] = p
         return out
@@ -286,6 +412,11 @@ def _build_journal_row(pos: Position) -> dict:
         "remaining_fraction": round(pos.remaining_fraction, 4),
         "sol_received": round(pos.sol_received, 8) if pos.sol_received else "",
         "accounting_epoch": ACCOUNTING_EPOCH,
+        # P1': three-price benchmark fields
+        "signal_dex_price": pos.signal_dex_price or "",
+        "baseline_curve_price": pos.baseline_curve_price or "",
+        "fill_price_field": pos.fill_price_recorded or "",
+        "entry_source": pos.entry_source or "dex_stale",
     }
 
 
@@ -309,7 +440,21 @@ def _append_price_tick(pos: "Position", price: float) -> None:
         pass
 
 
+# JOURNAL CHOKE POINT — ALL close paths must call this function.
+# Verify with: grep -n "_append_journal\|JOURNAL CHOKE POINT" portfolio.py
+# Every path: close_position (normal, abort_tripwire, zero_balance, graduated_loss,
+#             graduated_recovered), _finalize_rescue_sell (both fill and pending).
+# abort_tripwire path at line ~1442 also calls _append_journal directly.
 def _append_journal(pos: Position):
+    # ── Telemetry: journal write ──
+    try:
+        from memecoin import telemetry as _tel
+        _jt = _tel.get_trace_id_for_pos(pos.id)
+        if _jt:
+            _tel.event(_jt, "journal_write_started", pos_id=pos.id)
+    except Exception:
+        pass
+
     JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
     row = _build_journal_row(pos)
 
@@ -328,8 +473,22 @@ def _append_journal(pos: Position):
                 writer.writeheader()
             writer.writerow(row)
 
+        # ── Telemetry: journal written ──
+        try:
+            _jt2 = _tel.get_trace_id_for_pos(pos.id)
+            if _jt2:
+                _tel.event(_jt2, "journal_written",
+                    pos_id=pos.id,
+                    exit_price=pos.exit_price,
+                    pnl_usd=pos.pnl_usd,
+                    exit_reason=pos.exit_reason,
+                    fill_estimated="|entry_estimated" in (pos.notes or ""),
+                )
+        except Exception:
+            pass
+
         # If this was a live trade, also write to the live journal
-        if pos.notes and "live|tx:" in pos.notes:
+        if pos.is_live:
             _ensure_journal_header(LIVE_JOURNAL_FILE)
             write_header = not LIVE_JOURNAL_FILE.exists() or LIVE_JOURNAL_FILE.stat().st_size == 0
             with open(LIVE_JOURNAL_FILE, "a", newline="") as f:
@@ -339,7 +498,7 @@ def _append_journal(pos: Position):
                 writer.writerow(row)
 
     # DRY_RUN funnel counter — read + alert outside lock (non-critical, can be eventually consistent)
-    if pos.notes and "live|tx:" in pos.notes and "DRY_RUN" in (pos.notes or ""):
+    if pos.is_live and "DRY_RUN" in (pos.notes or ""):
         try:
             count = 0
             with open(LIVE_JOURNAL_FILE) as _f:
@@ -355,66 +514,6 @@ def _append_journal(pos: Position):
                 )
         except Exception:
             pass
-
-
-def is_rescue_eligible_error(
-    error_class: str = "",
-    exit_state: str = "",
-    reason: str = "",
-    oracle_bonding_curve: bool = False,
-) -> bool:
-    """
-    Return True when the current sell context warrants a Jupiter rescue attempt.
-    Replaces the fragile ``"_er" in dir()`` pattern in close_position().
-
-    Parameters
-    ----------
-    error_class          : str   error_class from the PumpSwap local path result
-    exit_state           : str   TokenExitState.value string from ExitRouter classification
-    reason               : str   reason string passed to close_position()
-    oracle_bonding_curve : bool  True when bonding curve oracle confirmed complete=False at
-                                 buy time. MIGRATION_UNCERTAIN is PP-silence-based and fires
-                                 for T22 tokens that are still on the bonding curve — Jupiter
-                                 rescue has no route for them. Route via PumpPortal instead.
-    """
-    # Oracle-confirmed bonding curve + MIGRATION_UNCERTAIN = T22 token still on BC.
-    # Jupiter cannot route these. Skip rescue and let executor.sell use PumpPortal.
-    if oracle_bonding_curve and exit_state == "MIGRATION_UNCERTAIN":
-        return False
-    _RESCUE_EXIT_STATES = frozenset({
-        "GRADUATED_PUMPSWAP",
-        "GRADUATED_PUMPSWAP_SPL",
-        "GRADUATED_PUMPSWAP_T22",
-        "MIGRATION_UNCERTAIN",
-        "MIGRATION_UNCERTAIN_SPL",
-        "MIGRATION_UNCERTAIN_T22",
-    })
-    _RESCUE_ERROR_CLASSES = frozenset({
-        "pumpswap_no_pool",
-        "pumpswap_bad_pool_layout",
-        "pool_not_indexed",
-        "local_build_failed",
-        "local_sim_failed",
-        "pumpswap_simulation_failed",
-        "jupiter_no_route",          # retry after no-route (route may appear later)
-        "graduated_unsellable",      # pump-amm + Jupiter in executor both failed
-        "Custom:6005",               # BC graduation detected during sell
-        "Custom:6001",
-    })
-    _RESCUE_REASONS = frozenset({
-        "migration_uncertain_no_pool",
-        "migration_uncertain_retry",
-        "sell_stuck",
-        "graduated_exit",
-        "feed_blind",
-    })
-    if exit_state in _RESCUE_EXIT_STATES:
-        return True
-    if error_class in _RESCUE_ERROR_CLASSES:
-        return True
-    if reason in _RESCUE_REASONS:
-        return True
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -447,9 +546,15 @@ class Portfolio:
         # sell_stuck throttle: pos_id → earliest time to retry sell
         # In-memory only — resets on restart (which itself gives a fresh attempt).
         self._sell_stuck_until: dict[str, float] = {}
+        # 4C: TP inflight guard — never >1 concurrent TP thread per position per level
+        # {pos_id: {level_key: earliest_retry_time}}  (0 = in-flight, future = cooldown)
+        self._tp_inflight: dict[str, dict[str, float]] = {}
         # graduated_unsellable retry counter: pos_id → attempts
         # After MAX_GRADUATED_RETRIES the position is written off as a total loss.
         self._graduated_retry_count: dict[str, int] = {}
+        # B4: Per-position per-venue state for the graduation fast window.
+        # {pos_id: {venue_name: {"cooldown_until": float, "attempts": int, "last_result": str}}}
+        self._venue_state: dict[str, dict[str, dict]] = {}
         # dex_pair_loss tracking: pos_id → timestamp when Jupiter fallback started
         self._jup_fallback_since: dict[str, float] = {}
         # how many positions had PP or DexScreener data last cycle (>0 = feeds healthy)
@@ -630,6 +735,9 @@ class Portfolio:
             buy_tax=getattr(signal, "buy_tax", 0.0),
             sell_tax=getattr(signal, "sell_tax", 0.0),
             creator_wallet=getattr(signal, "creator_wallet", ""),
+            # P1': capture DexScreener price at signal time for benchmark comparison
+            signal_dex_price=getattr(signal, "_price_dex", 0.0) or signal.price_usd or 0.0,
+            entry_source="pp_tick" if _use_pp else "dex_stale",
         )
         # Pre-graduation tokens on pumpswap experience more jitter before breakout.
         # Widen hard stop to -40% so normal price oscillation doesn't stop us out early.
@@ -653,10 +761,17 @@ class Portfolio:
             except Exception:
                 pass
 
+        pos.policy_cohort = "paper_reference"  # Z7: paper positions never execute on-chain
         self._positions[pos.id] = pos
         _save_positions(self._positions)
         log.info("Opened paper position %s  %s/%s @ $%.8f  dex=%s",
                  pos.id, pos.chain, pos.token_symbol, pos.entry_price, pos.dex_id)
+        if signal.signal_type == "social_alert":
+            try:
+                from memecoin.health_monitor import bump_social_alert_paper as _bsap
+                _bsap()
+            except Exception:
+                pass
 
         # ── Live position (parallel, independent — social_alert only) ──
         # Only social_alert (telegram_pump cohort) goes live.
@@ -942,6 +1057,7 @@ class Portfolio:
             _pp_price          = 0.0
             _pp_at_gate        = 0.0   # PP price captured at gate time (dex-source path)
             _exec_signal_price = paper_pos.signal_price  # baseline passed to executor
+            _curve_snap        = None  # populated if oracle path taken; passed to executor
             try:
                 from memecoin import pumpportal_monitor as _pp_monitor
                 _pp        = _pp_monitor.monitor
@@ -1006,12 +1122,7 @@ class Portfolio:
                         try:
                             from memecoin.executor import get_pumpfun_curve_snapshot as _gcs
                             _curve_snap = _gcs(_mint)
-                            log.info(
-                                "CURVE ORACLE ATTEMPT(1st) token=%s ok=%s complete=%s "
-                                "reason=%s price=%s",
-                                _mint[:8], _curve_snap.get("ok"), _curve_snap.get("complete"),
-                                _curve_snap.get("reason"), _curve_snap.get("price_usd"),
-                            )
+                            _curve_snap["_preflight_ts"] = time.time()  # age stamp for executor passthrough
                             _curve_complete = _curve_snap.get("complete")
                             _curve_reason   = _curve_snap.get("reason", "")
                             if _curve_complete is False and (_curve_snap.get("price_usd") or 0) > 0:
@@ -1036,28 +1147,6 @@ class Portfolio:
                                         _baseline_source = "pp_tick"
                                         break
                                     time.sleep(0.05)
-                                # L1b: retry curve once before conceding (not cached on error)
-                                if _pp_price == 0:
-                                    _curve_snap_r = _gcs(_mint)
-                                    log.info(
-                                        "CURVE ORACLE ATTEMPT(retry) token=%s ok=%s complete=%s "
-                                        "reason=%s price=%s",
-                                        _mint[:8], _curve_snap_r.get("ok"), _curve_snap_r.get("complete"),
-                                        _curve_snap_r.get("reason"), _curve_snap_r.get("price_usd"),
-                                    )
-                                    if (_curve_snap_r.get("complete") is False
-                                            and (_curve_snap_r.get("price_usd") or 0) > 0):
-                                        _pp_price = _curve_snap_r["price_usd"]
-                                        _baseline_source = "curve"
-                                    elif (_curve_snap_r.get("complete") is True
-                                            or _curve_snap_r.get("reason") == "account_missing"):
-                                        log.info(
-                                            "LIVE PREFLIGHT GRADUATED %s — curve complete=%s "
-                                            "reason=%s (retry); blocking live buy",
-                                            live_pos.token_symbol, _curve_snap_r.get("complete"),
-                                            _curve_snap_r.get("reason"),
-                                        )
-                                        _pf_blocked = True
                         except Exception as _snap_e:
                             log.debug("curve snapshot error type-1 %s: %s", _mint[:8], _snap_e)
                             # Curve unavailable → short PP wait (0.5s)
@@ -1159,15 +1248,6 @@ class Portfolio:
                                 pass
                             _pf_blocked = True
 
-                    # L1b fix: propagate the resolved pp_tick/curve baseline into
-                    # _exec_signal_price. Previously this stayed at its line-944
-                    # default (paper_pos.signal_price, the stale screening price)
-                    # for the entire type-1 path — meaning ex.buy() and the abort
-                    # tripwire never saw the fresh baseline this block just spent
-                    # an RPC resolving. _pp_price is pos.baseline_price (P5') here.
-                    if _pp_price > 0 and not _pf_blocked:
-                        _exec_signal_price = _pp_price
-
                 else:
                     # ── Type-2 path (dex source): curve baseline, PP upgrade ────────
                     # New preflight order (replaces 2s flat PP wait):
@@ -1191,28 +1271,17 @@ class Portfolio:
                         _pp_at_gate = _p2
                         _baseline_source2 = "pp_tick"
                     else:
-                        # 2. Fetch curve snapshot. L1b: log the raw oracle result on
-                        # every attempt (not just success) — this is the only way to
-                        # tell from logs whether "baseline=dex" happened because the
-                        # curve read failed vs the token actually being silent
-                        # everywhere. Previously only failure paths logged anything.
-                        def _curve_attempt(_reason_tag: str):
-                            from memecoin.executor import get_pumpfun_curve_snapshot as _gcs2
-                            _snap = _gcs2(_mint)
-                            log.info(
-                                "CURVE ORACLE ATTEMPT(%s) token=%s ok=%s complete=%s "
-                                "reason=%s price=%s",
-                                _reason_tag, _mint[:8], _snap.get("ok"), _snap.get("complete"),
-                                _snap.get("reason"), _snap.get("price_usd"),
-                            )
-                            return _snap
+                        # 2. Fetch curve snapshot
                         try:
-                            _curve_snap2 = _curve_attempt("1st")
+                            from memecoin.executor import get_pumpfun_curve_snapshot as _gcs2
+                            _curve_snap2 = _gcs2(_mint)
+                            _curve_snap2["_preflight_ts"] = time.time()  # L1b: stamp for executor passthrough
                             _curve_complete2 = _curve_snap2.get("complete")
                             _curve_reason2   = _curve_snap2.get("reason", "")
                             if _curve_complete2 is False and (_curve_snap2.get("price_usd") or 0) > 0:
                                 _pp_at_gate = _curve_snap2["price_usd"]
                                 _baseline_source2 = "curve"
+                                _curve_snap = _curve_snap2  # L1b: pass through to executor oracle gate
                             elif _curve_complete2 is True or _curve_reason2 == "account_missing":
                                 # Token graduated or migrated → block (NEW: previously fell through)
                                 log.info(
@@ -1231,36 +1300,8 @@ class Portfolio:
                                         _baseline_source2 = "pp_tick"
                                         break
                                     time.sleep(0.05)
-                                # L1b: PP wait didn't help either — retry the curve
-                                # oracle ONCE more before conceding to dex. RPC errors
-                                # are not cached (see _GRAD_ORACLE_CACHE comment in
-                                # executor.py), so this is a genuine fresh attempt and
-                                # commonly clears transient Helius/mainnet-beta hiccups.
-                                if _pp_at_gate == 0:
-                                    _curve_snap2b = _curve_attempt("retry")
-                                    if (_curve_snap2b.get("complete") is False
-                                            and (_curve_snap2b.get("price_usd") or 0) > 0):
-                                        _pp_at_gate = _curve_snap2b["price_usd"]
-                                        _baseline_source2 = "curve"
-                                    elif (_curve_snap2b.get("complete") is True
-                                            or _curve_snap2b.get("reason") == "account_missing"):
-                                        log.info(
-                                            "LIVE PREFLIGHT GRADUATED %s — curve complete=%s "
-                                            "reason=%s (retry); blocking live buy",
-                                            live_pos.token_symbol, _curve_snap2b.get("complete"),
-                                            _curve_snap2b.get("reason"),
-                                        )
-                                        _pf_blocked = True
-                                    else:
-                                        log.warning(
-                                            "CURVE ORACLE UNAVAILABLE %s — both attempts "
-                                            "ok=False (reason=%s/%s), PP silent; "
-                                            "falling back to dex baseline",
-                                            live_pos.token_symbol, _curve_snap2.get("reason"),
-                                            _curve_snap2b.get("reason"),
-                                        )
                         except Exception as _snap2_e:
-                            log.warning("curve snapshot error type-2 %s: %s", _mint[:8], _snap2_e)
+                            log.debug("curve snapshot error type-2 %s: %s", _mint[:8], _snap2_e)
                             _pf_deadline2 = time.time() + 0.5
                             while time.time() < _pf_deadline2:
                                 _p2b = _pp.get_prices().get(_mint, 0)
@@ -1331,59 +1372,207 @@ class Portfolio:
             #   size_mult = 0.35/0.48 = 0.73  →  73% of base size
             _base_stop_pct = abs(paper_pos.hard_stop_pct)
             if _sig_price and _pp_price > 0:
-                _sa_stop_level = _sig_price * (1 + paper_pos.hard_stop_pct)
-                if _pp_price > _sa_stop_level > 0:
-                    _stop_dist_fill = (_pp_price - _sa_stop_level) / _pp_price
-                    if _stop_dist_fill > 0:
-                        _size_mult = _base_stop_pct / _stop_dist_fill
-                        _size_mult = max(0.5, min(1.0, _size_mult))
-                        _orig_size = _live_size
-                        _live_size = round(_live_size * _size_mult, 2)
-                        log.info(
-                            "SIZE NORM %s: pp=%.8f stop=%.8f dist=%.1f%% "
-                            "mult=%.2f  size $%.2f→$%.2f",
-                            live_pos.token_symbol, _pp_price, _sa_stop_level,
-                            _stop_dist_fill * 100, _size_mult, _orig_size, _live_size,
-                        )
+                _eff_stop = effective_hard_stop_level(
+                    _sig_price, _pp_price, paper_pos.hard_stop_pct
+                )
+                _stop_dist = abs(_pp_price - _eff_stop) / _pp_price if _pp_price > 0 else abs(paper_pos.hard_stop_pct)
+                if _stop_dist > 0:
+                    _size_mult = _base_stop_pct / _stop_dist
+                    _raw_size_mult = _size_mult            # before any clamp
+                    _size_mult = max(0.5, min(1.0, _size_mult))
+                    _orig_size = _live_size
+                    _live_size = round(_live_size * _size_mult, 2)
+                    live_pos.size_usd = _live_size  # fix: sync position size after norm so pnl_usd is correct
+                    log.info(
+                        "SIZE NORM %s: pp=%.8f stop=%.8f dist=%.1f%% "
+                        "mult=%.2f  size $%.2f→$%.2f",
+                        live_pos.token_symbol, _pp_price, _eff_stop,
+                        _stop_dist * 100, _size_mult, _orig_size, _live_size,
+                    )
+
+                    # ── Shadow size-floor reporting — no behavior change ──
+                    _hyp_size_mult_025 = max(0.25, min(1.0, _raw_size_mult))
+                    _live_size_used_usd = _orig_size * _size_mult
+                    _hyp_size_025_usd = _orig_size * _hyp_size_mult_025
+                    _drift_pct = (_pp_price / _sig_price - 1.0) * 100 if _sig_price > 0 else 0.0
+                    _stop_dist_from_fill = (_eff_stop / _pp_price - 1.0) * 100 if _pp_price > 0 else 0.0
+                    log.info(
+                        "SIZE_SHADOW %s: raw_mult=%.2f live_mult=%.2f hyp_mult_025=%.2f "
+                        "live_size=$%.2f hyp_size_025=$%.2f drift=%.1f%% eff_stop=%.8g stop_dist=%.1f%%",
+                        live_pos.token_symbol, _raw_size_mult, _size_mult, _hyp_size_mult_025,
+                        _live_size_used_usd, _hyp_size_025_usd, _drift_pct, _eff_stop, _stop_dist_from_fill,
+                    )
+                    try:
+                        from memecoin import telemetry as _tel
+                        _shadow_trace = _tel.get_trace_id_for_pos(live_pos.id)
+                        if _shadow_trace:
+                            _tel.event(_shadow_trace, "size_shadow",
+                                raw_mult=round(_raw_size_mult, 4),
+                                live_mult=round(_size_mult, 4),
+                                hyp_mult_025=round(_hyp_size_mult_025, 4),
+                                live_size_usd=round(_live_size_used_usd, 2),
+                                hyp_size_025_usd=round(_hyp_size_025_usd, 2),
+                                drift_pct=round(_drift_pct, 2),
+                                eff_stop=_eff_stop,
+                                stop_dist_from_fill=round(_stop_dist_from_fill, 2),
+                            )
+                    except Exception:
+                        pass
+
+            # P1': store preflight curve baseline on paper position for honest benchmark
+            # entry_source = "baseline_curve" when fetched from bonding curve RPC snapshot
+            # entry_source = "baseline_pp"    when fetched from PumpPortal live price
+            # The paper entry_price stays at signal time (PP or DexScreener fallback);
+            # baseline_curve_price is the *preflight* price at decision time for replay audit.
+            _pf_baseline_source = (_baseline_source if '_baseline_source' in dir() else
+                                   (_baseline_source2 if '_baseline_source2' in dir() else ""))
+            if _pp_price > 0:
+                paper_pos.baseline_curve_price = _pp_price
+                # Phase 3.1: paper entry anchored to preflight curve baseline (not stale DexScreener)
+                paper_pos.entry_price = _pp_price
+                paper_pos.current_price = _pp_price
+                paper_pos.peak_price = _pp_price
+                _bs_label = _pf_baseline_source or "pp"
+                # Phase 3.2: renamed tags: "curve" / "pp_tick" / "dex_stale"
+                paper_pos.entry_source = (
+                    "curve" if "curve" in _bs_label
+                    else "pp_tick"
+                )
+                # Phase 6.1: persistent baseline_price for abort comparison
+                paper_pos.baseline_price = _pp_price
+                live_pos.baseline_price = _pp_price
+
+            # ── Telemetry: preflight done, buy build starting ──
+            _entry_trace_id = getattr(signal, '_telemetry_trace_id', '') or ''
+            _buy_build_start_ts = time.time()
+            try:
+                from memecoin import telemetry as _tel
+                if _entry_trace_id:
+                    # Update trace with actual pos_id now that we know it
+                    with _tel._traces_lock:
+                        _tmeta = _tel._traces.get(_entry_trace_id)
+                        if _tmeta:
+                            _tmeta["pos_id"] = live_pos.id
+                    _tel.event(_entry_trace_id, "preflight_started",
+                        preflight_ts=getattr(self, '_t_preflight_start', _buy_build_start_ts),
+                    )
+                    _tel.event(_entry_trace_id, "preflight_baseline_selected",
+                        baseline_source=_baseline_source if '_baseline_source' in dir() else "unknown",
+                        pp_price=_pp_price,
+                        sig_price=_sig_price,
+                    )
+                    _tel.event(_entry_trace_id, "buy_build_started",
+                        buy_build_start_ts=_buy_build_start_ts,
+                        live_size_usd=_live_size,
+                    )
+            except Exception:
+                pass
+
+            # ── C2: Live entry program gate ──────────────────────────────────
+            try:
+                from memecoin.health_monitor import bump_live_attempt as _bla
+                _bla()
+            except Exception:
+                pass
+            try:
+                from memecoin import mint_classifier as _mc
+                _mint_cls = _mc.classify_mint(signal.token_address)
+            except Exception as _mc_exc:
+                log.warning("PROGRAM GATE: mint_classifier failed for %s: %s — blocking buy",
+                            live_pos.token_symbol, _mc_exc)
+                _mint_cls = None
+            _curve_obs = _curve_snap if '_curve_snap' in dir() else None
+            _pg_result = evaluate_live_entry_program_gate(_mint_cls, curve_observation=_curve_obs)
+            if not _pg_result.get("allowed"):
+                _pg_reason = _pg_result.get("reason", "unknown")
+                _pg_tp     = _pg_result.get("token_program", "UNKNOWN")
+                log.warning(
+                    "PROGRAM GATE BLOCKED %s  token_program=%s  reason=%s",
+                    live_pos.token_symbol, _pg_tp, _pg_reason,
+                )
+                try:
+                    from memecoin.gate_logger import log_gate_block as _lgb
+                    _lgb("program_gate", live_pos.chain, live_pos.token_address,
+                         live_pos.token_symbol, pp_price=_pp_price if '_pp_price' in dir() else 0.0,
+                         signal_price=_sig_price or 0,
+                         size_usd=_live_size)
+                except Exception:
+                    pass
+                try:
+                    from memecoin.health_monitor import bump_gate_block as _bgb
+                    _bgb(f"program_gate:{_pg_tp}:{_pg_reason[:60]}")
+                except Exception:
+                    pass
+                return
+            # ── end C2 ───────────────────────────────────────────────────────
 
             ex = MemeExecutor()
             result = ex.buy(signal.token_address, _live_size, signal.chain,
                             signal_price=_exec_signal_price,
                             max_slippage_pct=0.30,
-                            dex_id=live_pos.dex_id)
+                            dex_id=live_pos.dex_id,
+                            preflight_oracle_result=_curve_snap)
+
+            _buy_done_ts = time.time()
+            # P8: set post-buy quiet window so Helius standby WS doesn't reconnect
+            # during buy TX propagation (contends with confirmation)
+            try:
+                from memecoin.helius_account_monitor import helius_monitor as _ham
+                _ham.set_post_buy_quiet()
+            except Exception:
+                pass
+            try:
+                if _entry_trace_id:
+                    _tel.event(_entry_trace_id, "buy_build_done",
+                        buy_done_ts=_buy_done_ts,
+                        build_ms=round((_buy_done_ts - _buy_build_start_ts) * 1000, 1),
+                        success=result.get("success", False),
+                    )
+            except Exception:
+                pass
+
             if result.get("success"):
                 fill_price = result.get("fill_price") or live_pos.entry_price
                 signal_price = live_pos.entry_price
                 buy_tx_sig = result.get("tx_sig", "")
-                # Abort if fill is much worse than the price we baselined the trade on.
-                # L1a: Jupiter quote is fetched async now (executor.py) and is no
-                # longer reliably available synchronously here — it's telemetry
-                # only. Abort reference = pos.baseline_price (P5', i.e.
-                # _exec_signal_price: the curve/PP baseline resolved in preflight
-                # above and what was actually passed to ex.buy() as signal_price).
-                # Threshold 30%: if fill is >30% above baseline, something went
-                # wrong (price spiked during the confirmation window).
+                # Abort if fill is much worse than the Jupiter quote we used to size.
+                # Compare fill vs jupiter_quote_price (fresh at tx-build time), NOT vs
+                # signal_price (stale DexScreener snapshot — can be 200%+ below real for
+                # graduated tokens). UK bug: fill=$0.0000236 vs stale signal=$0.0000064
+                # triggered abort wrongly; fill vs Jupiter quote was actually -1.2% (fine).
+                # Threshold 30%: if fill is >30% above what Jupiter quoted, something
+                # went wrong (price spiked during the 5s confirmation window).
                 _jup_ref = result.get("jupiter_quote_price") or 0
-                # Abort reference priority:
-                # 1. baseline_price (_exec_signal_price) — the preflight-resolved
-                #    curve/PP baseline; same value the buy was gated/sized against.
-                # 2. Jupiter quote — best-effort, only if the async fetch happened
-                #    to land before buy() returned.
-                # 3. PP-fresh signal_price — only if signal came from PP cache (sub-second fresh)
-                # 4. Missing — skip abort entirely, tag note, log warning
-                # Never use DexScreener-derived price (stale 10-30s, makes abort meaningless)
-                if _exec_signal_price > 0:
-                    _abort_ref = _exec_signal_price
-                    _abort_ref_label = "baseline_price"
+                # P5': Abort reference uses preflight CURVE BASELINE, not Jupiter quote.
+                # Priority:
+                # 1. _pp_price — preflight curve/PP baseline at decision time (FRESHEST)
+                # 2. _pp_at_gate — PP price captured at gate time (dex-source type-2 path)
+                # 3. Jupiter quote — live AMM price at build time
+                # 4. Missing — skip abort, tag note, log warning
+                # Never use DexScreener-derived price (stale 10-30s).
+                # Note: Dog still aborts under this change (+61.5% vs baseline ~$0.0000214).
+                # Comment: "Dog still aborts under this change (+48% vs baseline)."
+                # Phase 6.2: prefer live_pos.baseline_price (persistent) over local _pp_price var
+                _preflight_baseline = live_pos.baseline_price if live_pos.baseline_price > 0 else (_pp_price if '_pp_price' in dir() else 0)
+                if _preflight_baseline > 0:
+                    _abort_ref = _preflight_baseline
+                    _abort_ref_label = "preflight_baseline"
+                elif _pp_at_gate > 0:
+                    _abort_ref = _pp_at_gate
+                    _abort_ref_label = "pp_gate"
                 elif _jup_ref > 0:
                     _abort_ref = _jup_ref
                     _abort_ref_label = "jup_quote"
-                elif _pp_at_gate > 0 and signal_price > 0:
-                    _abort_ref = signal_price
-                    _abort_ref_label = "pp_fresh"
                 else:
                     _abort_ref = 0
                     _abort_ref_label = "missing"
+                # Shadow log for 10 trades (always log, helps verify reference is correct)
+                log.info(
+                    "ABORT_REF_SHADOW fill=%.10f baseline=%.10f pp_gate=%.10f jup_quote=%.10f "
+                    "ref_used=%s token=%s",
+                    fill_price, _preflight_baseline, _pp_at_gate if '_pp_at_gate' in dir() else 0,
+                    _jup_ref, _abort_ref_label, live_pos.token_symbol,
+                )
                 if _abort_ref == 0:
                     live_pos.notes = (live_pos.notes or "") + "|abort_ref_missing"
                     log.warning(
@@ -1405,11 +1594,31 @@ class Portfolio:
                         sell_tx_sig = abort_sell.get("tx_sig", "") if abort_sell else ""
                     except Exception as _e:
                         log.error("Abort-sell failed %s: %s", live_pos.token_symbol, _e)
+                    # Phase 3.4: abort closes live_pos only; paper_pos continues independently — no duplicate paper row
                     # Write abort row to live journal so the burn is visible and auditable
+                    # Phase 4.4: compute REAL pnl from abort_sell result
+                    _abort_sol_recv = float((abort_sell or {}).get("sol_received") or 0.0)
+                    _abort_sol_spent_usd = result.get("sol_spent_usd") or 0.0
+                    _sol_price_est = 70.0  # fallback estimate
+                    try:
+                        from memecoin.config import SOL_USD_PRICE as _sol_p
+                        _sol_price_est = _sol_p
+                    except (ImportError, AttributeError):
+                        pass
+                    if _abort_sol_recv > 0 and _abort_sol_spent_usd > 0:
+                        _abort_sol_spent = _abort_sol_spent_usd / _sol_price_est
+                        _abort_pnl_usd = (_abort_sol_recv - _abort_sol_spent) * _sol_price_est
+                        _abort_exit_price = (abort_sell or {}).get("fill_price") or fill_price
+                    else:
+                        _abort_pnl_usd = 0.0
+                        _abort_exit_price = fill_price
                     live_pos.entry_price = fill_price
                     live_pos.current_price = fill_price
                     live_pos.peak_price = fill_price
-                    live_pos.exit_price = fill_price  # approximate — immediate sell
+                    live_pos.fill_price_recorded = fill_price  # P1'
+                    live_pos.exit_price = _abort_exit_price
+                    live_pos.realized_pnl_usd = _abort_pnl_usd
+                    live_pos.sol_received = _abort_sol_recv
                     live_pos.exit_time = time.time()
                     live_pos.exit_reason = "abort_tripwire"
                     live_pos.status = "closed"
@@ -1417,6 +1626,7 @@ class Portfolio:
                         f"live|tx:{buy_tx_sig}|fill:{fill_price:.10f}"
                         f"|abort_slip:{_abort_slip:.1f}%vs{_abort_ref_label}"
                         + (f"|sell_tx:{sell_tx_sig}" if sell_tx_sig else "")
+                        + (f"|sol_received:{_abort_sol_recv:.8f}" if _abort_sol_recv > 0 else "")
                     )
                     _append_journal(live_pos)
                     try:
@@ -1435,6 +1645,8 @@ class Portfolio:
                 live_pos.current_price = fill_price
                 live_pos.peak_price    = fill_price
                 live_pos.tokens_held   = result.get("tokens_received_raw", 0)  # known-balance TP sells
+                # P1': record fill on live position for journal benchmark fields
+                live_pos.fill_price_recorded = fill_price
                 _dry_tag     = "DRY_RUN|" if result.get("dry_run") else ""
                 _est_tag     = "|entry_estimated" if result.get("entry_estimated") else ""
                 _slip_tag    = f"|slip:{result['entry_slippage_pct']:+.1f}%" if result.get("entry_slippage_pct") is not None else ""
@@ -1447,13 +1659,24 @@ class Portfolio:
                     else ("|cohort:graduated" if result.get("pp_silent") else "|cohort:bonding_curve")
                 )
                 _canary_tag  = f"|canary_cap:{_canary_max}" if _canary_capped else ""
-                _cpe = result.get("curve_progress_at_entry")
-                _cpe_tag = f"|curve_progress_at_entry:{_cpe:.4f}" if _cpe is not None else ""
-                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}{_cpe_tag}"
-                # ── Paper twin: mirror live fill price for honest P&L comparison ──
-                # Rebase paper entry to actual fill so paper and live stops
-                # trigger at the same token price regardless of price source.
-                paper_pos.entry_price   = fill_price
+                live_pos.notes = f"{_dry_tag}live|tx:{result.get('tx_sig', '')}|fill:{fill_price:.10f}{_est_tag}{_slip_tag}{_cohort_tag}{_canary_tag}"
+                live_pos.is_live = True   # 4E: set exactly once here; all journal routing keys off this
+                # Z2/Z7: set structured state fields at live buy confirm
+                live_pos.policy_cohort  = "strategy_pure_rider"
+                live_pos.lifecycle_state = (
+                    "graduated" if result.get("pp_silent") and not result.get("oracle_bonding_curve")
+                    else "bonding_curve"
+                )
+                paper_pos.notes = (paper_pos.notes or "") + f"|has_live_twin:{live_pos.id}"  # fix: suppress duplicate paper close alert
+                # ── Paper twin: record fill but do NOT rebase entry ──────────────
+                # P1': paper entry stays at preflight curve baseline (set before buy).
+                # This gives an honest benchmark — replay shows ~+94% not +408%.
+                # fill_price_recorded is stored for audit comparison only.
+                # Live position's entry_price IS anchored to fill (stop logic needs it).
+                paper_pos.fill_price_recorded = fill_price
+                # Do NOT set paper_pos.entry_price = fill_price (P1' — wrong design).
+                # Keep paper entry at baseline_curve_price set during preflight.
+                # Only update tracking prices so stops fire correctly:
                 paper_pos.current_price = fill_price
                 paper_pos.peak_price    = fill_price
                 _dry_pfx = "DRY_RUN " if result.get("dry_run") else ""
@@ -1490,7 +1713,9 @@ class Portfolio:
                     "ENTRY TIMING %s | src=%s | "
                     "dex=$%.8f  pp_sig=$%.8f  pp_gate=$%.8f  jup=$%.8f  fill=$%.8f | "
                     "artifact=%s%%  screen_slip=%s%%  real_slip=%s%%  total_slip=%s%% | "
-                    "screen=%.1fs  quote=%.2fs  submit=%.2fs  confirm=%.2fs  total=%.1fs",
+                    "screen=%.1fs  quote=%.2fs  submit=%.2fs  confirm=%.2fs  total=%.1fs | "
+                    "build_ms=%.1f  sign_ms=%.1f  send_ms=%.1f  land_ms=%.1f  429_ms=%.1f"
+                    "  http_build_ms=%.1f  confirm_detect_ms=%.1f  quote_ms=%.1f",
                     live_pos.token_symbol, _price_src,
                     _dex_price, _pp_sig or 0, _pp_at_gate or 0, _jup_price or 0, fill_price,
                     f"{_artifact:.1f}" if _artifact is not None else "?",
@@ -1502,7 +1727,48 @@ class Portfolio:
                     _timing.get("t_submit", 0),
                     _leg_exec or 0,
                     _total or 0,
+                    _timing.get("build_ms", 0),
+                    _timing.get("sign_ms", 0),
+                    _timing.get("send_ms", 0),
+                    _timing.get("land_ms", 0),
+                    _timing.get("rpc_429_wait_ms", 0),
+                    _timing.get("http_build_ms", 0),
+                    _timing.get("confirm_detect_ms", 0),
+                    _timing.get("quote_ms", 0),
                 )
+                # ── Telemetry: buy confirmed + fill recorded ──
+                # P4': buy_confirmed event includes sol_spent, tokens_received, fill_price, slip_pct
+                try:
+                    if _entry_trace_id:
+                        _tel.event(_entry_trace_id, "buy_confirmed",
+                            buy_confirmed_ts=_t_now,
+                            sol_spent=result.get("sol_spent", 0),
+                            tokens_received=result.get("tokens_received_raw", 0),
+                            fill_price=fill_price,
+                            slip_pct=round(_total_slip, 2) if _total_slip is not None else None,
+                            tx_sig=result.get("tx_sig", ""),
+                            entry_slippage_pct=result.get("entry_slippage_pct"),
+                            jupiter_quote_price=_jup_price,
+                            total_slip_pct=round(_total_slip, 2) if _total_slip is not None else None,
+                        )
+                        _tel.event(_entry_trace_id, "buy_fill_recorded",
+                            fill_recorded_ts=time.time(),
+                            pos_id=live_pos.id,
+                            live_size_usd=_live_size,
+                            signal_price=_sig_price,
+                            pp_gate_price=_pp_at_gate if '_pp_at_gate' in dir() else 0,
+                            fill_price=fill_price,
+                            alert_to_fill_ms=round((_t_now - _t_receive) * 1000, 1) if _t_receive else None,
+                        )
+                except Exception:
+                    pass
+
+                try:
+                    # X5: store fill confirm timestamp for first_price_ms measurement
+                    live_pos._fill_confirm_ts = time.time()
+                except Exception:
+                    pass
+
                 try:
                     from app.alerts import alert_live_buy
                     alert_live_buy(live_pos, result.get("tx_sig",""), result.get("sol_spent", _live_size / 70))
@@ -1609,7 +1875,7 @@ class Portfolio:
     # ---- close ----
 
     def close_position(self, pos_id: str, reason: str,
-                       price: float = 0.0) -> Optional[Position]:
+                       price: float = 0.0, _t_detect: float = 0.0) -> Optional[Position]:
         # Fast pre-check without the per-position lock — eliminates lock allocation
         # overhead for already-closed positions on the hot monitor path.
         pos = self._positions.get(pos_id)
@@ -1651,10 +1917,16 @@ class Portfolio:
             pos.exit_time  = time.time()
             pos.exit_reason = reason
             pos.status = "closed"
+            # Z6: record exit_intent once (never overwritten by routing outcomes)
+            if not pos.exit_intent_reason:
+                pos.exit_intent_reason = reason
+                pos.exit_intent_ts     = pos.exit_time
+                pos.exit_intent_policy = getattr(pos, "policy_cohort", "")
             self._jup_fallback_since.pop(pos_id, None)  # clean up dex_pair_loss tracker
 
         # Live execution gate — only sell on-chain if this position was a live buy
-        _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
+        _t_close_enter = time.time()   # X3: for detect_ms / dispatch_ms telemetry
+        _was_live_buy = pos.is_live
         MAX_SELL_RETRIES = 5
 
         # reconciled_gone: balance already 0 on-chain — sell would fail and re-arm loop.
@@ -1674,6 +1946,32 @@ class Portfolio:
                     _skip_chain_sell = True
             except Exception:
                 pass
+
+        # ── Telemetry: exit triggered ──
+        _exit_trace_id = ""
+        try:
+            from memecoin import telemetry as _tel
+            _exit_trace_id = _tel.get_trace_id_for_pos(pos_id)
+            if not _exit_trace_id and _was_live_buy:
+                # Position opened before telemetry — start a new trace
+                _exit_trace_id = _tel.start_trace(
+                    pos_id=pos_id,
+                    mint=pos.token_address,
+                    symbol=pos.token_symbol,
+                    live_or_paper="live",
+                )
+            if _exit_trace_id:
+                _tel.event(_exit_trace_id, "exit_triggered",
+                    reason=reason,
+                    trigger_price=price or pos.current_price,
+                    trigger_source="close_position",
+                    fraction=pos.remaining_fraction,
+                    skip_chain_sell=_skip_chain_sell,
+                    detect_ms=round((_t_close_enter - _t_detect) * 1000, 1) if _t_detect > 0 else None,
+                    dispatch_ms=round((_t_close_enter - (_t_detect or _t_close_enter)) * 1000, 1) if _t_detect > 0 else None,
+                )
+        except Exception:
+            pass
 
         if LIVE_TRADING and _was_live_buy and not _skip_chain_sell:
             from memecoin.executor import MemeExecutor
@@ -1698,6 +1996,7 @@ class Portfolio:
                 _STOP_REASONS   = frozenset({
                     "hard_stop", "trailing_stop",
                     "hard_stop_pp", "trailing_stop_pp",
+                    "feed_blind", "pre_graduation_exit",   # X1: urgent exits eligible for presigned
                 })
                 _presigned_used = False
                 _use_presigned  = (
@@ -1709,47 +2008,75 @@ class Portfolio:
                         _ps_bytes = self._presigned_exits.pop(pos.token_address, None)
                         self._presigned_ts.pop(pos.token_address, None)
                     if _ps_bytes:
-                        from memecoin.executor import _send_transaction, _confirm_tx
-                        _t_detect = time.time()
-                        try:
-                            _psig    = _send_transaction(_ps_bytes)
-                            _t_send  = time.time()
-                            log.warning(
-                                "PRESIGNED EXIT %s (%s)  sig=%s  detect→send=%.0fms",
-                                pos.token_symbol, reason, _psig[:16],
-                                (_t_send - _t_detect) * 1000,
-                            )
-                            pos.notes = (pos.notes or "") + f"|presigned:{_psig}"
-                            _pconf, _perr = _confirm_tx(_psig, t_sent=_t_send)
-                            if _pconf:
-                                log.info("Presigned exit confirmed %s  sig=%s",
-                                         pos.token_symbol, _psig[:16])
-                            else:
-                                log.warning("Presigned exit unconfirmed %s  sig=%s  err=%s",
-                                            pos.token_symbol, _psig[:16], _perr)
-                                pos.notes += "|presigned_unconf"
-                            _presigned_used = True
-                            # Alert for presigned exits (feed_blind, hard_stop, etc.)
-                            # The ladder path has its own alert at the sell confirm block.
+                        from memecoin.executor import (
+                            _send_transaction, _confirm_tx,
+                            _mint_token_program_cache, _TOKEN22_PROGRAM_ID,
+                            get_pumpfun_curve_complete,
+                        )
+                        # X1: skip T22 (L4 path not yet proven)
+                        _tok_prog     = _mint_token_program_cache.get(pos.token_address, "")
+                        _ps_is_t22    = (_tok_prog == _TOKEN22_PROGRAM_ID)
+                        # X1: oracle gate — complete==False required
+                        _ps_oracle_ok = False
+                        if _ps_is_t22:
+                            log.info("Presigned skip T22 %s — ladder", pos.token_symbol)
+                        else:
                             try:
-                                from app.alerts import alert_live_sell
-                                # sol_received not measured for presigned — use 0 as placeholder.
-                                # Append unconf flag to sig so alert shows uncertainty if needed.
-                                _psig_tag = _psig if _pconf else f"{_psig}(unconf)"
-                                alert_live_sell(pos, 0.0, _psig_tag)
-                            except Exception as _alert_err:
-                                log.warning("alert_live_sell (presigned) failed: %s", _alert_err)
-                        except Exception as _pe:
-                            log.warning(
-                                "Presigned exit send failed %s: %s — falling back to ladder",
-                                pos.token_symbol, _pe,
-                            )
-                            # Restore for ladder attempt
-                            if _ps_bytes:
-                                with self._presigned_lock:
-                                    self._presigned_exits[pos.token_address] = _ps_bytes
+                                _ps_cv = get_pumpfun_curve_complete(pos.token_address)
+                                _ps_oracle_ok = (_ps_cv.get("complete") is False)
+                                if not _ps_oracle_ok:
+                                    log.info(
+                                        "Presigned skip graduated/missing %s reason=%s — ladder",
+                                        pos.token_symbol, _ps_cv.get("reason", "?"),
+                                    )
+                            except Exception as _pog_e:
+                                log.debug("Presigned oracle gate err %s: %s", pos.token_symbol, _pog_e)
+                                _ps_oracle_ok = True  # err → attempt presigned
+                        if not _ps_oracle_ok or _ps_is_t22:
+                            with self._presigned_lock:
+                                self._presigned_exits[pos.token_address] = _ps_bytes
+                        else:
+                            _t_detect = time.time()
+                            try:
+                                _psig    = _send_transaction(_ps_bytes)
+                                _t_send  = time.time()
+                                log.warning(
+                                    "PRESIGNED EXIT %s (%s)  sig=%s  detect→send=%.0fms",
+                                    pos.token_symbol, reason, _psig[:16],
+                                    (_t_send - _t_detect) * 1000,
+                                )
+                                pos.notes = (pos.notes or "") + f"|presigned:{_psig}"
+                                _pconf, _perr = _confirm_tx(_psig, t_sent=_t_send)
+                                if _pconf:
+                                    log.info("Presigned exit confirmed %s  sig=%s",
+                                             pos.token_symbol, _psig[:16])
+                                else:
+                                    log.warning("Presigned exit unconfirmed %s  sig=%s  err=%s",
+                                                pos.token_symbol, _psig[:16], _perr)
+                                    pos.notes += "|presigned_unconf"
+                                _presigned_used = True
+                                # Alert for presigned exits (feed_blind, hard_stop, etc.)
+                                # The ladder path has its own alert at the sell confirm block.
+                                try:
+                                    from app.alerts import alert_live_sell
+                                    # sol_received not measured for presigned — use 0 as placeholder.
+                                    # Append unconf flag to sig so alert shows uncertainty if needed.
+                                    _psig_tag = _psig if _pconf else f"{_psig}(unconf)"
+                                    alert_live_sell(pos, 0.0, _psig_tag)
+                                except Exception as _alert_err:
+                                    log.warning("alert_live_sell (presigned) failed: %s", _alert_err)
+                            except Exception as _pe:
+                                log.warning(
+                                    "PRESIGNED FALLBACK token=%s presign_fallback reason=%s — ladder",
+                                    pos.token_symbol, _pe,
+                                )
 
                 if not _presigned_used:
+                    from memecoin.exit_orchestrator import (
+                        ExitOrchestrator as _ExitOrch,
+                        is_rescue_eligible as _is_rescue_elig,
+                    )
+                    orch = _ExitOrch(pos_id)
                     # ── ExitRouter: classify token state + run PumpSwap local path ──────
                     # Additive layer — does NOT replace the executor path below.
                     # PUMPSWAP_LOCAL_SIM_ONLY=True (default): simulate only, then fall through
@@ -1759,7 +2086,7 @@ class Portfolio:
                     # the executor escalation below doesn't miss it (pos.dex_id may still be
                     # "pumpfun" for Cat-2 tokens that graduated during the hold period).
                     _er_classified_graduated  = False
-                    # Initialized here so is_rescue_eligible_error() can safely read them
+                    # Initialized here so is_rescue_eligible() can safely read them
                     # even if ExitRouter raises or EXIT_ROUTER_ENABLED=False.
                     _exit_state = None
                     _ps_result  = None
@@ -1767,39 +2094,18 @@ class Portfolio:
                         from memecoin.config import EXIT_ROUTER_ENABLED as _er_enabled
                     except ImportError:
                         _er_enabled = False
+                    # Z4: Fresh venue classification using lifecycle_state field (authoritative).
+                    # Falls back to notes-based cohort tag for positions that predate Z2.
+                    _lifecycle = getattr(pos, "lifecycle_state", "")
                     # True when bonding curve oracle confirmed complete=False at buy time.
                     # T22 tokens are always PP-silent but not graduated — they must use
                     # PumpPortal (escalate=False), not PumpSwap/Jupiter rescue.
-                    _oracle_bc = "|cohort:bonding_curve" in (pos.notes or "")
+                    _oracle_bc = (
+                        _lifecycle == "bonding_curve"             # Z4: authoritative field
+                        or "|cohort:bonding_curve" in (pos.notes or "")  # legacy fallback
+                    )
 
-                    # ── L3: oracle-driven MU escalation ───────────────────────────
-                    # _oracle_bc above is the STALE entry-time cohort tag. Read the
-                    # graduation oracle fresh at every retry evaluation (including
-                    # the first failure): complete=True or account_missing means the
-                    # bonding curve is sealed/closed, so the ExitRouter classify +
-                    # PumpSwap-local attempt below and the normal PumpPortal ladder
-                    # are guaranteed to fail (wrong venue) — skip them and escalate
-                    # straight to Jupiter rescue instead of burning a 60s cycle.
-                    # sell_attempts is the existing outer retry bound (unchanged).
-                    _mu_force_escalate = False
-                    _mu_attempt = getattr(pos, "sell_attempts", 0) + 1
-                    if not _oracle_bc:
-                        try:
-                            from memecoin.executor import get_pumpfun_curve_complete as _gpc_mu
-                            _mu_oracle = _gpc_mu(pos.token_address)
-                            if (_mu_oracle.get("complete") is True
-                                    or _mu_oracle.get("reason") == "account_missing"):
-                                _mu_force_escalate = True
-                                log.warning(
-                                    "MU ESCALATE reason=oracle_complete attempt=%d "
-                                    "token=%s oracle_reason=%s",
-                                    _mu_attempt, pos.token_symbol, _mu_oracle.get("reason"),
-                                )
-                        except Exception as _mu_oracle_exc:
-                            log.debug("MU ESCALATE oracle check failed (non-blocking): %s",
-                                      _mu_oracle_exc)
-
-                    if _er_enabled and not _mu_force_escalate:
+                    if _er_enabled:
                         try:
                             from memecoin import exit_router as _er
                             from memecoin import pumpportal_monitor as _ppm_mod
@@ -1869,17 +2175,22 @@ class Portfolio:
                     _rescue_succeeded       = False
                     _rescue_class           = "fallback_allowed"
                     _ps_ec = _ps_result.get("error_class", "") if _ps_result is not None else ""
-                    if not _pumpswap_local_succeeded and (_mu_force_escalate or is_rescue_eligible_error(
+                    # B3: For oracle-confirmed graduated positions, executor runs FIRST.
+                    # Jupiter rescue only fires after executor pump-amm fails.
+                    # Detection: graduation_first_seen_ts stamp (set by B2 curve feed oracle).
+                    _oracle_confirmed_graduated = (
+                        "|graduation_first_seen_ts:" in (pos.notes or "")
+                        and "|cohort:graduated" in (pos.notes or "")
+                    )
+                    if (not _pumpswap_local_succeeded
+                            and not _oracle_confirmed_graduated
+                            and _is_rescue_elig(
                         error_class=_ps_ec,
                         exit_state=_exit_state.value if _exit_state is not None else "",
                         reason=reason,
                         oracle_bonding_curve=_oracle_bc,
                     )):
                         try:
-                            from memecoin.jupiter_rescue import (
-                                force_jupiter_rescue_sell,
-                                classify_rescue_result as _classify_rescue,
-                            )
                             try:
                                 from app.alerts import _send as _alert_send
                                 _alert_send(
@@ -1888,9 +2199,8 @@ class Portfolio:
                                 )
                             except Exception:
                                 pass
-                            _resc             = force_jupiter_rescue_sell(pos, reason)
+                            _resc, _rescue_class = orch.dispatch_rescue(pos, reason)
                             _rescue_attempted = True
-                            _rescue_class     = _classify_rescue(_resc)
 
                             if _rescue_class == "sold":
                                 _rescue_succeeded = True
@@ -1943,14 +2253,12 @@ class Portfolio:
                                 _save_positions(self._positions)
                                 return pos
 
-                            else:
-                                # no_route / retry_no_send / fatal_no_send:
-                                # No tx was sent. Arm controlled retry for rescue-eligible states.
-                                # DO NOT call executor.sell — it has no path for graduated/uncertain.
-                                log.info(
-                                    "Jupiter rescue: %s for %s — arming migration retry, "
-                                    "blocking executor.sell",
-                                    _rescue_class, pos.token_symbol,
+                            elif _rescue_class == "fatal_no_send":
+                                # Structural failure (keypair/sign) — executor cannot help either.
+                                log.warning(
+                                    "Jupiter rescue: fatal_no_send for %s — arming migration retry, "
+                                    "not falling through (structural failure)",
+                                    pos.token_symbol,
                                 )
                                 try:
                                     from memecoin.config import SELL_STUCK_RETRY_SEC as _srs
@@ -1958,17 +2266,27 @@ class Portfolio:
                                     _srs = 60
                                 self._arm_migration_retry(pos.id, _srs)
                                 return pos
+                            else:
+                                # no_route / retry_no_send: Jupiter can't route yet (pool not indexed).
+                                # R3: Jupiter no_route CANNOT globally block pump-amm or BC routes.
+                                # No tx was sent — fall through to executor.sell with escalate=True.
+                                # executor will try pump-amm directly (no Jupiter indexing required).
+                                log.info(
+                                    "Jupiter rescue: %s for %s — no tx sent, "
+                                    "falling through to executor (R3 venue isolation, pump-amm attempt)",
+                                    _rescue_class, pos.token_symbol,
+                                )
+                                # Do NOT return — executor.sell runs below
 
                         except Exception as _resc_exc:
                             log.warning("Jupiter rescue exception (non-fatal): %s", _resc_exc)
 
-                    # Block executor.sell if rescue was attempted and result is not "fallback_allowed".
-                    # This covers any exception path where _rescue_class stayed "fallback_allowed"
-                    # despite _rescue_attempted=True — in that case we rely on the exception log
-                    # and let executor try (the exception means rescue never sent a tx).
-                    _rescue_blocks_executor = (
-                        _rescue_attempted and _rescue_class not in ("fallback_allowed",)
-                    )
+                    # R3 (venue isolation): Only block executor when a real tx is pending (duplicate risk).
+                    # no_route / retry_no_send are no-tx failures — executor may still try pump-amm.
+                    # fatal_no_send and pending both return early above, so _rescue_class here is
+                    # either "fallback_allowed" (rescue not attempted / exception path) or
+                    # "no_route" / "retry_no_send" (no tx sent, fall-through allowed).
+                    _rescue_blocks_executor = False  # R3: Jupiter result never globally blocks another venue
                     if not _pumpswap_local_succeeded and not _rescue_succeeded and not _rescue_blocks_executor:
                         ex     = MemeExecutor()
                         # escalate=True when:
@@ -1979,11 +2297,40 @@ class Portfolio:
                         #       "graduated_exit" reason, OR ExitRouter classification
                         #       (catches Cat-2 tokens that graduated during hold).
                         _is_retry     = getattr(pos, "sell_attempts", 0) > 0
+                        # G-batch Part 15: stamp first graduation detection for fast-window retry cadence.
+                        if reason == "graduated_exit" and "|graduation_first_seen_ts:" not in (pos.notes or ""):
+                            pos.notes = (pos.notes or "") + f"|graduation_first_seen_ts:{int(time.time())}"
+                            self._positions[pos_id] = pos
                         _is_graduated = (
-                            "|cohort:graduated" in (pos.notes or "")
+                            _lifecycle == "graduated"                # Z4: authoritative field
+                            or "|cohort:graduated" in (pos.notes or "")  # legacy fallback
                             or reason == "graduated_exit"
                             or _er_classified_graduated
                         )
+                    # B5: T22 graduated pump-amm gate.
+                    # Check token program from classifier (not suffix heuristic).
+                    _is_t22_graduated = False
+                    _t22_pump_amm_allowed = False
+                    if _is_graduated and pos.is_live:
+                        try:
+                            from memecoin.mint_classifier import get_token_program as _gtp
+                            _tok_prog_b5 = _gtp(pos.token_address)
+                            _is_t22_graduated = (_tok_prog_b5 == "T22")
+                        except Exception:
+                            _is_t22_graduated = False
+                        if _is_t22_graduated:
+                            try:
+                                from memecoin.config import (
+                                    T22_GRAD_PUMP_AMM_PROBE_ENABLED as _t22_probe,
+                                    T22_GRAD_PUMP_AMM_ENABLED as _t22_enabled,
+                                )
+                            except ImportError:
+                                _t22_probe = False; _t22_enabled = False
+                            _t22_pump_amm_allowed = _t22_enabled or _t22_probe
+                            log.info(
+                                "B5 T22 grad gate  token=%s  probe=%s  enabled=%s  allowed=%s",
+                                pos.token_symbol, _t22_probe, _t22_enabled, _t22_pump_amm_allowed,
+                            )
                     result = {}  # default: no executor result (set below if executor runs)
                     if not _pumpswap_local_succeeded and not _rescue_succeeded and not _rescue_blocks_executor:
                         if _is_graduated and not _is_retry:
@@ -1999,7 +2346,9 @@ class Portfolio:
                             # Never escalate oracle-confirmed bonding curve tokens (T22).
                             # Escalation assumes PumpSwap graduation — BC tokens must always
                             # stay on PumpPortal path, even on retry (retry only ups slippage).
-                            escalate=(False if _oracle_bc else (_is_retry or _is_graduated)),
+                            escalate=(False if _oracle_bc
+                                      else (False if (_is_t22_graduated and not _t22_pump_amm_allowed)
+                                            else (_is_retry or _is_graduated))),
                             urgent=(reason in _URGENT_REASONS),
                             # Pass tokens_held so local build can use exact count without RPC.
                             # Only valid for full exits (fraction=1.0 default); partial TPs
@@ -2015,23 +2364,89 @@ class Portfolio:
                         fill  = _exec_fill if _exec_fill else pos.exit_price
                         if _exec_fill:
                             pos.exit_price = fill   # real on-chain fill measured
+                        # P3 / Phase 4.3: sol_received/realized_pnl_usd populated from sell result before _save_positions()
+                        _sol_recv = result.get("sol_received") or 0.0
+                        if _sol_recv:
+                            pos.sol_received = _sol_recv
+                        # Accumulate realized_pnl_usd for the remaining fraction being closed
+                        if pos.entry_price > 0 and fill:
+                            _exit_pnl = (fill / pos.entry_price - 1.0) * pos.size_usd * pos.remaining_fraction
+                            pos.realized_pnl_usd += _exit_pnl
                         _step = result.get("ladder_step", 1)
                         _all  = result.get("all_sigs", [])
                         _sigs_tag = f"|all_sigs:{','.join(_all)}" if len(_all) > 1 else ""
                         pos.notes = (
                             (pos.notes or "")
                             + f"|sell_tx:{result.get('tx_sig','')}|sell_fill:{fill:.10f}"
+                            + (f"|sol_received:{_sol_recv:.8f}" if _sol_recv else "")
                             + (f"|sell_step:{_step}" if _step > 1 else "")
                             + _sigs_tag
                         )
                         log.info("Live sell confirmed %s  tx=%s  fill=%.10f",
                                  pos.token_symbol, result.get("tx_sig","")[:16], fill)
+                        # ── Telemetry: sell confirmed ──
+                        try:
+                            if _exit_trace_id:
+                                _tel.event(_exit_trace_id, "sell_confirmed",
+                                    sell_confirmed_ts=time.time(),
+                                    tx_sig=result.get("tx_sig", ""),
+                                    fill_price=fill,
+                                    sol_received=result.get("sol_received", 0),
+                                    ladder_step=result.get("ladder_step", 1),
+                                    route_used=result.get("route", "executor"),
+                                    build_ms=result.get("timing", {}).get("build_ms"),
+                                    send_ms=result.get("timing", {}).get("send_ms"),
+                                    land_ms=result.get("timing", {}).get("land_ms"),
+                                    meta_ms=result.get("timing", {}).get("meta_ms"),
+                                )
+                        except Exception:
+                            pass
+                        # B5 probe: append result row to logs/t22_grad_probe.jsonl
+                        if _is_t22_graduated and _t22_pump_amm_allowed:
+                            try:
+                                import json as _pj
+                                from pathlib import Path as _PP
+                                _probe_path = _PP("logs/t22_grad_probe.jsonl")
+                                _probe_row = {
+                                    "ts": time.time(),
+                                    "mint": pos.token_address,
+                                    "symbol": pos.token_symbol,
+                                    "route": result.get("route", "executor"),
+                                    "success": result.get("success", False),
+                                    "tx_sig": result.get("tx_sig", ""),
+                                    "error_class": result.get("error_class", ""),
+                                    "meta_err": result.get("meta_err"),
+                                    "sol_received": result.get("sol_received", 0),
+                                    "probe_mode": True,
+                                }
+                                with open(_probe_path, "a") as _pf:
+                                    _pf.write(json.dumps(_probe_row) + "\n")
+                            except Exception:
+                                pass
                         try:
                             from app.alerts import alert_live_sell
                             alert_live_sell(pos, result.get("sol_received", 0), result.get("tx_sig", ""))
                         except Exception:
                             pass
                     elif not _pumpswap_local_succeeded and result.get("reason") == "zero_balance":
+                        # Z5: If pending_signature is set, the zero balance may be from
+                        # a previous TX we haven't confirmed yet — defer rather than close.
+                        _z5_pending = getattr(pos, "pending_signature", "")
+                        if _z5_pending:
+                            log.warning(
+                                "Z5 zero_balance deferred — pending_signature=%s may account "
+                                "for balance  pos=%s",
+                                _z5_pending[:16], pos_id,
+                            )
+                            pos.notes = (pos.notes or "") + f"|z5_zero_balance_deferred:{_z5_pending[:8]}"
+                            pos.status      = "open"
+                            pos.exit_price  = 0.0
+                            pos.exit_time   = 0.0
+                            pos.exit_reason = ""
+                            self._positions[pos_id] = pos
+                            self._sell_stuck_until[pos_id] = time.time() + 30
+                            _save_positions(self._positions)
+                            return pos
                         log.warning("Live sell %s — zero balance, tokens already sold. Closing.",
                                     pos.token_symbol)
                         pos.notes = (pos.notes or "") + "|sell_already_gone"
@@ -2041,7 +2456,11 @@ class Portfolio:
                         pos.status      = "closed"
                         pos.exit_price  = pos.exit_price or 0.0
                         pos.exit_time   = time.time()
-                        pos.exit_reason = "zero_balance"
+                        # Z6: strategy_pure_rider keeps original exit_reason; routing outcome in notes
+                        if getattr(pos, "policy_cohort", "") == "strategy_pure_rider":
+                            pos.notes = (pos.notes or "") + "|routing:zero_balance"
+                        else:
+                            pos.exit_reason = "zero_balance"
                         self._positions[pos_id] = pos
                         _append_journal(pos)
                         del self._positions[pos_id]
@@ -2056,6 +2475,54 @@ class Portfolio:
                         except Exception:
                             pass
                         return pos
+                    # B3: Post-executor Jupiter fallback for oracle-confirmed graduated.
+                    # Only fires if executor did NOT succeed AND oracle_confirmed_graduated.
+                    if (not _pumpswap_local_succeeded
+                            and _oracle_confirmed_graduated
+                            and not result.get("success")
+                            and result.get("reason") not in ("zero_balance",)
+                            and _is_rescue_elig(
+                                error_class=result.get("error_class", ""),
+                                exit_state=_exit_state.value if _exit_state is not None else "",
+                                reason=reason,
+                                oracle_bonding_curve=_oracle_bc,
+                            )):
+                        log.info(
+                            "B3 post-executor Jupiter fallback for %s "
+                            "(executor pump-amm failed, trying Jupiter now)",
+                            pos.token_symbol,
+                        )
+                        try:
+                            _b3_resc, _b3_cls = orch.dispatch_rescue(pos, reason)
+                            if _b3_cls == "sold":
+                                _rescue_succeeded = True
+                                _b3_fill = _b3_resc.get("fill_price") or pos.exit_price
+                                pos.exit_price = _b3_fill
+                                pos.notes = (pos.notes or "") + (
+                                    f"|sell_tx:{_b3_resc.get('tx_sig','')}|sell_fill:{_b3_fill:.10f}"
+                                    f"|route:JUPITER_RESCUE_B3"
+                                )
+                                result = {"success": True, "fill_price": _b3_fill,
+                                          "sol_received": _b3_resc.get("sol_received", 0),
+                                          "tx_sig": _b3_resc.get("tx_sig", ""),
+                                          "route": "jupiter_rescue_b3"}
+                                log.info("B3 Jupiter fallback succeeded %s sig=%s",
+                                         pos.token_symbol, (_b3_resc.get("tx_sig",""))[:16])
+                            elif _b3_cls == "pending":
+                                try:
+                                    from memecoin.config import SELL_STUCK_RETRY_SEC as _srs
+                                except ImportError:
+                                    _srs = 60
+                                pos.status = "sell_stuck"
+                                self._positions[pos_id] = pos
+                                self._sell_stuck_until[pos_id] = time.time() + _srs
+                                _save_positions(self._positions)
+                                return pos
+                            elif _b3_cls in ("no_route", "retry_no_send"):
+                                self._arm_migration_retry(pos.id, 60)
+                                return pos
+                        except Exception as _b3_exc:
+                            log.warning("B3 Jupiter fallback exception: %s", _b3_exc)
                     elif not _pumpswap_local_succeeded and result.get("reason") == "graduated_unsellable":
                         # pump-amm + Jupiter both failed — token is mid-migration or pool is empty.
                         # 3 retries covers genuine migration lag (~2-3 min to settle).
@@ -2102,12 +2569,21 @@ class Portfolio:
                                             # Cannot compute USD/token — store 0; reconciler will fix
                                             pos.exit_price = 0.0
                                         pos.sol_received = _gl_sol_delta
-                                        pos.exit_reason = "graduated_recovered"
-                                        pos.notes = (
-                                            (pos.notes or "")
-                                            + f"|graduated_recovered:{_gl_sig[:8]}"
-                                            + f"|sol_received:{_gl_sol_delta:.8f}"
-                                        )
+                                        # Z6: strategy_pure_rider preserves original exit_reason;
+                                        # routing outcome goes to notes instead.
+                                        if getattr(pos, "policy_cohort", "") == "strategy_pure_rider":
+                                            pos.notes = (
+                                                (pos.notes or "")
+                                                + f"|routing:graduated_recovered:{_gl_sig[:8]}"
+                                                + f"|sol_received:{_gl_sol_delta:.8f}"
+                                            )
+                                        else:
+                                            pos.exit_reason = "graduated_recovered"
+                                            pos.notes = (
+                                                (pos.notes or "")
+                                                + f"|graduated_recovered:{_gl_sig[:8]}"
+                                                + f"|sol_received:{_gl_sol_delta:.8f}"
+                                            )
                                         log.warning(
                                             "graduated_recovered: sig confirmed sol_delta=%.6f  "
                                             "exit_price=%.8f USD/tok  sig=%s  pos=%s",
@@ -2148,6 +2624,16 @@ class Portfolio:
                                     self._graduated_mints.discard(pos.token_address)
                                 return pos
 
+                            # Z5: Never write off if pending_signature not yet swept.
+                            _z5_pending_gl = getattr(pos, "pending_signature", "")
+                            if _z5_pending_gl and _z5_pending_gl not in (_gl_sigs if _gl_wallet else []):
+                                log.warning(
+                                    "Z5 graduated_loss deferred — pending_signature=%s not yet swept  pos=%s",
+                                    _z5_pending_gl[:16], pos_id,
+                                )
+                                self._arm_migration_retry(pos.id, 60)
+                                return pos
+
                             # Migration never settled or pool is permanently empty.
                             # Write off as total loss — no more Helius/RPC burn.
                             self._graduated_retry_count.pop(pos_id, None)
@@ -2155,8 +2641,12 @@ class Portfolio:
                             pos.status      = "closed"
                             pos.exit_price  = 0.0
                             pos.exit_time   = time.time()
-                            pos.exit_reason = "graduated_loss"
-                            pos.notes = (pos.notes or "") + f"|graduated_loss_after_{_grad_attempts}_retries"
+                            # Z6: strategy_pure_rider preserves original exit_reason
+                            if getattr(pos, "policy_cohort", "") == "strategy_pure_rider":
+                                pos.notes = (pos.notes or "") + f"|routing:graduated_loss_after_{_grad_attempts}_retries"
+                            else:
+                                pos.exit_reason = "graduated_loss"
+                                pos.notes = (pos.notes or "") + f"|graduated_loss_after_{_grad_attempts}_retries"
                             self._positions[pos_id] = pos
                             _append_journal(pos)          # write CSV before removing from dict
                             del self._positions[pos_id]   # remove from live tracking
@@ -2203,6 +2693,11 @@ class Portfolio:
                         pos.sell_attempts = getattr(pos, "sell_attempts", 0) + 1
                         reason_tag = "sell_unconf" if result.get("unconfirmed") else "sell_failed"
                         tx_tag = f":{result.get('tx_sig','')}" if result.get("tx_sig") else ""
+                        # Z5/Z2: track pending_signature for restart-safe write-off guard
+                        if result.get("tx_sig"):
+                            pos.pending_signature       = result["tx_sig"]
+                            pos.pending_signature_route = result.get("route", "executor")
+                            pos.pending_signature_ts    = time.time()
                         pos.notes = (pos.notes or "") + f"|{reason_tag}{tx_tag}(attempt {pos.sell_attempts})"
                         if pos.sell_attempts < MAX_SELL_RETRIES:
                             pos.status = "open"
@@ -2222,16 +2717,39 @@ class Portfolio:
                             # Position stays open as sell_stuck; monitoring continues.
                             # Retry ladder every 60s with fresh blockhash.
                             # Journal write only happens on confirmed sell or reconciler verdict.
-                            pos.status = "sell_stuck"
-                            pos.exit_price  = 0.0
-                            pos.exit_time   = 0.0
-                            pos.exit_reason = ""
+                            pos.mu_sell_total = getattr(pos, "mu_sell_total", 0) + 1
                             pos.sell_attempts = 0   # reset counter for next 60s window
-                            if "|sell_stuck" not in (pos.notes or ""):
-                                pos.notes = (pos.notes or "") + "|sell_stuck"
-                            self._positions[pos_id] = pos
-                            self._sell_stuck_until[pos_id] = time.time() + SELL_STUCK_RETRY_SEC
-                            _save_positions(self._positions)
+                            if pos.mu_sell_total >= 8:
+                                # 4D: terminal gate — require manual intervention
+                                pos.status = "manual_required"
+                                self._positions[pos_id] = pos
+                                self._sell_stuck_until.pop(pos_id, None)  # never re-arm
+                                _save_positions(self._positions)
+                                log.error(
+                                    "SELL TERMINAL %s — attempt 8 exhausted, manual sell required. "
+                                    "mint=%s  /manual_sold %s",
+                                    pos.token_symbol, pos.token_address, pos.token_symbol,
+                                )
+                                try:
+                                    from app.alerts import _send
+                                    _send(
+                                        f"🚨 SELL TERMINAL {pos.token_symbol} — 8 sell windows failed.\n"
+                                        f"Tokens still on-chain. Sell manually in Phantom then:\n"
+                                        f"/manual_sold {pos.token_symbol}\n"
+                                        f"mint={pos.token_address}"
+                                    )
+                                except Exception:
+                                    pass
+                            else:
+                                pos.status = "sell_stuck"
+                                pos.exit_price  = 0.0
+                                pos.exit_time   = 0.0
+                                pos.exit_reason = ""
+                                if "|sell_stuck" not in (pos.notes or ""):
+                                    pos.notes = (pos.notes or "") + "|sell_stuck"
+                                self._positions[pos_id] = pos
+                                self._sell_stuck_until[pos_id] = time.time() + SELL_STUCK_RETRY_SEC
+                                _save_positions(self._positions)
                             log.error(
                                 "SELL STUCK %s — ladder exhausted, position stays open, "
                                 "retry in %ds.  mint=%s",
@@ -2320,8 +2838,9 @@ class Portfolio:
 
     def _finalize_rescue_sell(self, pos_id: str, rescue_result: dict) -> None:
         """
-        Close a position whose sell was already executed by force_jupiter_rescue_sell()
-        from outside the normal close_position() path (e.g. scanner.py migration branch).
+        Close a position whose sell was already executed by the Jupiter rescue path
+        (dispatch_rescue / exit_orchestrator) from outside the normal close_position()
+        path (e.g. scanner.py migration branch).
 
         Never calls executor.sell() or close_position(). Sets status=closed, journals,
         and sends the sell alert. Safe to call even if the position was concurrently
@@ -2339,20 +2858,83 @@ class Portfolio:
 
             sig        = rescue_result.get("tx_sig", "")
             sol_recv   = float(rescue_result.get("sol_received") or 0.0)
-            fill_price = rescue_result.get("fill_price") or pos.exit_price or 0.0
+            fill_price = rescue_result.get("fill_price") or 0.0
+            if fill_price == 0.0 and sol_recv > 0.0:
+                try:
+                    from memecoin.tx_meta import compute_fill_price
+                    from memecoin.executor import _sol_price_usd
+                    _sol_usd = _sol_price_usd()
+                    _tokens_raw = int(pos.tokens_held * pos.remaining_fraction)
+                    if _tokens_raw > 0 and _sol_usd > 0:
+                        fill_price = compute_fill_price(sol_recv, _tokens_raw, _sol_usd)
+                except Exception as _fp_err:
+                    log.debug("compute_fill_price failed in rescue finalize: %s", _fp_err)
 
             pos.status      = "closed"
             pos.exit_reason = "jupiter_rescue"
             pos.exit_time   = time.time()
-            pos.exit_price  = fill_price
             pos.notes = (pos.notes or "") + (
                 f"|sell_tx:{sig}|route:JUPITER_RESCUE"
                 f"|sol_received:{sol_recv:.6f}"
                 + (f"|sell_fill:{fill_price:.10f}" if fill_price else "")
             )
 
+            if fill_price > 0 and pos.entry_price > 0:
+                pos.exit_price = fill_price
+                # pnl_pct and pnl_usd are @property — computed from exit_price automatically.
+                # DO NOT assign them directly (raises AttributeError → blocks journal write).
+            else:
+                # fill still unknown — don't alert $0/-100%
+                pos.exit_price = 0.0
+                pos.notes = (pos.notes or "") + "|fill_estimated|sol_parse_failed"
+                # send estimation alert instead of bogus -100%
+                try:
+                    from app import alerts as _al
+                    _al._send(
+                        f"[LIVE SELL] {pos.token_symbol} (SOL)\n"
+                        f"Reason:   jupiter_rescue\n"
+                        f"Exit confirmed — fill reconciling (est. pending)\n"
+                        f"SOL rcvd: {sol_recv:.4f}\n"
+                        f"Tx:       {sig[:20]}..."
+                    )
+                except Exception:
+                    pass
+                # skip the normal alert_live_sell call below
+                self._positions[pos_id] = pos
+                _append_journal(pos)
+                promote_to_winners(pos)
+                del self._positions[pos_id]
+                _save_positions(self._positions)
+                self._sell_stuck_until.pop(pos_id, None)
+                self._graduated_retry_count.pop(pos_id, None)
+                try:
+                    from memecoin.pumpportal_monitor import monitor as _ppmon
+                    _ppmon.clear_creator(pos.token_address)
+                except Exception:
+                    pass
+                with self._presigned_lock:
+                    self._presigned_exits.pop(pos.token_address, None)
+                    self._presigned_ts.pop(pos.token_address, None)
+                    self._graduated_mints.discard(pos.token_address)
+                try:
+                    from app import alerts
+                    alerts.alert_position_close(pos)
+                except Exception:
+                    pass
+                log.info("_finalize_rescue_sell: closed %s  sig=%s  sol=%.6f  fill=PENDING",
+                         pos.token_symbol, sig[:16] if sig else "", sol_recv)
+                return
+
             self._positions[pos_id] = pos
-            _append_journal(pos)
+            try:
+                _append_journal(pos)
+            except Exception as _jex:
+                log.error("_finalize_rescue_sell: journal write failed for %s: %s", pos.token_symbol, _jex)
+                try:
+                    from app.alerts import _send
+                    _send(f"🚨 JOURNAL WRITE FAILED {pos.token_symbol} (jupiter_rescue): {_jex}")
+                except Exception:
+                    pass
             promote_to_winners(pos)
             del self._positions[pos_id]
             _save_positions(self._positions)
@@ -2383,23 +2965,95 @@ class Portfolio:
             except Exception:
                 pass
 
+    def _get_venue_state(self, pos_id: str, venue: str) -> dict:
+        """Return mutable venue state dict for pos_id/venue. Creates if absent."""
+        if pos_id not in self._venue_state:
+            self._venue_state[pos_id] = {}
+        if venue not in self._venue_state[pos_id]:
+            self._venue_state[pos_id][venue] = {
+                "cooldown_until": 0.0,
+                "attempts": 0,
+                "last_result": "",
+            }
+        return self._venue_state[pos_id][venue]
+
+    def _record_venue_attempt(self, pos_id: str, venue: str, result: str,
+                               cooldown_sec: float = 0.0) -> None:
+        """Record a venue attempt and optionally set a cooldown."""
+        vs = self._get_venue_state(pos_id, venue)
+        vs["attempts"] += 1
+        vs["last_result"] = result
+        if cooldown_sec > 0:
+            vs["cooldown_until"] = time.time() + cooldown_sec
+
+    def _venue_in_cooldown(self, pos_id: str, venue: str) -> bool:
+        """True if venue is still in cooldown (do not retry yet)."""
+        vs = self._get_venue_state(pos_id, venue)
+        return time.time() < vs["cooldown_until"]
+
+    def _pump_amm_attempts(self, pos_id: str) -> int:
+        """Return pump-amm attempt count for pos in fast window."""
+        return self._get_venue_state(pos_id, "pump_amm")["attempts"]
+
     def _arm_migration_retry(self, pos_id: str, retry_sec: float) -> None:
         """
         Arm a MIGRATION_UNCERTAIN + no-pool position for sell_stuck retry.
         Sets sell_stuck status, records |migration_wait| + first-detection timestamp,
-        and sets the retry timer. Called from scanner.py no-pool branch only.
-        Never calls executor.sell().
+        and sets the retry timer.
+
+        Fast window (Part 15): if graduation_first_seen_ts is in notes and within
+        GRAD_FAST_WINDOW_SEC, uses GRAD_FAST_RETRY_SEC instead of retry_sec.
+        This reduces graduation-window loss by polling pump-amm every 5s instead of 60s.
+        After 60s, the existing MU ladder takes over at normal cadence.
         """
+        import re as _re_mu_arm
         pos = self._positions.get(pos_id)
         if not pos:
             return
+
+        # Fast window: check graduation_first_seen_ts
+        try:
+            from memecoin.config import GRAD_FAST_WINDOW_SEC, GRAD_FAST_RETRY_SEC
+        except ImportError:
+            GRAD_FAST_WINDOW_SEC = 60
+            GRAD_FAST_RETRY_SEC = 5
+
+        _grad_ts_m = _re_mu_arm.search(r'\|graduation_first_seen_ts:(\d+)', pos.notes or "")
+        if _grad_ts_m:
+            _grad_age = time.time() - int(_grad_ts_m.group(1))
+            if _grad_age < GRAD_FAST_WINDOW_SEC:
+                _actual_retry = GRAD_FAST_RETRY_SEC
+                # B4: enforce fast-window pump-amm attempt cap.
+                # After 3 pump-amm attempts, use 60s cadence (Jupiter will be tried at MU attempt 4+).
+                _pa_attempts = self._pump_amm_attempts(pos_id)
+                if _pa_attempts >= 3:
+                    _actual_retry = retry_sec  # switch to normal MU cadence
+                    log.info(
+                        "GRAD FAST WINDOW %s: pump-amm attempts=%d >= 3, "
+                        "switching to MU cadence (%ds)",
+                        pos.token_symbol, _pa_attempts, _actual_retry,
+                    )
+                else:
+                    log.info(
+                        "GRAD FAST WINDOW %s: age=%.0fs < %ds — retry in %ds",
+                        pos.token_symbol, _grad_age, GRAD_FAST_WINDOW_SEC, _actual_retry,
+                    )
+            else:
+                _actual_retry = retry_sec
+                log.info(
+                    "GRAD FAST WINDOW %s: age=%.0fs >= %ds — normal retry %ds (MU ladder)",
+                    pos.token_symbol, _grad_age, GRAD_FAST_WINDOW_SEC, _actual_retry,
+                )
+        else:
+            _actual_retry = retry_sec
+
         if "|migration_wait" not in (pos.notes or ""):
             pos.notes = (pos.notes or "") + f"|migration_wait|migration_uncertain_ts:{int(time.time())}"
         elif "|migration_uncertain_ts:" not in (pos.notes or ""):
             pos.notes = (pos.notes or "") + f"|migration_uncertain_ts:{int(time.time())}"
         pos.status = "sell_stuck"
         self._positions[pos_id] = pos
-        self._sell_stuck_until[pos_id] = time.time() + retry_sec
+        self._sell_stuck_until[pos_id] = time.time() + _actual_retry
         _save_positions(self._positions)
 
     def _save(self) -> None:
@@ -2482,6 +3136,24 @@ class Portfolio:
             if pos.current_price > 0:
                 _append_price_tick(pos, pos.current_price)
 
+            # X5: first_price_ms — time from fill confirm to first monitored price
+            if (getattr(pos, '_fill_confirm_ts', 0) > 0
+                    and not getattr(pos, '_first_price_logged', False)
+                    and pos.current_price > 0):
+                _fpm = (time.time() - pos._fill_confirm_ts) * 1000
+                pos._first_price_logged = True
+                log.info("FIRST_PRICE_MS token=%s ms=%.0f", pos.token_symbol, _fpm)
+                try:
+                    from memecoin import telemetry as _tel
+                    _fpm_tid = _tel.get_trace_id_for_pos(pos.id)
+                    if _fpm_tid:
+                        _tel.event(_fpm_tid, "first_price_tick",
+                            first_price_ms=round(_fpm, 1),
+                            first_price=pos.current_price,
+                        )
+                except Exception:
+                    pass
+
             # T+10 buy-velocity snapshot (8–12 min window, logged once per position)
             age_min = (time.time() - pos.entry_time) / 60
             if not pos.t10_logged and 8 <= age_min <= 12 and pair:
@@ -2553,7 +3225,7 @@ class Portfolio:
                                 "chain":                pos.chain,
                                 "signal_type":          pos.signal_type,
                                 "strength":             pos.strength,
-                                "is_live":              "live|tx:" in (pos.notes or ""),
+                                "is_live":              pos.is_live,
                                 "signal_price":         pos.signal_price,
                                 "signal_time":          time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pos.signal_time)),
                                 "snapshot_label":       label,
@@ -2613,6 +3285,9 @@ class Portfolio:
                 stall["last_peak"] = pos.peak_price
                 stall["stall_since"] = time.time()
 
+            # X3: capture trigger detection time before exit condition evaluation
+            _t_trig = time.time()
+
             # 0. Profit-lock on stall: if we're in small profit and the peak
             #    hasn't moved for N seconds, exit before momentum fully dies.
             #    Skip for big runners (gain > max_gain) — let trail handle those.
@@ -2630,12 +3305,26 @@ class Portfolio:
             _trail_tiers = _exit_cfg.get("trail_tiers", None)
             _peak_gain   = ((pos.peak_price / pos.entry_price) - 1) if pos.entry_price > 0 else 0
 
-            # 1. Hard stop — signal-anchored when fill > signal price.
-            #    Only governs the sub-+30% region (before any trail tier activates).
+            # 1. Hard stop — effective level = max(signal-anchored stop, fill-loss floor).
+            #    Prevents TROONCH-style -70% losses when slippage is high, while preserving
+            #    signal structure when fill is close to signal.
+            #    MAX_LOSS_FROM_FILL_PCT=50% caps max fill-anchored loss.
+            #    Paper behavior unchanged: paper entry_price == signal_price.
+            #
+            #    Example A (high slippage):
+            #      signal=1.00  fill=2.17  hard_stop=-35%  MAX_LOSS=50%
+            #      signal_stop = 1.00*0.65 = 0.65
+            #      fill_floor  = 2.17*0.50 = 1.085
+            #      effective   = max(0.65, 1.085) = 1.085  → -50% from fill
+            #
+            #    Example B (low slippage):
+            #      signal=1.00  fill=1.10
+            #      signal_stop = 0.65   fill_floor = 0.55
+            #      effective   = max(0.65, 0.55) = 0.65  → signal anchor wins
             if not reason:
-                _stop_lvl = pos.entry_price * (1 + pos.hard_stop_pct)
-                if pos.signal_price > 0 and pos.entry_price > pos.signal_price:
-                    _stop_lvl = pos.signal_price * (1 + pos.hard_stop_pct)
+                _stop_lvl = effective_hard_stop_level(
+                    pos.signal_price, pos.entry_price, pos.hard_stop_pct
+                )
                 if pos.current_price <= _stop_lvl:
                     reason = "hard_stop"
 
@@ -2686,7 +3375,24 @@ class Portfolio:
                     reason = "time_stop"
 
             if reason:
-                closed = self.close_position(pos.id, reason)
+                # ── Telemetry: exit condition true (edge-trigger: once per reason) ──
+                try:
+                    from memecoin import telemetry as _tel
+                    _mon_tid = _tel.get_trace_id_for_pos(pos.id)
+                    if _mon_tid:
+                        _evt_name = "tp_condition_true" if reason.startswith("whale_exit") else "exit_condition_true"
+                        _tel.emit_once(
+                            _mon_tid,
+                            f"{_evt_name}:{reason}",   # edge-trigger key
+                            _evt_name,
+                            reason=reason,
+                            trigger_price=pos.current_price,
+                            gain_pct=round(gain * 100, 2),
+                            peak_gain_pct=round(_peak_gain * 100, 2),
+                        )
+                except Exception:
+                    pass
+                closed = self.close_position(pos.id, reason, _t_detect=_t_trig)
                 if closed:
                     exits.append({
                         "pos_id": pos.id,
@@ -2696,40 +3402,82 @@ class Portfolio:
                     })
             else:
                 # check take-profit ladder
-                _was_live_buy = bool(pos.notes and "live|tx:" in pos.notes)
+                _was_live_buy = pos.is_live
+                import re as _re
                 for tp_pct, tp_fraction in TP_LEVELS:
                     level_key = f"tp_{int(tp_pct*100)}"
                     if gain >= tp_pct and level_key not in pos.tp_levels_hit:
-                        pos.tp_levels_hit.append(level_key)
+                        # Cooldown check: skip if a recent TP sell failed for this level
+                        _now = time.time()
+                        _cd_match = _re.search(
+                            rf'\|tp_retry_cooldown:{_re.escape(level_key)}:(\d+)',
+                            pos.notes or "",
+                        )
+                        if _cd_match and _now < float(_cd_match.group(1)):
+                            continue  # still cooling down, skip this level
+                        # cooldown expired — remove old tag, allow re-arm
+                        if _cd_match:
+                            pos.notes = _re.sub(
+                                rf'\|tp_retry_cooldown:{_re.escape(level_key)}:\d+',
+                                "", pos.notes or "",
+                            )
+
+                        # ── Telemetry: tp_condition_true (edge-trigger: once per level) ──
+                        try:
+                            from memecoin import telemetry as _tel
+                            _tp_tid = _tel.get_trace_id_for_pos(pos.id)
+                            if _tp_tid:
+                                _tel.emit_once(
+                                    _tp_tid,
+                                    f"tp_condition_true:{level_key}",   # edge-trigger key
+                                    "tp_condition_true",
+                                    level_key=level_key,
+                                    tp_pct=round(tp_pct * 100, 1),
+                                    gain_pct=round(gain * 100, 2),
+                                    trigger_price=pos.current_price,
+                                )
+                        except Exception:
+                            pass
+
                         sell_frac = tp_fraction * pos.remaining_fraction
-                        pos.remaining_fraction -= sell_frac
                         partial_usd = sell_frac * pos.size_usd
 
-                        # ── Live TP sell (background thread) ───────────────────────
-                        # Apply paper estimate immediately so the price-monitor loop
-                        # continues without blocking.  A daemon thread does the real
-                        # on-chain sell in the background and corrects realized_pnl_usd
-                        # once the tx confirms — the trailing stop can fire at any time.
-                        # Paper path or failed live sell: estimate stays.
-                        pos.realized_pnl_usd += sell_frac * pos.size_usd * tp_pct  # paper estimate
-
                         if LIVE_TRADING and _was_live_buy:
-                            _tp_thread = threading.Thread(
-                                target=self._run_tp_sell_bg,
-                                args=(pos.id, sell_frac, tp_pct, level_key),
-                                daemon=True,
-                            )
-                            _tp_thread.start()
+                            # 4C: TP inflight guard — never >1 concurrent thread per position/level
+                            _tp_levels = self._tp_inflight.setdefault(pos.id, {})
+                            _tp_ready_at = _tp_levels.get(level_key, 0)
+                            if _tp_ready_at > time.time():
+                                log.info("TP INFLIGHT guard: skipping duplicate dispatch "
+                                         "pos=%s level=%s ready_in=%.1fs",
+                                         pos.id, level_key, _tp_ready_at - time.time())
+                            else:
+                                # Mark in-flight (ready_at=inf blocks all re-dispatch until thread clears it)
+                                _tp_levels[level_key] = float("inf")
+                                # Dispatch live TP sell — do NOT mutate state yet.
+                                # State mutates only on confirmed fill inside _run_tp_sell_bg.
+                                _tp_thread = threading.Thread(
+                                    target=self._run_tp_sell_bg,
+                                    args=(pos.id, sell_frac, tp_pct, level_key),
+                                    daemon=True,
+                                )
+                                _tp_thread.start()
+                        else:
+                            # Paper path: mutate immediately (no on-chain risk)
+                            pos.tp_levels_hit.append(level_key)
+                            pos.remaining_fraction -= sell_frac
+                            pos.realized_pnl_usd += sell_frac * pos.size_usd * tp_pct
 
                         log.info(
-                            "TP hit %s  %s +%.0f%%  sold %.0f%% ($%.2f)  realized=$%.2f",
+                            "TP hit %s  %s +%.0f%%  selling %.0f%% ($%.2f)  realized=$%.2f",
                             pos.id, pos.token_symbol, gain * 100,
                             tp_fraction * 100, partial_usd, pos.realized_pnl_usd,
                         )
-                        try:
-                            alerts.alert_tp_hit(pos, tp_pct, partial_usd)
-                        except Exception:
-                            pass
+                        if not (LIVE_TRADING and _was_live_buy):
+                            # Paper path: alert immediately
+                            try:
+                                alerts.alert_tp_hit(pos, tp_pct, partial_usd)
+                            except Exception:
+                                pass
 
         # Update cycle counter for next iteration's dex_pair_loss discriminator
         self._last_cycle_n_with_dex = _this_cycle_n_with_dex
@@ -2742,27 +3490,47 @@ class Portfolio:
     def _run_tp_sell_bg(self, pos_id: str, sell_frac: float, tp_pct: float, level_key: str):
         """Execute a live partial TP sell in a daemon thread.
 
-        The paper estimate was already applied to realized_pnl_usd before this
-        thread started.  On success the estimate is replaced with the real fill.
-        The price-monitor loop is never blocked — the trailing stop can fire
-        during the ~10s tx confirmation window.
+        State (tp_levels_hit, remaining_fraction, realized_pnl_usd) is mutated
+        ONLY on confirmed fill. Failed sells add a cooldown tag and leave state
+        untouched so the TP level can re-arm after cooldown.
+
+        4C: On entry the dispatch guard set _tp_inflight[pos_id][level_key]=inf.
+        On exit (success OR failure) we clear/set the cooldown so the next
+        dispatch cycle can re-evaluate.
         """
+        # ── Telemetry: TP sell triggered ──
+        _tp_trace_id = ""
+        try:
+            from memecoin import telemetry as _tel
+            _tp_trace_id = _tel.get_trace_id_for_pos(pos_id) or ""
+            if _tp_trace_id:
+                _tel.event(_tp_trace_id, "exit_queued",
+                    reason=f"tp_{level_key}",
+                    tp_pct=tp_pct,
+                    sell_frac=sell_frac,
+                )
+        except Exception:
+            pass
+
         try:
             from memecoin.executor import MemeExecutor as _MEx
         except Exception as _e:
             log.warning("LIVE TP BG: executor import failed: %s", _e)
             return
 
+        def _clear_tp_inflight(cooldown_s: float = 0.0):
+            """4C: clear in-flight marker; set cooldown if sell failed."""
+            lvls = self._tp_inflight.get(pos_id, {})
+            lvls[level_key] = time.time() + cooldown_s if cooldown_s > 0 else 0.0
+            self._tp_inflight[pos_id] = lvls
+
         pos = self._positions.get(pos_id)
         if pos is None or pos.status != "open":
-            # Position already closed by trailing stop while we were waiting — nothing to do
             log.info("LIVE TP BG: position %s already closed, skipping TP sell", pos_id)
+            _clear_tp_inflight()
             return
 
         # Use the exact token count received at buy time (from tx postTokenBalances delta).
-        # This bypasses the _token_balance() RPC call entirely — no settle lag, no
-        # zero_balance_partial failure on fast-pumping tokens that TP within 2-5s of entry.
-        # tokens_held is set on the live position at buy confirm time.
         _known_count = int(pos.tokens_held * sell_frac) if pos.tokens_held > 0 else 0
         if _known_count > 0:
             log.info("LIVE TP BG: using known_token_count=%d for %.0f%% sell  %s",
@@ -2771,35 +3539,58 @@ class Portfolio:
             log.info("LIVE TP BG: tokens_held=0, falling back to RPC balance query  %s",
                      pos.token_symbol)
 
+        # --- Cohort routing ---
+        _is_bc = bool(pos.notes and "cohort:bonding_curve" in (pos.notes or ""))
+        _tp_is_grad = "|cohort:graduated" in (pos.notes or "")
+
         try:
-            _tp_ex      = _MEx()
-            _tp_is_grad = "|cohort:graduated" in (pos.notes or "")
-            _tp_r  = _tp_ex.sell(
-                pos.token_address, pos.size_usd, pos.entry_price,
-                pos.chain, fraction=sell_frac,
-                escalate=_tp_is_grad,
-                known_token_count=_known_count,
-            )
+            _tp_ex = _MEx()
+            if _is_bc:
+                # Bonding-curve tokens: force BC path, never PumpSwap/pump-amm
+                _tp_r = _tp_ex.sell(
+                    pos.token_address, pos.size_usd, pos.entry_price,
+                    pos.chain, fraction=sell_frac,
+                    escalate=False,
+                    known_token_count=_known_count,
+                    skip_pumpswap=True,
+                )
+            else:
+                _tp_r = _tp_ex.sell(
+                    pos.token_address, pos.size_usd, pos.entry_price,
+                    pos.chain, fraction=sell_frac,
+                    escalate=_tp_is_grad,
+                    known_token_count=_known_count,
+                )
         except Exception as _tp_err:
-            log.warning("LIVE TP BG exception %s: %s — paper estimate kept", pos.token_symbol, _tp_err)
+            log.warning("LIVE TP BG exception %s: %s — state unchanged", pos.token_symbol, _tp_err)
+            # Add cooldown tag — no state mutation
+            pos = self._positions.get(pos_id)
+            if pos and pos.status == "open":
+                _cooldown_key = f"|tp_retry_cooldown:{level_key}:{int(time.time() + 30)}"
+                pos.notes = (pos.notes or "") + _cooldown_key
+                _save_positions(self._positions)
+            _clear_tp_inflight(cooldown_s=30.0)  # 4C: 30s cooldown before next dispatch
             return
 
         # Re-fetch position: it may have been closed during the tx confirmation
         pos = self._positions.get(pos_id)
+        _clear_tp_inflight()  # 4C: sell returned (success or failure result below)
 
         if _tp_r.get("success"):
             _tp_fill_raw = _tp_r.get("fill_price")
             _tp_fill     = _tp_fill_raw if _tp_fill_raw else (pos.current_price if pos else 0.0)
             _tp_sig     = _tp_r.get("tx_sig", "")
-            _paper_est  = sell_frac * (pos.size_usd if pos else 0.0) * tp_pct
             _real_pnl   = (
                 (_tp_fill / pos.entry_price - 1) * sell_frac * pos.size_usd
-                if pos and pos.entry_price > 0 else _paper_est
+                if pos and pos.entry_price > 0 else 0.0
             )
 
             if pos and pos.status == "open":
-                # Position still open: swap paper estimate for real fill
-                pos.realized_pnl_usd += _real_pnl - _paper_est
+                # --- mutate state only here ---
+                if level_key not in pos.tp_levels_hit:
+                    pos.tp_levels_hit.append(level_key)
+                    pos.remaining_fraction -= sell_frac
+                    pos.realized_pnl_usd += _real_pnl
                 pos.notes = (
                     (pos.notes or "")
                     + f"|{level_key}_tx:{_tp_sig}"
@@ -2808,12 +3599,17 @@ class Portfolio:
                 _save_positions(self._positions)
                 log.warning(
                     "LIVE TP SELL BG %s  tp=+%.0f%%  frac=%.0f%%  "
-                    "fill=%.10f  real=$%.2f  paper_est=$%.2f  tx=%s",
+                    "fill=%.10f  real=$%.2f  tx=%s",
                     pos.token_symbol, tp_pct * 100, sell_frac * 100,
-                    _tp_fill, _real_pnl, _paper_est, _tp_sig[:16],
+                    _tp_fill, _real_pnl, _tp_sig[:16],
                 )
+                # alert TP success
+                try:
+                    partial_usd = sell_frac * pos.size_usd
+                    alerts.alert_tp_hit(pos, tp_pct, partial_usd)
+                except Exception:
+                    pass
             else:
-                # Position was closed while tx was confirming — just log
                 log.warning(
                     "LIVE TP SELL BG %s confirmed but position already closed  "
                     "fill=%.10f  realized=$%.2f  tx=%s",
@@ -2824,7 +3620,7 @@ class Portfolio:
                 _sym = pos.token_symbol if pos else pos_id
                 from app.alerts import _send
                 _send(
-                    f"✅ LIVE TP {_sym} +{tp_pct*100:.0f}%\n"
+                    f"LIVE TP {_sym} +{tp_pct*100:.0f}%\n"
                     f"Sold: {sell_frac*100:.0f}% of position\n"
                     f"Locked: ${_real_pnl:.2f}\n"
                     + (f"Remaining: {pos.remaining_fraction*100:.0f}%\n" if pos and pos.status == "open" else "")
@@ -2833,9 +3629,15 @@ class Portfolio:
             except Exception:
                 pass
         else:
+            # --- failure/revert: do NOT mutate remaining_fraction, realized_pnl, or tp_levels_hit ---
+            _cooldown_key = f"|tp_retry_cooldown:{level_key}:{int(time.time() + 30)}"
+            if pos and pos.status == "open":
+                pos.notes = (pos.notes or "") + _cooldown_key
+                _save_positions(self._positions)
             log.warning(
-                "LIVE TP BG sell FAILED %s — paper estimate kept. reason=%s",
+                "TP partial sell FAILED %s level=%s — cooldown 30s. reason=%s",
                 pos.token_symbol if pos else pos_id,
+                level_key,
                 _tp_r.get("reason") or _tp_r.get("error", "unknown"),
             )
 
@@ -2862,7 +3664,7 @@ class Portfolio:
         sym_upper = symbol.strip().upper()
         target = None
         for pos in self._positions.values():
-            if pos.status in ("open", "sell_stuck") and pos.notes and "live|tx:" in pos.notes:
+            if pos.status in ("open", "sell_stuck") and pos.is_live:
                 if pos.token_symbol.upper() == sym_upper:
                     target = pos
                     break
@@ -2870,7 +3672,7 @@ class Portfolio:
         if target is None:
             # Try partial match as fallback
             for pos in self._positions.values():
-                if pos.status in ("open", "sell_stuck") and pos.notes and "live|tx:" in pos.notes:
+                if pos.status in ("open", "sell_stuck") and pos.is_live:
                     if sym_upper in pos.token_symbol.upper():
                         target = pos
                         break
@@ -2931,8 +3733,21 @@ class Portfolio:
                 with open(path, newline="") as f:
                     rows.extend(csv.DictReader(f))
 
-        # Sort merged result by exit_time ascending
-        rows.sort(key=lambda r: float(r.get("exit_time") or 0))
+        # Sort merged result by exit_time ascending.
+        # exit_time may be a unix timestamp float OR a legacy datetime string.
+        def _exit_sort_key(r):
+            v = r.get("exit_time") or ""
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                pass
+            try:
+                from datetime import datetime, timezone
+                return datetime.strptime(v[:19], "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=timezone.utc).timestamp()
+            except Exception:
+                return 0.0
+        rows.sort(key=_exit_sort_key)
         return rows
 
 

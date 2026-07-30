@@ -105,6 +105,172 @@ def _live_journal_pnl_since(since_ts: float) -> float:
     return total
 
 
+def _self_heal_missing_journal_rows() -> int:
+    """
+    P2'(b) — Reconciler self-heal: scan closed positions (last 24h with live|tx: in notes)
+    and synthesize missing live-journal rows for any that have no matching entry.
+
+    Returns count of backfilled rows.
+    """
+    import csv as _csv
+    import json as _json
+    import time as _time
+    from pathlib import Path as _Path
+
+    try:
+        from memecoin.config import POSITIONS_FILE, LIVE_JOURNAL_FILE, JOURNAL_FIELDS
+    except ImportError:
+        log.debug("self_heal: config imports unavailable")
+        return 0
+
+    # Load positions file to find recently-closed live positions
+    positions_path = _Path(POSITIONS_FILE)
+    if not positions_path.exists():
+        return 0
+
+    try:
+        raw_positions = _json.loads(positions_path.read_text())
+    except Exception as e:
+        log.warning("self_heal: could not load positions: %s", e)
+        return 0
+
+    cutoff = _time.time() - 86400  # 24 hours
+
+    # Load existing live journal row IDs and tx sigs for dedup
+    existing_ids: set = set()
+    existing_notes_sigs: set = set()
+    try:
+        if _Path(LIVE_JOURNAL_FILE).exists():
+            with open(LIVE_JOURNAL_FILE, newline="") as f:
+                for row in _csv.DictReader(f):
+                    existing_ids.add(row.get("id", ""))
+                    notes = row.get("notes", "") or ""
+                    # extract tx sigs from notes
+                    import re as _re
+                    for m in _re.findall(r'(?:tx:|sell_tx:)([A-Za-z0-9]{32,})', notes):
+                        existing_notes_sigs.add(m)
+    except Exception as e:
+        log.warning("self_heal: could not read live journal: %s", e)
+
+    backfilled = 0
+    for pos_data in raw_positions:
+        notes = pos_data.get("notes", "") or ""
+        status = pos_data.get("status", "")
+        exit_time_raw = pos_data.get("exit_time") or 0
+
+        # Only closed live positions within last 24h
+        if status != "closed":
+            continue
+        if "live|tx:" not in notes:
+            continue
+        if exit_time_raw and float(exit_time_raw) < cutoff:
+            continue
+
+        pos_id = pos_data.get("id", "")
+        if pos_id in existing_ids:
+            continue
+
+        # Check if any tx sig from notes is already in the journal
+        import re as _re
+        tx_sigs = _re.findall(r'(?:tx:|sell_tx:|jupiter_rescue_pending:)([A-Za-z0-9]{32,})', notes)
+        if any(sig in existing_notes_sigs for sig in tx_sigs):
+            log.debug("self_heal: pos %s already journaled by tx sig — skip", pos_id)
+            continue
+
+        # Synthesize a journal row from position data
+        log.warning(
+            "self_heal: pos %s (%s) has live|tx: in notes but no journal row — backfilling",
+            pos_id, pos_data.get("token_symbol", "?"),
+        )
+        try:
+            # Build synthetic journal row from available position fields
+            from memecoin.portfolio import CONFIG_TAG, ACCOUNTING_EPOCH
+            _et = pos_data.get("exit_time") or 0
+            _ent = pos_data.get("entry_time") or 0
+            _st = pos_data.get("signal_time") or 0
+
+            def _fmt_ts(ts):
+                if not ts:
+                    return ""
+                try:
+                    return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    return ""
+
+            _ep = float(pos_data.get("entry_price") or 0)
+            _xp = float(pos_data.get("exit_price") or 0)
+            _sz = float(pos_data.get("size_usd") or 0)
+            _rf = float(pos_data.get("remaining_fraction") or 1.0)
+            _rpnl = float(pos_data.get("realized_pnl_usd") or 0)
+            _pnl_pct = (_xp / _ep - 1) * 100 if _ep > 0 and _xp > 0 else 0
+            _pnl_usd = _rpnl + _pnl_pct / 100 * _sz * _rf
+
+            row = {f: "" for f in JOURNAL_FIELDS}
+            row.update({
+                "id": pos_id,
+                "signal_id": pos_data.get("signal_id", ""),
+                "chain": pos_data.get("chain", "solana"),
+                "token_address": pos_data.get("token_address", ""),
+                "token_symbol": pos_data.get("token_symbol", ""),
+                "signal_type": pos_data.get("signal_type", ""),
+                "strength": pos_data.get("strength", ""),
+                "signal_price": pos_data.get("signal_price", ""),
+                "signal_time": _fmt_ts(_st),
+                "entry_price": _ep,
+                "entry_time": _fmt_ts(_ent),
+                "size_usd": _sz,
+                "exit_price": _xp,
+                "exit_time": _fmt_ts(_et),
+                "exit_reason": pos_data.get("exit_reason", ""),
+                "pnl_usd": round(_pnl_usd, 4),
+                "pnl_pct": round(_pnl_pct, 2),
+                "peak_price": pos_data.get("peak_price", ""),
+                "hard_stop_pct": pos_data.get("hard_stop_pct", ""),
+                "whale_count": pos_data.get("whale_count", 0),
+                "whale_tiers": ",".join(str(t) for t in (pos_data.get("whale_tiers") or [])),
+                "safety_score": pos_data.get("safety_score", ""),
+                "momentum_score": pos_data.get("momentum_score", ""),
+                "composite_score": pos_data.get("composite_score", ""),
+                "notes": (notes or "") + "|journal_backfilled=True",
+                "config_tag": pos_data.get("config_tag") or CONFIG_TAG,
+                "tp_levels_hit": ",".join(pos_data.get("tp_levels_hit") or []),
+                "realized_partial_usd": round(_rpnl, 4),
+                "remaining_fraction": round(_rf, 4),
+                "sol_received": pos_data.get("sol_received") or "",
+                "accounting_epoch": pos_data.get("accounting_epoch") or ACCOUNTING_EPOCH,
+            })
+
+            from memecoin.journal_io import JOURNAL_LOCK
+            from memecoin.portfolio import _ensure_journal_header
+            _Path(LIVE_JOURNAL_FILE).parent.mkdir(parents=True, exist_ok=True)
+            with JOURNAL_LOCK:
+                _ensure_journal_header(_Path(LIVE_JOURNAL_FILE))
+                _wh = not _Path(LIVE_JOURNAL_FILE).exists() or _Path(LIVE_JOURNAL_FILE).stat().st_size == 0
+                with open(LIVE_JOURNAL_FILE, "a", newline="") as f:
+                    writer = _csv.DictWriter(f, fieldnames=JOURNAL_FIELDS, extrasaction="ignore")
+                    if _wh:
+                        writer.writeheader()
+                    writer.writerow(row)
+            backfilled += 1
+            log.warning("self_heal: backfilled journal row for %s (%s)",
+                        pos_id, pos_data.get("token_symbol", "?"))
+            try:
+                from app.alerts import _send
+                _send(
+                    f"🔧 JOURNAL BACKFILL: {pos_data.get('token_symbol','?')} (pos={pos_id}) "
+                    f"was missing from live journal — row synthesized from positions file. "
+                    f"exit_reason={pos_data.get('exit_reason','')} pnl={round(_pnl_usd,4)}"
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            log.warning("self_heal: failed to backfill pos %s: %s", pos_id, e)
+
+    if backfilled:
+        log.warning("self_heal: backfilled %d missing live journal row(s)", backfilled)
+    return backfilled
+
+
 def reconcile(force: bool = False) -> dict:
     """
     Run one reconciliation cycle.
@@ -112,6 +278,12 @@ def reconcile(force: bool = False) -> dict:
     Returns a result dict with keys: ok, discrepancy_usd, wallet_delta_usd,
     journal_delta_usd, sol_balance, sol_price, message.
     """
+    # P2'(b): self-heal missing journal rows before doing SOL reconciliation
+    try:
+        _self_heal_missing_journal_rows()
+    except Exception as _sh_err:
+        log.warning("reconcile: self_heal failed: %s", _sh_err)
+
     state = _load_state()
     now   = time.time()
 

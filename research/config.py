@@ -89,6 +89,23 @@ SCREENER_MAX_PRICE_CHANGE_5M     = 500      # >500% in 5m = blow-off top risk
 SCREENER_MAX_RUGCHECK_SCORE      = 500      # rugcheck 0-1000: lower = safer; >500 = risky
 
 # ---------------------------------------------------------------------------
+# Helius (Solana RPC + enhanced APIs)
+# ---------------------------------------------------------------------------
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "")
+HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}" if HELIUS_API_KEY else ""
+
+# ---------------------------------------------------------------------------
+# Smart-money config
+# ---------------------------------------------------------------------------
+# A wallet is "smart money" if it appears in the first N buyers of ≥ this many winners
+SMART_MONEY_MIN_WINS    = 2      # must appear early in ≥2 winner tokens
+SMART_MONEY_FIRST_N     = 30     # "first N buyers" window
+SMART_MONEY_WIN_THRESH  = 100.0  # peak ≥ +100% to count as a winner
+
+# Smart wallets file — rebuilt by research/backfill_smart_wallets.py
+SMART_WALLETS_PATH = Path(__file__).parent / "smart_wallets.json"
+
+# ---------------------------------------------------------------------------
 # Dedup window: ignore same token seen within this many hours
 # ---------------------------------------------------------------------------
 DEDUP_WINDOW_HOURS = 24
@@ -102,9 +119,41 @@ POLLER_LOOKBACK_HOURS = 2
 # ---------------------------------------------------------------------------
 # Tick-level peak tracker (PeakTracker)
 # ---------------------------------------------------------------------------
-TICK_PEAK_WINDOW_S  = 180                          # 3 min window per token
+TICK_PEAK_WINDOW_S  = 900                          # 15 min window per token
 PP_WS_URL           = "wss://pumpportal.fun/api/data"
+
+# Trade-path persistence (PC1)
+RESEARCH_PATHS_DIR      = Path(__file__).parent.parent / "logs" / "research_paths"
+PATH_DEADMAN_MIN_FILES  = 100   # alert if fewer path files created today while alerts flowed
+PATH_SUB_SAMPLE_INTERVAL = 60   # seconds between concurrent-subscription samples
 
 # Graduation detection: pump.fun bonding curve holds ~85 SOL at graduation.
 # If pp_vsol >= this, the token is near/past graduation → social_alert_grad.
 GRAD_VSOL_THRESHOLD = 79.0
+
+# ---------------------------------------------------------------------------
+# RF1 — bonding-curve oracle constants
+# ---------------------------------------------------------------------------
+SOL_USD_MAX_CACHE_AGE_S = 120    # reject SOL/USD price older than this (seconds)
+CURVE_BATCH_SIZE        = 100    # mints per getMultipleAccounts call
+GRAD_SOL_UI             = 115.0  # SOL in curve at graduation (virtual reserves)
+
+# ---------------------------------------------------------------------------
+# RF6 — Smart-money versioning
+# ---------------------------------------------------------------------------
+# Base directory where smart_wallets_vN.json and metadata files live.
+# Same directory as smart_wallets.json for backward compat.
+SMART_WALLETS_BASE_DIR = Path(__file__).parent
+
+# RC2: pinned to v1 — v8_pass scoring reads ONLY this version.
+# Weekly refresh (backfill_smart_wallets.py) writes v2+ into shadow columns.
+# Advance pin only after the Jul 25 read concludes.
+# 0 / empty string → load smart_wallets_latest.json (always current).
+SMART_MONEY_PINNED_VERSION: "int | None" = int(os.getenv("SMART_MONEY_PINNED_VERSION", "1")) or None
+
+# Forward-validation window (ISO timestamps).  Empty string = not set.
+FORWARD_VALIDATION_START = os.getenv("FORWARD_VALIDATION_START", "")
+FORWARD_VALIDATION_END   = os.getenv("FORWARD_VALIDATION_END", "")
+
+# Ruleset version tag written to research_tokens rows (informational).
+V8_RULESET_VERSION = os.getenv("V8_RULESET_VERSION", "")

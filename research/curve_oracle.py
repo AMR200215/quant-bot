@@ -1,0 +1,445 @@
+"""
+curve_oracle.py — Pump.fun bonding-curve price oracle via Helius getMultipleAccounts.
+
+Fetches bonding-curve account data directly from Solana RPC for tokens that are
+still on the bonding curve (CURVE_ACTIVE).  Avoids the 30-90s DexScreener indexing
+lag that causes massive NULL rates at T1m/T3m for BC tokens.
+
+Bonding-curve account layout (base64 decoded, little-endian, pump.fun layout):
+  Offset  8: virtualTokenReserves (u64)
+  Offset 16: virtualSolReserves   (u64)
+  Offset 24: realTokenReserves    (u64)
+  Offset 32: realSolReserves      (u64)
+  Offset 40: tokenTotalSupply     (u64)
+  Offset 48: complete             (bool, 1 byte)
+
+Price formula:
+  price_sol = virtualSolReserves / virtualTokenReserves   (raw lamports)
+  price_usd = price_sol * sol_price_usd / 1e9             (convert lamports→SOL)
+  vsol_ui   = virtualSolReserves / 1e9
+
+Never treat RPC errors or parse failures as graduation.
+complete=True in the curve data is the ONLY valid graduation signal here.
+"""
+
+import base64
+import logging
+import struct
+import threading
+import time
+from typing import Optional
+
+import requests
+
+from research.config import (
+    SOL_USD_MAX_CACHE_AGE_S,
+    CURVE_BATCH_SIZE,
+)
+
+log = logging.getLogger(__name__)
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+
+# Bonding-curve account layout offsets (after 8-byte discriminator)
+_OFFSET_VIRTUAL_TOKEN  =  8
+_OFFSET_VIRTUAL_SOL    = 16
+_OFFSET_REAL_TOKEN     = 24
+_OFFSET_REAL_SOL       = 32
+_OFFSET_TOTAL_SUPPLY   = 40
+_OFFSET_COMPLETE       = 48
+_MIN_ACCOUNT_DATA_LEN  = 49   # must have at least 49 bytes (offsets 0-48)
+
+# Pump.fun token decimals are always 6
+PUMP_DECIMALS = 6
+
+# ── SOL/USD cache (module-level, thread-safe) ─────────────────────────────────
+
+_sol_usd_lock   = threading.Lock()
+_sol_usd_price  = 0.0
+_sol_usd_fetched_at = 0.0   # epoch seconds
+
+_JUPITER_SOL_MINT = "So11111111111111111111111111111111111111112"
+_JUP_PRICE_URL    = f"https://api.jup.ag/price/v2?ids={_JUPITER_SOL_MINT}"
+_JUP_TIMEOUT_S    = 5
+
+
+def get_sol_usd_cached() -> tuple[float, float]:
+    """
+    Returns (price_usd, age_seconds).  Thread-safe.
+    Fetches from Jupiter Price API if cache is stale or empty.
+    Returns (0.0, very_large) if fetch fails.
+    """
+    global _sol_usd_price, _sol_usd_fetched_at
+
+    with _sol_usd_lock:
+        age = time.time() - _sol_usd_fetched_at
+        if _sol_usd_price > 0 and age < 60:
+            return _sol_usd_price, age
+        # Need refresh — release lock during network call
+        need_fetch = True
+
+    if need_fetch:
+        fetched = _fetch_sol_usd_from_jupiter()
+        with _sol_usd_lock:
+            if fetched and fetched > 0:
+                _sol_usd_price = fetched
+                _sol_usd_fetched_at = time.time()
+                age = 0.0
+            else:
+                age = time.time() - _sol_usd_fetched_at
+            return _sol_usd_price, age
+
+
+def _fetch_sol_usd_from_jupiter() -> Optional[float]:
+    """Fetch SOL/USD price from Jupiter Price API v2. Returns None on error."""
+    try:
+        r = requests.get(_JUP_PRICE_URL, timeout=_JUP_TIMEOUT_S)
+        if r.status_code == 200:
+            entry = (r.json().get("data") or {}).get(_JUPITER_SOL_MINT)
+            if entry:
+                price = float(entry.get("price") or 0)
+                return price if price > 0 else None
+    except Exception as e:
+        log.debug("get_sol_usd_cached: Jupiter fetch failed: %s", e)
+    return None
+
+
+# ── PDA derivation ────────────────────────────────────────────────────────────
+
+def derive_curve_address(mint: str) -> Optional[str]:
+    """
+    Derive the pump.fun bonding-curve PDA for a mint.
+    Seeds: [b"bonding-curve", bytes(mint_pubkey)]
+    Returns base58 address string or None if derivation fails.
+    """
+    try:
+        from solders.pubkey import Pubkey
+        mint_pubkey = Pubkey.from_string(mint)
+        program_id  = Pubkey.from_string(PUMP_PROGRAM)
+        seeds = [b"bonding-curve", bytes(mint_pubkey)]
+        curve_addr, _ = Pubkey.find_program_address(seeds, program_id)
+        return str(curve_addr)
+    except ImportError:
+        log.debug("derive_curve_address: solders not available, falling back to pure-python")
+        return _derive_curve_address_pure(mint)
+    except Exception as e:
+        log.debug("derive_curve_address: failed for %s: %s", mint[:8], e)
+        return None
+
+
+def _derive_curve_address_pure(mint: str) -> Optional[str]:
+    """
+    Pure-Python PDA derivation fallback (no solders dependency).
+    Uses hashlib + base58 encoding per Solana PDA spec.
+    """
+    try:
+        import hashlib
+
+        def _b58decode(s: str) -> bytes:
+            ALPHABET = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+            n = 0
+            for c in s.encode():
+                n = n * 58 + ALPHABET.index(c)
+            result = n.to_bytes(32, "big")
+            # count leading '1's → leading zero bytes
+            pad = len(s) - len(s.lstrip("1"))
+            return b"\x00" * pad + result.lstrip(b"\x00")
+
+        def _b58encode(b: bytes) -> str:
+            ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+            n = int.from_bytes(b, "big")
+            s = ""
+            while n:
+                n, r = divmod(n, 58)
+                s = ALPHABET[r] + s
+            pad = len(b) - len(b.lstrip(b"\x00"))
+            return "1" * pad + s
+
+        mint_bytes    = _b58decode(mint)
+        program_bytes = _b58decode(PUMP_PROGRAM)
+
+        for nonce in range(255, -1, -1):
+            seeds_with_nonce = (
+                b"bonding-curve"
+                + mint_bytes
+                + bytes([nonce])
+                + program_bytes
+                + b"ProgramDerivedAddress"
+            )
+            h = hashlib.sha256(seeds_with_nonce).digest()
+            # Valid PDA must NOT be on the ed25519 curve
+            # Quick check: if the point is off-curve (common for PDAs), use it
+            try:
+                # Attempt to import and check — if nacl unavailable, skip check
+                import nacl.signing  # type: ignore
+                nacl.signing.VerifyKey(h)
+                continue  # on-curve → not a valid PDA
+            except Exception:
+                pass
+            return _b58encode(h)
+    except Exception as e:
+        log.debug("_derive_curve_address_pure: failed for %s: %s", mint[:8], e)
+    return None
+
+
+# ── Account data parsing ──────────────────────────────────────────────────────
+
+def _parse_curve_account(
+    data_b64: str,
+    mint: str,
+    sol_price_usd: float,
+    sol_price_age_s: float,
+) -> dict:
+    """
+    Parse a base64-encoded bonding-curve account.
+    Returns a result dict with venue_state, price_usd, vsol_ui, complete,
+    failure_reason populated.
+    """
+    result = {
+        "price_usd":      None,
+        "vsol_ui":        None,
+        "complete":       None,
+        "venue_state":    "PARSE_ERROR",
+        "failure_reason": "curve_parse_error",
+    }
+
+    # Reject stale SOL/USD price
+    if sol_price_age_s > SOL_USD_MAX_CACHE_AGE_S or sol_price_usd <= 0:
+        result["venue_state"]    = "PARSE_ERROR"
+        result["failure_reason"] = "sol_usd_stale"
+        log.debug("_parse_curve_account: SOL/USD stale (age=%.1fs) for %s",
+                  sol_price_age_s, mint[:8])
+        return result
+
+    # Decode base64
+    try:
+        raw = base64.b64decode(data_b64)
+    except Exception as e:
+        log.debug("_parse_curve_account: base64 decode failed for %s: %s", mint[:8], e)
+        result["failure_reason"] = "curve_parse_error"
+        return result
+
+    # Validate minimum length
+    if len(raw) < _MIN_ACCOUNT_DATA_LEN:
+        log.debug("_parse_curve_account: data too short (%d bytes) for %s", len(raw), mint[:8])
+        result["failure_reason"] = "curve_layout_unknown"
+        return result
+
+    # Unpack fields
+    try:
+        virtual_token_reserves, = struct.unpack_from("<Q", raw, _OFFSET_VIRTUAL_TOKEN)
+        virtual_sol_reserves,   = struct.unpack_from("<Q", raw, _OFFSET_VIRTUAL_SOL)
+        complete_byte,          = struct.unpack_from("<?", raw, _OFFSET_COMPLETE)
+    except struct.error as e:
+        log.debug("_parse_curve_account: struct unpack failed for %s: %s", mint[:8], e)
+        result["failure_reason"] = "curve_layout_unknown"
+        return result
+
+    complete = bool(complete_byte)
+    result["complete"] = complete
+
+    if complete:
+        # Token has graduated — no price from curve, switch to DEX path
+        result["venue_state"]    = "GRADUATED"
+        result["failure_reason"] = None
+        return result
+
+    # Guard against division by zero
+    if virtual_token_reserves == 0:
+        log.debug("_parse_curve_account: zero virtualTokenReserves for %s", mint[:8])
+        result["failure_reason"] = "curve_parse_error"
+        return result
+
+    # Price calculation
+    price_sol = virtual_sol_reserves / virtual_token_reserves   # lamports ratio
+    price_usd = price_sol * sol_price_usd / 1e9                  # convert to USD
+    vsol_ui   = virtual_sol_reserves / 1e9                       # SOL (human-readable)
+
+    result["price_usd"]      = price_usd
+    result["vsol_ui"]        = vsol_ui
+    result["venue_state"]    = "CURVE_ACTIVE"
+    result["failure_reason"] = None
+    return result
+
+
+# ── Batch price fetch ─────────────────────────────────────────────────────────
+
+def get_curve_prices_batch(
+    mints: list,
+    helius_key: str,
+    sol_price_usd: float,
+    sol_price_age_s: float,
+) -> dict:
+    """
+    Fetch bonding-curve prices for a batch of mints via Helius getMultipleAccounts.
+
+    Returns:
+        {
+            mint: {
+                price_usd:      float | None,
+                vsol_ui:        float | None,
+                complete:       bool | None,
+                venue_state:    "CURVE_ACTIVE" | "GRADUATED" | "CURVE_MISSING" |
+                                "PARSE_ERROR" | "RPC_ERROR",
+                failure_reason: None | "curve_account_missing" | "curve_parse_error" |
+                                "curve_layout_unknown" | "curve_rpc_error" | "sol_usd_stale",
+                curve_address:  str | None,
+                rpc_latency_ms: float | None,
+            }
+        }
+
+    Processes up to CURVE_BATCH_SIZE mints per RPC call.
+    Partial failures (some mints null, others succeed) are handled per-mint.
+    RPC errors are never treated as graduation.
+    """
+    if not mints:
+        return {}
+
+    results: dict = {}
+
+    # Process in batches of CURVE_BATCH_SIZE
+    for batch_start in range(0, len(mints), CURVE_BATCH_SIZE):
+        batch_mints = mints[batch_start: batch_start + CURVE_BATCH_SIZE]
+        _fetch_batch(batch_mints, helius_key, sol_price_usd, sol_price_age_s, results)
+
+    return results
+
+
+def _fetch_batch(
+    mints: list,
+    helius_key: str,
+    sol_price_usd: float,
+    sol_price_age_s: float,
+    results: dict,
+) -> None:
+    """
+    Internal: derive curve addresses for `mints`, call getMultipleAccounts,
+    parse results, write into `results` dict.
+    """
+    # Step 1: derive curve addresses for all mints in batch
+    mint_to_curve: dict[str, Optional[str]] = {}
+    for mint in mints:
+        curve_addr = derive_curve_address(mint)
+        mint_to_curve[mint] = curve_addr
+
+    # Mints where derivation failed — mark immediately
+    ok_mints = [m for m in mints if mint_to_curve[m] is not None]
+    for mint in mints:
+        if mint_to_curve[mint] is None:
+            results[mint] = {
+                "price_usd":      None,
+                "vsol_ui":        None,
+                "complete":       None,
+                "venue_state":    "CURVE_MISSING",
+                "failure_reason": "curve_account_missing",
+                "curve_address":  None,
+                "rpc_latency_ms": None,
+            }
+
+    if not ok_mints:
+        return
+
+    # Step 2: build pubkeys list in same order as ok_mints
+    pubkeys = [mint_to_curve[m] for m in ok_mints]
+
+    # Step 3: call getMultipleAccounts
+    rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+    payload = {
+        "jsonrpc": "2.0",
+        "id":      1,
+        "method":  "getMultipleAccounts",
+        "params":  [pubkeys, {"encoding": "base64", "commitment": "confirmed"}],
+    }
+
+    t0 = time.time()
+    try:
+        resp = requests.post(rpc_url, json=payload, timeout=10)
+        rpc_latency_ms = (time.time() - t0) * 1000
+        resp.raise_for_status()
+        rpc_data = resp.json()
+    except Exception as e:
+        rpc_latency_ms = (time.time() - t0) * 1000
+        log.warning("curve_oracle: RPC error for batch of %d mints: %s", len(ok_mints), e)
+        # Mark ALL ok_mints as RPC_ERROR — NOT graduation
+        for mint in ok_mints:
+            results[mint] = {
+                "price_usd":      None,
+                "vsol_ui":        None,
+                "complete":       None,
+                "venue_state":    "RPC_ERROR",
+                "failure_reason": "curve_rpc_error",
+                "curve_address":  mint_to_curve[mint],
+                "rpc_latency_ms": rpc_latency_ms,
+            }
+        return
+
+    rpc_error = rpc_data.get("error")
+    if rpc_error:
+        log.warning("curve_oracle: RPC returned error for batch: %s", rpc_error)
+        for mint in ok_mints:
+            results[mint] = {
+                "price_usd":      None,
+                "vsol_ui":        None,
+                "complete":       None,
+                "venue_state":    "RPC_ERROR",
+                "failure_reason": "curve_rpc_error",
+                "curve_address":  mint_to_curve[mint],
+                "rpc_latency_ms": rpc_latency_ms,
+            }
+        return
+
+    # Step 4: parse per-account results
+    accounts = (rpc_data.get("result") or {}).get("value") or []
+
+    for i, mint in enumerate(ok_mints):
+        curve_addr = mint_to_curve[mint]
+        account = accounts[i] if i < len(accounts) else None
+
+        if account is None:
+            # Account doesn't exist — token never existed or already graduated
+            # NOT treated as graduation — only complete=True in data is graduation
+            results[mint] = {
+                "price_usd":      None,
+                "vsol_ui":        None,
+                "complete":       None,
+                "venue_state":    "CURVE_MISSING",
+                "failure_reason": "curve_account_missing",
+                "curve_address":  curve_addr,
+                "rpc_latency_ms": rpc_latency_ms,
+            }
+            log.debug("curve_oracle: null account for %s (curve %s)", mint[:8],
+                      str(curve_addr)[:8] if curve_addr else "none")
+            continue
+
+        # Account data is [base64_string, encoding]
+        data_field = account.get("data")
+        if not data_field or not isinstance(data_field, list) or len(data_field) < 1:
+            results[mint] = {
+                "price_usd":      None,
+                "vsol_ui":        None,
+                "complete":       None,
+                "venue_state":    "PARSE_ERROR",
+                "failure_reason": "curve_parse_error",
+                "curve_address":  curve_addr,
+                "rpc_latency_ms": rpc_latency_ms,
+            }
+            continue
+
+        data_b64   = data_field[0]
+        parsed     = _parse_curve_account(data_b64, mint, sol_price_usd, sol_price_age_s)
+
+        results[mint] = {
+            **parsed,
+            "curve_address":  curve_addr,
+            "rpc_latency_ms": rpc_latency_ms,
+        }
+
+        log.debug(
+            "curve_oracle: %s → venue=%s price=%s vsol=%.2f",
+            mint[:8],
+            parsed["venue_state"],
+            f"${parsed['price_usd']:.8f}" if parsed["price_usd"] else "None",
+            parsed["vsol_ui"] or 0.0,
+        )

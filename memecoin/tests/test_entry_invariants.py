@@ -38,6 +38,7 @@ def _make_stubs():
     cfg.LIVE_TRADING            = False
     cfg.LIVE_GATE_EPOCH         = "2026-07-02"
     cfg.POSITIONS_FILE          = "/tmp/positions_test_entry.json"
+    cfg.MAX_LOSS_FROM_FILL_PCT  = 0.50  # needed by effective_hard_stop_level
     sys.modules["memecoin.config"] = cfg
 
     # memecoin.pumpportal_monitor — stub monitor

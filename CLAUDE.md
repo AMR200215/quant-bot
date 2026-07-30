@@ -11,6 +11,8 @@
 - **Before any go-live step, curl every external API from the VPS** — mocked unit tests don't catch Cloudflare blocks or IP restrictions.
 - **Validate filters with clean data.** Remove outliers and null values before concluding a filter doesn't work.
 - **Trace the full execution flow before every fix or feature** — signal→buy→monitor→TP→stop→sell→journal→wallet. Flag every blocking call and lag failure mode before writing code.
+- **docs/RECEIPTS.md is a living document.** Any commit touching an execution path (executor.py, portfolio.py exit/close/abort, exit_router.py, bonding_curve_t22.py, verify_execution.py, any sell route) must add a receipt row in the same commit. "Proven" = row with real on-chain sig. "Not proven" = no row, regardless of what tests say.
+- **Batch manifests (`batches/*.yaml`) gate completeness.** Before committing a message that claims a batch/item is complete, run `python tools/batch_verify.py batches/<batch>.yaml` locally and confirm GREEN. If a batch is PARTIAL (e.g. `receipt_complete: false`), the commit message MUST begin with `PARTIAL:` and name every open item. Claiming something is complete while `batch_verify` exits 1 is a named failure mode — do not do it.
 - **Responses should be short and concise.**
 
 ---
@@ -134,6 +136,18 @@ logs/
 7. If all sell attempts fail → `sell_stuck`, arms `_sell_stuck_until` (retry after backoff)
 8. Reconciler (runs every 60s): if on-chain balance = 0 but position open → `close_position("reconciled_gone")` — skips on-chain sell
 
+### MU Retry Ladder (deployed 2026-07-07, commit 538132f)
+
+- **Attempts 1-3**: normal oracle-gated retry (BC still open → retry sell)
+- **Attempts 4-7**: Jupiter rescue escalation (when complete=True / account_missing / PumpSwap pool exists)
+- **Attempt 8**: final gate
+  - sig sweep (check if any pending sig already confirmed)
+  - token balance check
+  - outcome: recovered | reconciled_gone | manual_required
+- After attempt 8: no more auto-retries
+- Total duration: bounded ~8 minutes
+- The 30-minute retry loop was the LEAN failure mode (pre-fix). Not the design.
+
 ---
 
 ## Known Issues / Active Constraints
@@ -169,15 +183,20 @@ The abort-tripwire threshold (30% above baseline_price, `portfolio.py`) is **loc
 ### Sell kill switch (added)
 `kill_switch.py` now has an independent sell switch (`_live_sells_enabled`). `/sells_off` in Telegram disables all on-chain sells without stopping position tracking. `/sells_on` re-enables. Useful if you manually sell in Phantom and want to prevent the bot from also trying to sell.
 
+### Jul 6-7 batch summary
+Multiple live trades (LEAN, ESCAPE, BULL, STOCK BULL) exposed sell-path failure modes. All fixed in MU retry ladder (commit 538132f): oracle-gated retries 1-3, Jupiter rescue escalation 4-7, final balance gate at attempt 8. Telemetry layer added (commit pending) to instrument future trades with full entry/exit lifecycle timestamps. Old Jul 6-7 trades lack timing data — timing instrumentation was not yet deployed.
+
 ---
 
 ## Notable Trade History
 
 - **SAM** (April 2026) — best trade. New launch +839%, copy trade +216%. Deployer: `CAUbSmiNuj16phNiskMdwWZEAUXCfXaUSamDFyf7pAa6`
 - **STOCK BULL** (July 2026) — hard stop at −46%, sell confirmed on-chain. Correct behaviour.
-- **ESCAPE** (July 2026) — live buy, manual sell in Phantom, infinite loop bug (now fixed).
-- **BULL** (July 2026) — abort tripwire at +48% slippage, auto-sold, −$0.58 net.
-- Social alert overall: live trading started June 2026 at $5/trade.
+- **LEAN** (July 5 2026) — last confirmed live trade before ESCAPE/BULL. Entry fill +76.8% above signal. Immediately hit `MIGRATION_UNCERTAIN` loop — 20+ failed `PUMPSWAP_LOCAL` sell attempts over 28 minutes while token crashed. Eventually sold at −87.82% (−$2.63). Root cause: migration retry loop had no escalation path (no Jupiter fallback, no timeout) so the bot kept retrying a broken route while the token bled out. Buy TX: `3m8sotJc...`. Sell TX: `5mqkMBkc...` (`sell_fill:0.0000034690`).
+- **ESCAPE** (July 2026) — live buy, manual sell in Phantom. `reconciled_gone` loop bug (now fixed — `_skip_chain_sell` gate).
+- **BULL** (July 2026) — abort tripwire at +48% slippage vs jup_quote, auto-sold, −$0.58 net. T22 NameError in sell path also fixed.
+- **CONFIG_TAG**: `v7_entry_filters_2026-06-06` — tagged on every live trade row (field: `memecoin/portfolio.py:87`).
+- Social alert overall: live trading started June 2026 at $3–5/trade.
 
 ---
 

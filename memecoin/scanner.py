@@ -933,7 +933,33 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     """Called by TelegramMonitor when a token address is found in a channel message."""
     import time as _time
     _t0 = _time.time()
+    _alert_received_ts = _t0
     _health.bump_tg_message()
+
+    # ── Telemetry: start entry trace ──
+    # P4' ACCEPTANCE CRITERIA:
+    # "one real end-to-end jsonl trace from VPS (alert_received → trace_finished)"
+    # "one rejected-signal trace showing filter_rejected event"
+    # filter_rejected events are emitted at: no_dex_data, rug_blocked, and each
+    # individual filter (low_buy_pressure, vol_5m_out_of_range, vol_h1_too_high,
+    # price_change_blow_off, mcap_too_high) via _reject_filter() below.
+    _trace_id = ""
+    try:
+        from memecoin import telemetry as _tel
+        _trace_id = _tel.start_trace(
+            pos_id="pending",
+            mint=address,
+            symbol=address[:8],
+            live_or_paper="unknown",
+            pair_id=f"tg_{address[:16]}_{int(_t0)}",
+        )
+        _tel.event(_trace_id, "alert_received",
+            source_channel="pumpdotfunalert",
+            raw_mint=address,
+            alert_ts=_alert_received_ts,
+        )
+    except Exception:
+        pass
 
     # ── Subscribe-on-signal (preflight_no_price reduction) ──────────────────
     # Fire PP subscribeTokenTrade immediately — before screen_token() runs.
@@ -989,6 +1015,23 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             _kept.append(_json.dumps(_pp_entry))
             with open(_snap_path, "w") as _sf:
                 _sf.write("\n".join(_kept) + "\n")
+
+            # Also append the raw alert to signal_queue.jsonl for the research pipeline.
+            # FileQueueListener tails this file — no separate TG session needed.
+            try:
+                _queue_path = _Path(__file__).parent.parent / "research" / "data" / "signal_queue.jsonl"
+                _queue_entry = _json.dumps({
+                    "token_address": address,
+                    "chain":         chain,
+                    "alert_time":    _time.strftime("%Y-%m-%dT%H:%M:%S.000Z", _time.gmtime(_t0)),
+                    "raw_text":      (message_text or "")[:500],
+                    "ts":            _t0,
+                })
+                with open(_queue_path, "a") as _qf:
+                    _qf.write(_queue_entry + "\n")
+            except Exception as _qerr:
+                log.debug("signal_queue write failed %s: %s", address[:8], _qerr)
+
         except Exception as _snap_err:
             log.debug("PP research snapshot write failed %s: %s", address[:8], _snap_err)
 
@@ -1082,6 +1125,21 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         _record_prefetch_stats(_prefetch_dex_hit, _prefetch_safety_hit,
                                 _screen_ms, _decision_ms)
 
+        # ── Telemetry: screen done ──
+        try:
+            if _trace_id:
+                _tel.event(_trace_id, "alert_parsed",
+                    raw_symbol=address[:8],
+                    screen_ms=round(_screen_ms, 1),
+                    decision_ms=round(_decision_ms, 1),
+                )
+                _tel.event(_trace_id, "token_resolved",
+                    dex_hit=_prefetch_dex_hit,
+                    safety_hit=_prefetch_safety_hit,
+                )
+        except Exception:
+            pass
+
         reason = screen.get("reason", "")
 
         # Hard reject: no DexScreener data yet.
@@ -1090,6 +1148,12 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         # if on-chain demand is strong enough.  The DexScreener retry path (_NoDexData)
         # continues unchanged — two independent entry chances for the same token.
         if reason == "no_dex_data":
+            try:
+                if _trace_id:
+                    _tel.event(_trace_id, "filter_rejected", filter_name="no_dex_data", reason=reason)
+                    _tel.finish_trace(_trace_id, final=False)
+            except Exception:
+                pass
             with _sq_lock:
                 if address not in _screening_queue:
                     # Task 2: try to carry creator into the screening state so
@@ -1129,6 +1193,12 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             raise _NoDexData(address)
         if any(r in reason for r in ("rugcheck_fail", "honeypot", "rug_detector")):
             log.info("TG REJECT %s — rug/safety: %s", address[:8], reason)
+            try:
+                if _trace_id:
+                    _tel.event(_trace_id, "filter_rejected", filter_name="rug_blocked", reason=reason)
+                    _tel.finish_trace(_trace_id, final=False)
+            except Exception:
+                pass
             # Free the screening slot — rug tokens are never traded
             if chain == "solana":
                 try:
@@ -1144,8 +1214,14 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         pc5m = screen.get("price_change_5m") or 0
         mcap = screen.get("mcap_usd") or 0
 
-        def _reject_filter(msg: str) -> None:
+        def _reject_filter(msg: str, filter_name: str = "entry_filter") -> None:
             log.info("TG REJECT %s — %s", address[:8], msg)
+            try:
+                if _trace_id:
+                    _tel.event(_trace_id, "filter_rejected", filter_name=filter_name, reason=msg)
+                    _tel.finish_trace(_trace_id, final=False)
+            except Exception:
+                pass
             # Free the screening slot — filter-rejected tokens won't trade
             if chain == "solana":
                 try:
@@ -1154,19 +1230,19 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                     pass
 
         if bs < MIN_BUY_SELL_RATIO_SOCIAL:
-            _reject_filter(f"bs={bs:.2f} < {MIN_BUY_SELL_RATIO_SOCIAL:.2f} (buy pressure too low)")
+            _reject_filter(f"bs={bs:.2f} < {MIN_BUY_SELL_RATIO_SOCIAL:.2f} (buy pressure too low)", "low_buy_pressure")
             return
         if not (MIN_VOL_5M_SOCIAL <= v5m < MAX_VOL_5M_SOCIAL):
-            _reject_filter(f"vol_5m={v5m:.0f} not in ${MIN_VOL_5M_SOCIAL}-${MAX_VOL_5M_SOCIAL}")
+            _reject_filter(f"vol_5m={v5m:.0f} not in ${MIN_VOL_5M_SOCIAL}-${MAX_VOL_5M_SOCIAL}", "vol_5m_out_of_range")
             return
         if vh1 >= MAX_VOL_H1_SOCIAL:
-            _reject_filter(f"vol_h1={vh1:.0f} >= ${MAX_VOL_H1_SOCIAL} (already pumped)")
+            _reject_filter(f"vol_h1={vh1:.0f} >= ${MAX_VOL_H1_SOCIAL} (already pumped)", "vol_h1_too_high")
             return
         if 0 < pc5m >= MAX_PRICE_CHANGE_5M_SOCIAL:
-            _reject_filter(f"pc5m={pc5m:.0f} >= {MAX_PRICE_CHANGE_5M_SOCIAL}% (blow-off top)")
+            _reject_filter(f"pc5m={pc5m:.0f} >= {MAX_PRICE_CHANGE_5M_SOCIAL}% (blow-off top)", "price_change_blow_off")
             return
         if 0 < mcap > MAX_MCAP_SOCIAL:
-            _reject_filter(f"mcap={mcap:.0f} > ${MAX_MCAP_SOCIAL} (near pump.fun graduation)")
+            _reject_filter(f"mcap={mcap:.0f} > ${MAX_MCAP_SOCIAL} (near pump.fun graduation)", "mcap_too_high")
             return
 
         screen["passed"] = True
@@ -1225,13 +1301,33 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                 log.info("TG creator resolved %s: %s (elapsed %.1fs)",
                          address[:8], sig.creator_wallet[:8], _time.time() - _t0)
             else:
-                log.warning("TG creator UNRESOLVED %s after %.1fs — live entry will be blocked",
+                # P7: log-only, no gate — buy proceeds regardless.
+                # creator_wallet will be resolved in background after buy confirms.
+                log.warning("TG creator UNRESOLVED %s after %.1fs — proceeding; creator unresolved",
                             address[:8], _time.time() - _t0)
         _health.bump_live_eligible()
+
+        # ── Telemetry: entry category decided, signal queued ──
+        try:
+            if _trace_id:
+                _tel.event(_trace_id, "entry_category_decided",
+                    signal_type="social_alert",
+                    price_source=sig._price_source,
+                    price_pp=getattr(sig, '_price_pp', 0),
+                    price_dex=getattr(sig, '_price_dex', 0),
+                    total_latency_ms=round((_time.time() - _t0) * 1000, 1),
+                )
+        except Exception:
+            pass
+
         try:
             log_signal_candidate(sig)
         except Exception as _lsc_err:
             log.debug("log_signal_candidate failed: %s", _lsc_err)
+
+        # Attach trace_id to signal so portfolio.py can continue the trace
+        sig._telemetry_trace_id = _trace_id
+
         _add_signal(sig)
     except _NoDexData:
         raise  # propagate to TelegramMonitor for 45s retry
@@ -1337,6 +1433,56 @@ _graduated_exit_fired: set[str] = set()
 _pregrad_exit_fired: set[str] = set()
 
 
+def _should_trigger_graduation(result: dict) -> bool:
+    """Z1: Return True only for VERIFIED graduation signals — not RPC/parse errors.
+
+    RPC errors (ok=False, reason='rpc_error'/'parse_error') return complete=None
+    but must NOT cause graduation.  Only ok=True sources are trusted.
+    """
+    if result.get("complete") is True:
+        return True
+    if result.get("reason") == "account_missing":
+        return True   # verified: ok=True AND bonding curve account is gone
+    return False
+
+
+def select_vsol_source(
+    mint: str,
+    pp_vsol: float,
+    curve_vsol: dict,
+    now: float,
+    freshness_sec: float = 5.0,
+) -> tuple:
+    """Select vSOL reading from PP or curve fallback. Returns (vsol, source)."""
+    vsol = pp_vsol
+    source = "pp"
+    if vsol <= 0:
+        cv = curve_vsol.get(mint)
+        if cv and (now - cv[1]) < freshness_sec:
+            vsol = cv[0]
+            source = "curve"
+    return vsol, source
+
+
+def stamp_and_dispatch_graduation(pos, portfolio, graduated_exit_fired: set, now: float) -> bool:
+    """Stamp graduation_first_seen_ts and dispatch close_position if not already fired.
+
+    Updates pos.notes with cohort:graduated and graduation_first_seen_ts.
+    Calls portfolio.close_position() exactly once per pos.id.
+    Returns True if dispatch happened.
+    """
+    if pos.notes and "|cohort:bonding_curve" in pos.notes:
+        pos.notes = pos.notes.replace("|cohort:bonding_curve", "|cohort:graduated")
+    if "|graduation_first_seen_ts:" not in (pos.notes or ""):
+        pos.notes = (pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
+    if pos.id not in graduated_exit_fired and not pos.exit_reason:
+        graduated_exit_fired.add(pos.id)
+        portfolio._positions[pos.id] = pos
+        portfolio.close_position(pos.id, "graduated_exit", pos.current_price or 0.0)
+        return True
+    return False
+
+
 def _portfolio_thread():
     """
     Exit-condition evaluation for live positions runs at 0.5s using in-memory
@@ -1362,6 +1508,8 @@ def _portfolio_thread():
     _curve_feed_last_seen:    dict[str, float] = {}   # mint → unix ts of last curve price
     _curve_price_overrides:   dict[str, float] = {}   # mint → price_usd from curve feed
     _curve_feed_last_polled:  dict[str, float] = {}   # mint → unix ts of last poll attempt
+    # B1: curve-account vSOL for pre-graduation exit (secondary source when PP silent)
+    _curve_vsol: dict[str, tuple[float, float]] = {}  # mint -> (vsol_ui, sample_ts)
     _CURVE_POLL_INTERVAL = 1.0    # seconds between curve fetches per mint
     _CURVE_FEED_VALID_SEC = 10.0  # curve price considered fresh for this long
 
@@ -1468,6 +1616,10 @@ def _portfolio_thread():
                         _curve_price_overrides[_cp_mint] = _cp_price
                         _curve_feed_last_seen[_cp_mint]  = now
                         price_overrides[_cp_mint]         = _cp_price
+                        # B1: store curve-account vSOL for pre-graduation exit
+                        _vsol_ui = _cp_result.get("virtual_sol_reserves_ui", 0)
+                        if _vsol_ui > 0:
+                            _curve_vsol[_cp_mint] = (_vsol_ui, now)
                         log.info(
                             "CURVE FEED  token=%s  price=$%.10f  complete=%s",
                             _cp_pos.token_symbol, _cp_price, _cp_result.get("complete"),
@@ -1483,26 +1635,74 @@ def _portfolio_thread():
                                 _cp_pos.notes = _cp_pos.notes.replace(
                                     "|cohort:bonding_curve", "|cohort:graduated"
                                 )
+                            # B2: stamp graduation_first_seen_ts immediately (oracle-confirmed)
+                            if "|graduation_first_seen_ts:" not in (_cp_pos.notes or ""):
+                                _cp_pos.notes = (_cp_pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
                             log.warning(
-                                "CURVE FEED GRADUATED %s — curve complete=True mid-hold; "
-                                "handing over to graduated exit path",
+                                "CURVE FEED GRADUATED %s — curve complete=True mid-hold",
                                 _cp_pos.token_symbol,
                             )
-                    elif _cp_result.get("complete") is None:
-                        # account_missing → curve closed / migrated. Treat exactly like
-                        # complete=True: stop polling and trigger graduation handover.
-                        # Do not silently drop — the position still holds tokens.
+                            # Z3: strategy_pure_rider — graduation updates venue only, no exit.
+                            # legacy_graduation_guard — old behaviour (immediate close_position).
+                            if getattr(_cp_pos, "policy_cohort", "") == "strategy_pure_rider":
+                                import json as _z3_json
+                                _cp_pos.lifecycle_state = "graduated"
+                                _cp_pos.venue_state_json = _z3_json.dumps({"primary": "pump_amm"})
+                                portfolio._positions[_cp_pos.id] = _cp_pos
+                                portfolio._save()
+                                log.warning(
+                                    "Z3 strategy_pure_rider %s — lifecycle=graduated venue=pump_amm "
+                                    "(no exit fired, strategy monitors price)",
+                                    _cp_pos.token_symbol,
+                                )
+                            else:
+                                # B2: Oracle-confirmed graduation — dispatch immediately,
+                                # bypassing the 30s mig_age gate (PP-ambiguity gate only).
+                                if _cp_pos.id not in _graduated_exit_fired and not _cp_pos.exit_reason:
+                                    _graduated_exit_fired.add(_cp_pos.id)
+                                    portfolio._positions[_cp_pos.id] = _cp_pos
+                                    portfolio.close_position(
+                                        _cp_pos.id, "graduated_exit", _cp_pos.current_price or 0.0
+                                    )
+                    elif _cp_result.get("reason") == "account_missing":
+                        # Z1: VERIFIED account_missing (ok=True) → curve closed / migrated.
+                        # RPC errors return ok=False with reason="rpc_error"/"parse_error" —
+                        # those are NOT graduation signals and must NOT trigger close_position.
+                        # Treat real account_missing exactly like complete=True.
                         _curve_price_overrides.pop(_cp_mint, None)
                         _curve_feed_last_seen.pop(_cp_mint, None)
                         if _cp_pos.notes and "|cohort:bonding_curve" in _cp_pos.notes:
                             _cp_pos.notes = _cp_pos.notes.replace(
                                 "|cohort:bonding_curve", "|cohort:graduated"
                             )
+                        # B2: stamp graduation_first_seen_ts immediately (oracle-confirmed)
+                        if "|graduation_first_seen_ts:" not in (_cp_pos.notes or ""):
+                            _cp_pos.notes = (_cp_pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
                         log.warning(
-                            "CURVE FEED ACCOUNT_MISSING %s — curve account closed mid-hold; "
-                            "handing over to graduated exit path (account_missing → treat as graduated)",
+                            "CURVE FEED ACCOUNT_MISSING %s — curve account closed mid-hold "
+                            "(account_missing → treat as graduated)",
                             _cp_pos.token_symbol,
                         )
+                        # Z3: strategy_pure_rider — update venue state only.
+                        if getattr(_cp_pos, "policy_cohort", "") == "strategy_pure_rider":
+                            import json as _z3_json2
+                            _cp_pos.lifecycle_state = "graduated"
+                            _cp_pos.venue_state_json = _z3_json2.dumps({"primary": "pump_amm"})
+                            portfolio._positions[_cp_pos.id] = _cp_pos
+                            portfolio._save()
+                            log.warning(
+                                "Z3 strategy_pure_rider %s — account_missing, lifecycle=graduated "
+                                "venue=pump_amm (no exit fired)",
+                                _cp_pos.token_symbol,
+                            )
+                        else:
+                            # B2: Oracle-confirmed missing account — dispatch immediately.
+                            if _cp_pos.id not in _graduated_exit_fired and not _cp_pos.exit_reason:
+                                _graduated_exit_fired.add(_cp_pos.id)
+                                portfolio._positions[_cp_pos.id] = _cp_pos
+                                portfolio.close_position(
+                                    _cp_pos.id, "graduated_exit", _cp_pos.current_price or 0.0
+                                )
             except Exception as _cf_e:
                 log.debug("curve feed error: %s", _cf_e)
 
@@ -1541,17 +1741,33 @@ def _portfolio_thread():
                 if _pg_pos.token_address not in open_pumpfun:
                     continue
                 _vsol = _pp_monitor.get_vsol(_pg_pos.token_address)
+                _vsol_source = "pp"
+                if _vsol <= 0:
+                    # B1: PP silent — use curve-account reserves as secondary source
+                    _cv_entry = _curve_vsol.get(_pg_pos.token_address)
+                    if _cv_entry and (now - _cv_entry[1]) < 5.0:
+                        _vsol = _cv_entry[0]
+                        _vsol_source = "curve"
                 if _vsol <= 0:
                     continue
                 _progress = _vsol / _GRAD_SOL
                 if _progress >= _PREGRAD_PCT:
+                    # Z3: strategy_pure_rider skips pre-grad exit.
+                    # Graduation will update lifecycle_state; strategy exits via TP/stop.
+                    if getattr(_pg_pos, "policy_cohort", "") == "strategy_pure_rider":
+                        log.info(
+                            "Z3 pre_grad_skip strategy_pure_rider %s — vSol=%.2f (%.0f%%) "
+                            "graduation will update lifecycle_state",
+                            _pg_pos.token_symbol, _vsol, _progress * 100,
+                        )
+                        continue
                     _pregrad_exit_fired.add(_pg_pos.id)
                     log.warning(
                         "PRE-GRADUATION EXIT %s (%s) — vSol=%.2f SOL (%.0f%% of "
                         "graduation threshold %.0f SOL). Selling on bonding curve "
-                        "before migration.",
+                        "before migration. source=%s",
                         _pg_pos.token_symbol, _pg_pos.id,
-                        _vsol, _progress * 100, _GRAD_SOL,
+                        _vsol, _progress * 100, _GRAD_SOL, _vsol_source,
                     )
                     try:
                         from app.alerts import _send as _pg_alert
@@ -1599,28 +1815,43 @@ def _portfolio_thread():
                         _grad_dex_id = ""
                     if _grad_dex_id != "pumpswap":
                         continue
-                    # All conditions met — exit via pump-amm
-                    log.error(
-                        "GRADUATED EXIT — %s (%s) migrated to PumpSwap, "
-                        "exiting via pump-amm  mig_age=%.0fs",
-                        pos.token_symbol, pos.id, mig_age,
-                    )
-                    try:
-                        from app.alerts import _send
-                        _send(
-                            f"GRADUATED EXIT {pos.token_symbol} — "
-                            f"migrated to PumpSwap (dex_id=pumpswap). "
-                            f"Selling via pump-amm."
-                        )
-                    except Exception:
-                        pass
-                    _graduated_exit_fired.add(pos.id)
+                    # All conditions met — dex_id=pumpswap confirmed
                     # Swap cohort tag so close_position routes via escalate (pump-amm)
                     if pos.notes and "|cohort:bonding_curve" in pos.notes:
                         pos.notes = pos.notes.replace(
                             "|cohort:bonding_curve", "|cohort:graduated"
                         )
-                    portfolio.close_position(pos.id, "graduated_exit", pos.current_price)
+                    if "|graduation_first_seen_ts:" not in (pos.notes or ""):
+                        pos.notes = (pos.notes or "") + f"|graduation_first_seen_ts:{int(now)}"
+                    # Z3: strategy_pure_rider — update lifecycle state only, no exit.
+                    if getattr(pos, "policy_cohort", "") == "strategy_pure_rider":
+                        import json as _z3j
+                        pos.lifecycle_state = "graduated"
+                        pos.venue_state_json = _z3j.dumps({"primary": "pump_amm"})
+                        portfolio._positions[pos.id] = pos
+                        portfolio._save()
+                        log.warning(
+                            "Z3 strategy_pure_rider %s — dex_id=pumpswap, lifecycle=graduated "
+                            "venue=pump_amm (no exit fired)",
+                            pos.token_symbol,
+                        )
+                    else:
+                        log.error(
+                            "GRADUATED EXIT — %s (%s) migrated to PumpSwap, "
+                            "exiting via pump-amm  mig_age=%.0fs",
+                            pos.token_symbol, pos.id, mig_age,
+                        )
+                        try:
+                            from app.alerts import _send
+                            _send(
+                                f"GRADUATED EXIT {pos.token_symbol} — "
+                                f"migrated to PumpSwap (dex_id=pumpswap). "
+                                f"Selling via pump-amm."
+                            )
+                        except Exception:
+                            pass
+                        _graduated_exit_fired.add(pos.id)
+                        portfolio.close_position(pos.id, "graduated_exit", pos.current_price)
 
                 # ── Blind-exit check: both feeds silent >20s for live positions ──
                 # Fires a market-sell so we don't hold through an unobservable dump.
@@ -1889,20 +2120,281 @@ def _portfolio_thread():
 
                     _retry_at = portfolio._sell_stuck_until.get(_sp.id, 0)
                     if time.time() >= _retry_at:
+                        _is_mu = "|migration_wait" in (_sp.notes or "")
                         _retry_reason = (
                             "migration_uncertain_retry"
-                            if "|migration_wait" in (_sp.notes or "")
+                            if _is_mu
                             else (_sp.exit_reason or "sell_stuck_retry")
                         )
-                        log.info(
-                            "SELL STUCK retry triggered for %s  pos=%s  reason=%s",
-                            _sp.token_symbol, _sp.id, _retry_reason,
-                        )
-                        portfolio.close_position(
-                            _sp.id,
-                            _retry_reason,
-                            _sp.current_price or _sp.entry_price,
-                        )
+
+                        # ── MU retry escalation ladder ──
+                        if _is_mu:
+                            # Extract / increment mu_retries from notes
+                            _mu_n_match = _re_mu.search(r'\|mu_retries:(\d+)\|', _sp.notes or "")
+                            _mu_n = int(_mu_n_match.group(1)) if _mu_n_match else 0
+                            _mu_n += 1
+                            # Persist updated counter
+                            if _mu_n_match:
+                                _sp.notes = _re_mu.sub(
+                                    r'\|mu_retries:\d+\|',
+                                    f"|mu_retries:{_mu_n}|",
+                                    _sp.notes or "",
+                                    count=1,
+                                )
+                            else:
+                                _sp.notes = (_sp.notes or "") + f"|mu_retries:{_mu_n}|"
+                            if not _re_mu.search(r'\|mu_first_ts:\d+\|', _sp.notes or ""):
+                                _sp.notes = (_sp.notes or "") + f"|mu_first_ts:{int(time.time())}|"
+
+                            # Oracle check (shared across all attempts)
+                            _mu_oracle = {"ok": False, "complete": None, "reason": "not_checked"}
+                            try:
+                                from memecoin.executor import get_pumpfun_curve_complete as _mu_gpc
+                                _mu_oracle = _mu_gpc(_sp.token_address)
+                            except Exception as _mu_oe:
+                                log.debug("MU retry oracle error %s: %s", _sp.token_symbol, _mu_oe)
+
+                            _mu_complete = _mu_oracle.get("complete")
+                            _mu_acct_missing = _mu_oracle.get("reason") == "account_missing"
+
+                            # Check PumpSwap pool exists
+                            _mu_ps_pool = False
+                            try:
+                                from memecoin.pumpswap_local import fetch_pool as _mu_fp, PumpSwapPoolError as _mu_PSE
+                                _mu_fp(_sp.token_address, CHAINS.get("solana", {}).get("rpc", "https://api.mainnet-beta.solana.com"))
+                                _mu_ps_pool = True
+                            except Exception:
+                                pass
+
+                            _mu_route = "unknown"
+                            _mu_last_err = ""
+                            _mu_err_match = _re_mu.search(r'\|mu_last_error:([^|]*)\|', _sp.notes or "")
+                            if _mu_err_match:
+                                _mu_last_err = _mu_err_match.group(1)
+
+                            log.warning("MU RETRY %d/8  token=%s  route=%s  state=%s  last_error=%s",
+                                        _mu_n, _sp.token_symbol, _mu_route, _mu_complete, _mu_last_err)
+
+                            # ── Telemetry: MU retry attempt ──
+                            try:
+                                from memecoin import telemetry as _tel_mu
+                                _mu_tid = _tel_mu.get_trace_id_for_pos(_sp.id)
+                                if not _mu_tid:
+                                    _mu_tid = _tel_mu.start_trace(
+                                        pos_id=_sp.id, mint=_sp.token_address,
+                                        symbol=_sp.token_symbol, live_or_paper="live",
+                                    )
+                                    _tel_mu.event(_mu_tid, "mu_entered",
+                                        mu_first_ts=int(time.time()),
+                                    )
+                                _tel_mu.event(_mu_tid, "mu_retry_attempt",
+                                    attempt_number=_mu_n,
+                                    oracle_complete=_mu_complete,
+                                    pool_exists=_mu_ps_pool,
+                                    route_chosen=_mu_route,
+                                )
+                            except Exception:
+                                pass
+
+                            if _mu_n <= 3:
+                                # ── Attempts 1–3: oracle-gated, existing behavior ──
+                                log.info("SELL STUCK retry triggered for %s  pos=%s  reason=%s  attempt=%d",
+                                         _sp.token_symbol, _sp.id, _retry_reason, _mu_n)
+                                portfolio._positions[_sp.id] = _sp
+                                portfolio._save()
+                                portfolio.close_position(
+                                    _sp.id,
+                                    _retry_reason,
+                                    _sp.current_price or _sp.entry_price,
+                                )
+                            elif _mu_n <= 7:
+                                # ── Attempts 4–7: Jupiter escalation ──
+                                if _mu_complete is True or _mu_acct_missing or _mu_ps_pool:
+                                    # Force Jupiter rescue path
+                                    # Guard: do not send duplicate if mu_last_sig present and unconfirmed
+                                    _mu_sig_match = _re_mu.search(r'\|mu_last_sig:([A-Za-z0-9]+)\|', _sp.notes or "")
+                                    _mu_has_pending = False
+                                    if _mu_sig_match:
+                                        _mu_pending_sig = _mu_sig_match.group(1)
+                                        try:
+                                            from memecoin.tx_meta import read_sol_delta as _mu_rsd
+                                            from memecoin.config import WALLET_PUBKEY as _mu_wallet
+                                            _mu_sig_res = _mu_rsd(_mu_pending_sig, _mu_wallet)
+                                            if not _mu_sig_res.get("ok"):
+                                                _mu_has_pending = True
+                                                log.info("MU RETRY %d — pending sig %s still unconfirmed, skipping duplicate",
+                                                         _mu_n, _mu_pending_sig[:16])
+                                            elif (_mu_sig_res.get("sol_delta") or 0) > 0:
+                                                # Late-confirmed positive sig → finalize as recovered
+                                                log.warning("MU RETRY %d — pending sig %s confirmed positive! Finalizing as recovered",
+                                                            _mu_n, _mu_pending_sig[:16])
+                                                _sp.notes = (_sp.notes or "") + f"|mu_last_route:jupiter_rescue_confirmed|"
+                                                portfolio._positions[_sp.id] = _sp
+                                                portfolio._save()
+                                                portfolio._finalize_rescue_sell(_sp.id, {
+                                                    "tx_sig": _mu_pending_sig,
+                                                    "sol_received": _mu_sig_res["sol_delta"],
+                                                })
+                                                continue
+                                        except Exception:
+                                            pass
+
+                                    if not _mu_has_pending:
+                                        log.info("MU RETRY %d — forcing Jupiter rescue for %s", _mu_n, _sp.token_symbol)
+                                        _sp.notes = _re_mu.sub(r'\|mu_last_route:[^|]*\|', '', _sp.notes or "")
+                                        _sp.notes = (_sp.notes or "") + "|mu_last_route:jupiter_rescue|"
+                                        portfolio._positions[_sp.id] = _sp
+                                        portfolio._save()
+
+                                        def _mu_jup_worker(_snap=_sp, _pid=_sp.id, _pf=portfolio, _sym=_sp.token_symbol, _n=_mu_n):
+                                            try:
+                                                from memecoin.jupiter_rescue import (
+                                                    force_jupiter_rescue_sell as _fmu,
+                                                    classify_rescue_result as _cmu,
+                                                )
+                                                _res = _fmu(_snap, f"mu_retry_{_n}")
+                                                _cls = _cmu(_res)
+                                                _full_sig = _res.get("tx_sig", "")
+                                                if _full_sig:
+                                                    # Persist full sig
+                                                    _snap_in = _pf._positions.get(_pid)
+                                                    if _snap_in:
+                                                        import re as _re_sig
+                                                        _snap_in.notes = _re_sig.sub(r'\|mu_last_sig:[^|]*\|', '', _snap_in.notes or "")
+                                                        _snap_in.notes = (_snap_in.notes or "") + f"|mu_last_sig:{_full_sig}|"
+                                                        _err_cls = type(_res.get("error", "")).__name__ if _res.get("error") else ""
+                                                        _snap_in.notes = _re_sig.sub(r'\|mu_last_error:[^|]*\|', '', _snap_in.notes or "")
+                                                        _snap_in.notes = (_snap_in.notes or "") + f"|mu_last_error:{_err_cls}|"
+                                                        _pf._positions[_pid] = _snap_in
+                                                        _pf._save()
+                                                if _cls in ("sold", "already_sold"):
+                                                    _pf._finalize_rescue_sell(_pid, _res)
+                                                elif _cls == "pending":
+                                                    log.info("MU RETRY %d Jupiter: tx pending  token=%s", _n, _sym)
+                                                else:
+                                                    log.info("MU RETRY %d Jupiter: %s  token=%s", _n, _cls, _sym)
+                                            except Exception as _exc:
+                                                log.warning("MU RETRY %d Jupiter exception  token=%s: %s", _n, _sym, _exc)
+
+                                        _jup_t = threading.Thread(target=_mu_jup_worker, daemon=True,
+                                                                   name=f"mu-jup-{_sp.id[:8]}")
+                                        _jup_t.start()
+                                    else:
+                                        portfolio._positions[_sp.id] = _sp
+                                        portfolio._save()
+                                else:
+                                    # complete=False → stay on bonding curve path
+                                    log.info("MU RETRY %d — complete=False, using BC path for %s", _mu_n, _sp.token_symbol)
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                                    portfolio.close_position(
+                                        _sp.id,
+                                        _retry_reason,
+                                        _sp.current_price or _sp.entry_price,
+                                    )
+                            elif _mu_n == 8:
+                                # ── Attempt 8: final gate ──
+                                log.warning("MU RETRY 8 (FINAL) — running graduated_loss gate for %s", _sp.token_symbol)
+                                _sp.notes = (_sp.notes or "") + "|mu_final_gate|"
+                                try:
+                                    if _mu_tid:
+                                        _tel_mu.event(_mu_tid, "mu_final_gate",
+                                            attempt_number=8,
+                                        )
+                                except Exception:
+                                    pass
+
+                                # Check pending sigs first
+                                _mu8_recovered = False
+                                try:
+                                    import re as _re8
+                                    from memecoin.tx_meta import read_sol_delta as _rsd8
+                                    from memecoin.config import WALLET_PUBKEY as _w8
+                                    _mu8_sigs = _re8.findall(
+                                        r'(?:sell_tx|sell_unconf|jupiter_rescue_pending|sell_pending|pending_sig|mu_last_sig):([A-Za-z0-9]+)',
+                                        _sp.notes or "",
+                                    )
+                                    for _s8 in reversed(_mu8_sigs):
+                                        _r8 = _rsd8(_s8, _w8)
+                                        if _r8.get("ok") and (_r8.get("sol_delta") or 0) > 0:
+                                            log.warning("MU RETRY 8 — confirmed positive sig %s  sol=%.6f → recovered", _s8[:16], _r8["sol_delta"])
+                                            portfolio._positions[_sp.id] = _sp
+                                            portfolio._save()
+                                            portfolio._finalize_rescue_sell(_sp.id, {
+                                                "tx_sig": _s8,
+                                                "sol_received": _r8["sol_delta"],
+                                            })
+                                            _mu8_recovered = True
+                                            break
+                                except Exception as _e8:
+                                    log.debug("MU RETRY 8 sig sweep error: %s", _e8)
+
+                                if _mu8_recovered:
+                                    continue
+
+                                # Check on-chain balance
+                                _mu8_bal = -1
+                                try:
+                                    from memecoin.executor import _get_keypair as _gk8, _token_balance as _tb8
+                                    _mu8_wallet = str(_gk8().pubkey())
+                                    _mu8_bal = _tb8(_mu8_wallet, _sp.token_address)
+                                except Exception:
+                                    pass
+
+                                if _mu8_bal == 0:
+                                    # No confirmed sig AND balance == 0 → close as reconciled_gone
+                                    log.warning("MU RETRY 8 — balance=0 + no confirmed sig → reconciled_gone  token=%s", _sp.token_symbol)
+                                    try:
+                                        if _mu_tid:
+                                            _tel_mu.event(_mu_tid, "mu_recovered",
+                                                resolution="reconciled_gone", balance=0)
+                                    except Exception:
+                                        pass
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                                    portfolio.close_position(_sp.id, "reconciled_gone", _sp.current_price or _sp.entry_price)
+                                elif _mu8_bal > 0:
+                                    # Balance still present → manual required, do NOT write graduated_loss
+                                    _sp.notes = (_sp.notes or "") + "|migration_manual_required|"
+                                    try:
+                                        if _mu_tid:
+                                            _tel_mu.event(_mu_tid, "mu_manual_required",
+                                                balance=_mu8_bal)
+                                    except Exception:
+                                        pass
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                                    log.error("MU RETRY 8 — balance=%d still present, manual check required  token=%s", _mu8_bal, _sp.token_symbol)
+                                    try:
+                                        from app.alerts import _send
+                                        _send(
+                                            f"⚠️ MANUAL CHECK REQUIRED: {_sp.token_symbol} — "
+                                            f"8 MU retries, balance still present, cannot sell automatically.\n"
+                                            f"mint: {_sp.token_address}"
+                                        )
+                                    except Exception:
+                                        pass
+                                else:
+                                    # Balance check failed — keep as sell_stuck for manual
+                                    _sp.notes = (_sp.notes or "") + "|migration_manual_required|mu_balance_check_failed|"
+                                    portfolio._positions[_sp.id] = _sp
+                                    portfolio._save()
+                            else:
+                                # Past attempt 8 — stop auto-retry
+                                log.debug("MU RETRY %d > 8 — no more auto-retries for %s", _mu_n, _sp.token_symbol)
+                                portfolio._positions[_sp.id] = _sp
+                                portfolio._save()
+                        else:
+                            # Non-MU sell_stuck retry
+                            log.info(
+                                "SELL STUCK retry triggered for %s  pos=%s  reason=%s",
+                                _sp.token_symbol, _sp.id, _retry_reason,
+                            )
+                            portfolio.close_position(
+                                _sp.id,
+                                _retry_reason,
+                                _sp.current_price or _sp.entry_price,
+                            )
 
         except Exception as e:
             log.warning("Portfolio monitor error: %s", e)
@@ -1951,14 +2443,11 @@ def _on_pp_price_tick(mint: str, price_usd: float) -> None:
         # Update peak price on every PP tick — catches sub-0.5s pumps the poll loop misses
         pos.peak_price = max(pos.peak_price, price_usd)
 
-        # Hard stop — signal-anchored when fill > signal price.
-        # If fill slipped above signal, anchor stop level to signal structure so
-        # a normal post-signal dip (e.g. -18% from signal = -35% from fill) doesn't
-        # stop us out prematurely.  For paper positions entry_price == signal_price
-        # so the fallback is identical to the old fill-anchored behaviour.
-        _stop_level = pos.entry_price * (1 + pos.hard_stop_pct)
-        if pos.signal_price > 0 and pos.entry_price > pos.signal_price:
-            _stop_level = pos.signal_price * (1 + pos.hard_stop_pct)
+        # Hard stop — uses same effective_hard_stop_level as portfolio.update_prices.
+        from memecoin.portfolio import effective_hard_stop_level
+        _stop_level = effective_hard_stop_level(
+            pos.signal_price, pos.entry_price, pos.hard_stop_pct
+        )
         if price_usd <= _stop_level:
             _exit_queue.put_nowait((pos.id, "hard_stop_pp", price_usd))
             return
@@ -2054,11 +2543,11 @@ def _reconciler_thread() -> None:
             # the tx succeeded and we must journal it as reconciled_gone.
             _all_live = [
                 p for p in portfolio._positions.values()
-                if p.status in ("open", "sell_stuck")
-                and p.notes and "live|tx:" in p.notes
+                if p.status in ("open", "sell_stuck", "manual_required")
+                and p.is_live
             ]
             for pos in _all_live:
-                if not (pos.notes and "live|tx:" in pos.notes):
+                if not pos.is_live:
                     continue   # paper position — no on-chain balance to check
                 if "|sell_pending" in (pos.notes or ""):
                     continue   # in-flight retry — don't race with sell thread
@@ -2088,6 +2577,80 @@ def _reconciler_thread() -> None:
                             break
 
                 if on_chain == 0:
+                    # ── Guard 1: Two consecutive zero reads ≥30s apart ──
+                    _first_zero_key = "|reconciler_zero_first_ts:"
+                    _now_ts = int(time.time())
+                    if _first_zero_key not in (pos.notes or ""):
+                        pos.notes = (pos.notes or "") + f"|reconciler_zero_first_ts:{_now_ts}|"
+                        log.info("RECONCILER %s — first zero balance read, waiting 30s before close  pos=%s", pos.token_symbol, pos.id)
+                        portfolio._positions[pos.id] = pos
+                        portfolio._save()
+                        continue  # do not close yet
+
+                    import re as _re
+                    _fz_match = _re.search(r'\|reconciler_zero_first_ts:(\d+)\|', pos.notes or "")
+                    _first_zero_ts = int(_fz_match.group(1)) if _fz_match else _now_ts
+                    if (_now_ts - _first_zero_ts) < 30:
+                        log.info("RECONCILER %s — second zero read but <30s since first, waiting  pos=%s", pos.token_symbol, pos.id)
+                        continue
+
+                    # ── Guard 2: No pending sell signatures in notes ──
+                    _pending_markers = ("|sell_pending:", "|sell_unconf:", "|jupiter_rescue_pending:", "|rescue_pending:", "|pending_sig:")
+                    if any(m in (pos.notes or "") for m in _pending_markers):
+                        log.info("RECONCILER %s — zero balance but pending sell sig in notes, skipping  pos=%s", pos.token_symbol, pos.id)
+                        continue
+
+                    # ── Guard 3: Graduation transit guard ──
+                    try:
+                        from memecoin.executor import get_pumpfun_curve_complete as _gcc
+                        _curve_res = _gcc(pos.token_address)
+                        if _curve_res.get("complete") is True:
+                            _cct_key = "|curve_complete_first_ts:"
+                            if _cct_key not in (pos.notes or ""):
+                                pos.notes = (pos.notes or "") + f"|curve_complete_first_ts:{_now_ts}|migration_transit:{_now_ts}|"
+                                log.warning("RECONCILER %s — curve complete=True just observed, waiting 60s for migration  pos=%s", pos.token_symbol, pos.id)
+                                portfolio._positions[pos.id] = pos
+                                portfolio._save()
+                                continue
+                            _cct_match = _re.search(r'\|curve_complete_first_ts:(\d+)\|', pos.notes or "")
+                            _cct_ts = int(_cct_match.group(1)) if _cct_match else _now_ts
+                            if (_now_ts - _cct_ts) < 60:
+                                log.info("RECONCILER %s — migration_transit guard active (%ds), not closing  pos=%s", pos.token_symbol, pos.id, _now_ts - _cct_ts)
+                                continue
+                    except Exception as _gc_err:
+                        log.debug("RECONCILER curve check failed for %s: %s", pos.token_symbol, _gc_err)
+
+                    # ── Guard 4: Sig sweep before close ──
+                    # Check any known sell sigs for positive SOL delta
+                    _rec_recovered = False
+                    try:
+                        import re as _re_sweep
+                        from memecoin.tx_meta import read_sol_delta as _rsd_rec
+                        from memecoin.config import WALLET_PUBKEY as _rec_wallet
+                        _rec_sigs = _re_sweep.findall(
+                            r'(?:sell_tx|sell_unconf|jupiter_rescue_pending|sell_pending|pending_sig):([A-Za-z0-9]+)',
+                            pos.notes or "",
+                        )
+                        for _rec_sig in reversed(_rec_sigs):
+                            _rec_res = _rsd_rec(_rec_sig, _rec_wallet)
+                            if _rec_res.get("ok") and (_rec_res.get("sol_delta") or 0) > 0:
+                                _rec_sol = _rec_res["sol_delta"]
+                                pos.sol_received = _rec_sol
+                                pos.exit_reason = "reconciled_recovered"
+                                pos.notes = (pos.notes or "") + f"|reconciled_recovered:{_rec_sig[:8]}|sol_received:{_rec_sol:.8f}"
+                                log.warning(
+                                    "RECONCILER %s — sig sweep found confirmed sell: sol=%.6f sig=%s — closing as recovered",
+                                    pos.token_symbol, _rec_sol, _rec_sig[:16],
+                                )
+                                _rec_recovered = True
+                                break
+                    except Exception as _sw_err:
+                        log.debug("RECONCILER sig sweep error for %s: %s", pos.token_symbol, _sw_err)
+
+                    if _rec_recovered:
+                        portfolio.close_position(pos.id, "reconciled_recovered", pos.current_price)
+                        continue
+
                     log.warning(
                         "RECONCILER: zero on-chain balance for open live position %s (%s) — "
                         "closing as reconciled_gone",
@@ -2131,6 +2694,14 @@ def start(daemon: bool = True):
 
     _health.start()
     _program_monitor.start(daemon=daemon)
+
+    # Z8.6: Start pump.fun compatibility tripwire.
+    # Monitors deploy slot every 30 min; immediately disables local builds if changed.
+    try:
+        from memecoin.pumpfun_compat import start_tripwire_thread as _z8_tripwire
+        _z8_tripwire()
+    except Exception as _z8_err:
+        log.warning("Z8 COMPAT: tripwire start failed: %s", _z8_err)
 
     _pp_monitor.start(daemon=daemon)
     _pp_monitor.add_price_callback(_on_pp_price_tick)
@@ -2204,6 +2775,27 @@ def start(daemon: bool = True):
             log.warning("Telegram monitor failed to start: %s", e)
     else:
         log.info("Telegram monitor disabled — set TELEGRAM_API_ID and TELEGRAM_API_HASH to enable")
+
+    # Research pipeline heartbeat — appends to signal_queue.jsonl every 5 min
+    # so FileQueueListener's deadman timer knows the feed is alive.
+    def _signal_queue_heartbeat():
+        import json as _json
+        import time as _time
+        from pathlib import Path as _Path
+        _hb_path = _Path(__file__).parent.parent / "research" / "data" / "signal_queue.jsonl"
+        while True:
+            _time.sleep(300)
+            try:
+                _entry = _json.dumps({"type": "heartbeat", "ts": _time.time()})
+                with open(_hb_path, "a") as _hf:
+                    _hf.write(_entry + "\n")
+                log.debug("signal_queue heartbeat written")
+            except Exception as _hb_err:
+                log.debug("signal_queue heartbeat failed: %s", _hb_err)
+
+    threading.Thread(
+        target=_signal_queue_heartbeat, daemon=True, name="sq-heartbeat"
+    ).start()
 
     alerts.init()
 

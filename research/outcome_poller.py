@@ -1,6 +1,13 @@
 """
-Outcome poller — polls DexScreener at category-specific intervals and
-writes prices back to research_tokens.
+Outcome poller — polls prices at category-specific intervals and writes prices
+back to research_tokens.
+
+RF1 change: CURVE_ACTIVE tokens (social_alert_bc with pp_vsol < GRAD_SOL_UI)
+now use bonding-curve account data via Helius getMultipleAccounts as the primary
+price source.  DexScreener is used as fallback and for GRADUATED tokens.
+
+Per-interval provenance columns (price_source_*, price_status_*,
+price_observed_at_*) are written alongside each price poll.
 
 Architecture:
 - Min-heap of (fire_time_epoch, token_address, interval_label, chain)
@@ -14,20 +21,37 @@ Issue 6: peak = max of poll prices, not true tick-level high (documented limitat
 
 import heapq
 import logging
+import re as _re
 import threading
 import time
 from datetime import datetime, timezone, timedelta
+from enum import Enum
 from typing import Optional
 
 from research.config import (
     SUPABASE_URL, SUPABASE_KEY,
     CATEGORY_INTERVALS, INTERVAL_MINUTES,
     POLLER_LOOKBACK_HOURS,
+    HELIUS_API_KEY,
+    GRAD_SOL_UI,
 )
 from research.snapshot import fetch_price
+from research.curve_oracle import get_curve_prices_batch, get_sol_usd_cached
 from research.spool.writer import spool_dropped_field, spool_failed_insert
 
 log = logging.getLogger(__name__)
+
+
+# ── VenueState enum ────────────────────────────────────────────────────────────
+
+class VenueState(str, Enum):
+    CURVE_ACTIVE = "CURVE_ACTIVE"
+    GRADUATED    = "GRADUATED"
+    DEX_ACTIVE   = "DEX_ACTIVE"
+    UNKNOWN      = "UNKNOWN"
+
+
+# ── Interval label → column mappings ─────────────────────────────────────────
 
 # Interval label → Supabase column name
 # NOTE: Postgres lowercases all unquoted identifiers, so price_T3m → price_t3m.
@@ -39,6 +63,37 @@ _INTERVAL_COL = {
     "T15m": "price_t15m",
     "T20m": "price_t20m",
     "T30m": "price_t30m",
+}
+
+# Per-interval provenance columns
+_INTERVAL_SOURCE_COL = {
+    "T1m":  "price_source_t1m",
+    "T3m":  "price_source_t3m",
+    "T5m":  "price_source_t5m",
+    "T10m": "price_source_t10m",
+    "T15m": "price_source_t15m",
+    "T20m": "price_source_t20m",
+    "T30m": "price_source_t30m",
+}
+
+_INTERVAL_STATUS_COL = {
+    "T1m":  "price_status_t1m",
+    "T3m":  "price_status_t3m",
+    "T5m":  "price_status_t5m",
+    "T10m": "price_status_t10m",
+    "T15m": "price_status_t15m",
+    "T20m": "price_status_t20m",
+    "T30m": "price_status_t30m",
+}
+
+_INTERVAL_OBSERVED_COL = {
+    "T1m":  "price_observed_at_t1m",
+    "T3m":  "price_observed_at_t3m",
+    "T5m":  "price_observed_at_t5m",
+    "T10m": "price_observed_at_t10m",
+    "T15m": "price_observed_at_t15m",
+    "T20m": "price_observed_at_t20m",
+    "T30m": "price_observed_at_t30m",
 }
 
 # All intervals for a category → their columns that hold prices
@@ -144,8 +199,8 @@ class OutcomePoller:
                         alert_time_str = ""
                     intervals = CATEGORY_INTERVALS.get(cat, CATEGORY_INTERVALS["unknown"])
                     for label in intervals:
-                        offset   = INTERVAL_MINUTES[label] * 60
-                        fire_at  = alert_ts + offset
+                        offset_s = INTERVAL_MINUTES[label] * 60
+                        fire_at  = alert_ts + offset_s
                         late     = fire_at < now
                         fire_at  = now + 2 if late else fire_at
                         heapq.heappush(self._heap, (fire_at, addr, label, chain, alert_time_str))
@@ -154,12 +209,175 @@ class OutcomePoller:
         except Exception as e:
             log.error("Outcome poller: DB rebuild failed: %s", e)
 
+    # ── Venue state determination ─────────────────────────────────────────────
+
+    def _get_token_meta(self, token_address: str) -> dict:
+        """
+        Read category and pp_vsol for a token from DB.
+        Returns {"category": str, "pp_vsol": float|None}.
+        Returns defaults on any error.
+        """
+        try:
+            resp = (
+                self._sb.table("research_tokens")
+                .select("category, pp_vsol")
+                .eq("token_address", token_address)
+                .limit(1)
+                .execute()
+            )
+            if resp.data:
+                return {
+                    "category": resp.data[0].get("category") or "unknown",
+                    "pp_vsol":  resp.data[0].get("pp_vsol"),
+                }
+        except Exception as e:
+            log.debug("_get_token_meta failed for %s: %s", token_address[:8], e)
+        return {"category": "unknown", "pp_vsol": None}
+
+    def _determine_venue_state(self, category: str, pp_vsol: Optional[float]) -> VenueState:
+        """
+        Determine the venue state for a token based on its category and pp_vsol.
+
+        Rules:
+        - social_alert_bc with pp_vsol < GRAD_SOL_UI → CURVE_ACTIVE
+        - social_alert_bc with pp_vsol >= GRAD_SOL_UI → GRADUATED
+        - social_alert_grad → GRADUATED
+        - unknown → UNKNOWN (try curve then DEX)
+        """
+        if category == "social_alert_grad":
+            return VenueState.GRADUATED
+
+        if category == "social_alert_bc":
+            if pp_vsol is not None and pp_vsol >= GRAD_SOL_UI:
+                return VenueState.GRADUATED
+            return VenueState.CURVE_ACTIVE   # default for BC tokens
+
+        # "unknown" or anything else
+        return VenueState.UNKNOWN
+
+    # ── Price fetch with venue routing ────────────────────────────────────────
+
+    def _fetch_price_with_venue(
+        self,
+        token_address: str,
+        category: str,
+        pp_vsol: Optional[float],
+    ) -> tuple[Optional[float], str, Optional[str]]:
+        """
+        Fetch price using the appropriate venue for this token's state.
+
+        Returns: (price_usd, source, failure_reason)
+          source: "curve_account" | "dexscreener" | "jupiter" | None
+          failure_reason: None (success) | "curve_rpc_error" | "curve_account_missing" |
+                          "curve_parse_error" | "curve_layout_unknown" | "sol_usd_stale" |
+                          "no_price" (all failed)
+        """
+        venue_state = self._determine_venue_state(category, pp_vsol)
+
+        # ── CURVE_ACTIVE path ─────────────────────────────────────────────────
+        if venue_state in (VenueState.CURVE_ACTIVE, VenueState.UNKNOWN):
+            curve_result = self._try_curve_price(token_address)
+
+            if curve_result is not None:
+                curve_venue, price, failure = curve_result
+
+                if curve_venue == "CURVE_ACTIVE" and price is not None:
+                    return price, "curve_account", None
+
+                if curve_venue == "GRADUATED":
+                    # complete=True in account data → fall through to DEX
+                    log.info("curve_oracle: %s complete=True → switching to DEX path",
+                             token_address[:8])
+                    # fall through to DEX below
+
+                elif failure is not None:
+                    # RPC/parse error — try DexScreener as fallback but do NOT treat as graduation
+                    log.debug("curve_oracle fallback to DEX for %s: %s", token_address[:8], failure)
+                    dex_price, dex_source, dex_failure = self._try_dex_price(token_address)
+                    if dex_price is not None:
+                        return dex_price, dex_source, None
+                    # All failed — return the original curve failure reason
+                    return None, None, failure
+
+                # CURVE_MISSING or PARSE_ERROR without a specific re-route — try DEX
+                if price is None and curve_venue in ("CURVE_MISSING", "PARSE_ERROR"):
+                    dex_price, dex_source, dex_failure = self._try_dex_price(token_address)
+                    if dex_price is not None:
+                        return dex_price, dex_source, None
+                    return None, None, failure or dex_failure
+
+        # ── GRADUATED / DEX_ACTIVE path ───────────────────────────────────────
+        dex_price, dex_source, dex_failure = self._try_dex_price(token_address)
+        if dex_price is not None:
+            return dex_price, dex_source, None
+
+        return None, None, dex_failure or "no_price"
+
+    def _try_curve_price(self, token_address: str) -> Optional[tuple]:
+        """
+        Attempt to get price from bonding-curve account.
+        Returns (venue_state_str, price_usd|None, failure_reason|None) or None if skipped.
+        """
+        if not HELIUS_API_KEY:
+            log.debug("curve_oracle: no HELIUS_API_KEY — skipping curve lookup for %s",
+                      token_address[:8])
+            return None
+
+        sol_usd, sol_age = get_sol_usd_cached()
+
+        results = get_curve_prices_batch(
+            mints=[token_address],
+            helius_key=HELIUS_API_KEY,
+            sol_price_usd=sol_usd,
+            sol_price_age_s=sol_age,
+        )
+
+        r = results.get(token_address)
+        if r is None:
+            return None
+
+        return r["venue_state"], r.get("price_usd"), r.get("failure_reason")
+
+    def _try_dex_price(self, token_address: str) -> tuple:
+        """
+        Try DexScreener, then Jupiter fallback.
+        Returns (price_usd|None, source|None, failure_reason|None).
+        """
+        price, mcap, liq = fetch_price(token_address)
+        if price is not None:
+            # Determine source — fetch_price tries DexScreener first then Jupiter;
+            # we can't easily distinguish them here, so call snapshot to check
+            # but fetch_price itself tries dex first, then Jupiter.
+            # We'll label based on whether we got mcap too (dex has mcap, jupiter doesn't)
+            source = "dexscreener" if mcap is not None else "jupiter"
+            return price, source, None
+        return None, None, "no_price"
+
+    # ── Poll execution ─────────────────────────────────────────────────────────
+
     def _poll(self, token_address: str, label: str, chain: str, late: bool,
               alert_time_iso: str = ""):
-        """Fetch price and update Supabase."""
-        price, mcap, liq = fetch_price(token_address)
+        """Fetch price with venue routing and update Supabase with provenance columns."""
         polled_at = datetime.now(timezone.utc).isoformat()
         col = _INTERVAL_COL.get(label)
+
+        # Read token meta for venue determination
+        meta     = self._get_token_meta(token_address)
+        category = meta["category"]
+        pp_vsol  = meta["pp_vsol"]
+
+        # Fetch price with curve-first routing
+        price, source, failure_reason = self._fetch_price_with_venue(
+            token_address, category, pp_vsol
+        )
+
+        # Back-compat: also retrieve mcap/liq for outcome_polls log
+        # (only available from DexScreener path — accept None from curve path)
+        mcap = None
+        liq  = None
+        if source == "dexscreener":
+            _p, mcap, liq = fetch_price.__wrapped__(token_address) \
+                if hasattr(fetch_price, "__wrapped__") else (price, None, None)
 
         # Log to outcome_polls table
         try:
@@ -172,7 +390,7 @@ class OutcomePoller:
                 "mcap_usd":       mcap,
                 "liquidity_usd":  liq,
                 "late":           late,
-                "error":          None if price else "no_price",
+                "error":          failure_reason if price is None else None,
             }
             self._sb.table("research_outcome_polls").insert(poll_row).execute()
         except Exception as e:
@@ -181,60 +399,116 @@ class OutcomePoller:
         if not col:
             return
 
-        # Only write if price was found — NULL = "polled, no price" (not -100%).
-        # PGRST204 on missing column → spool for replay after schema migration.
-        # Any other failure → spool_failed_insert so price is not silently lost.
-        if price is not None:
-            import re as _re
-            _upd = {col: price}
-            for _attempt in range(4):
-                try:
-                    self._sb.table("research_tokens") \
-                        .update(_upd) \
-                        .eq("token_address", token_address) \
-                        .execute()
-                    break
-                except Exception as e:
-                    _es = str(e).lower()
-                    if "pgrst204" in _es or "schema cache" in _es:
-                        _m    = _re.search(r"'(\w+)'\s+column", str(e))
-                        _miss = _m.group(1) if _m else None
-                        if _miss and _miss in _upd:
-                            spool_dropped_field(
-                                token_address=token_address, symbol="",
-                                table="research_tokens", column=_miss,
-                                value=_upd[_miss], source_file="outcome_poller.py",
-                                insert_context="outcome", alert_time=alert_time_iso,
-                            )
-                            _upd = {k: v for k, v in _upd.items() if k != _miss}
-                            if not _upd:
-                                break
-                        else:
-                            spool_failed_insert(
-                                token_address=token_address, symbol="",
-                                table="research_tokens",
-                                row={col: price, "interval_label": label},
-                                error=str(e)[:200], source_file="outcome_poller.py",
-                                insert_context="outcome_update", alert_time=alert_time_iso,
-                            )
-                            break
-                    else:
-                        spool_failed_insert(
-                            token_address=token_address, symbol="",
-                            table="research_tokens",
-                            row={col: price, "interval_label": label},
-                            error=str(e)[:200], source_file="outcome_poller.py",
-                            insert_context="outcome_update", alert_time=alert_time_iso,
-                        )
-                        break
+        # ── Check if interval already populated — skip price write if so ─────
+        try:
+            existing_resp = (
+                self._sb.table("research_tokens")
+                .select(col)
+                .eq("token_address", token_address)
+                .limit(1)
+                .execute()
+            )
+            existing_price = (existing_resp.data or [{}])[0].get(col) if existing_resp.data else None
+        except Exception:
+            existing_price = None
 
-        log.info("Poll %s %s → %s%s",
+        # Build provenance columns (always write these even if price already set)
+        source_col   = _INTERVAL_SOURCE_COL.get(label)
+        status_col   = _INTERVAL_STATUS_COL.get(label)
+        observed_col = _INTERVAL_OBSERVED_COL.get(label)
+
+        if existing_price is not None:
+            # Price already populated — only write provenance if missing
+            prov_upd: dict = {}
+            if source_col and source:
+                prov_upd[source_col] = source
+            if status_col:
+                prov_upd[status_col] = failure_reason
+            if observed_col:
+                prov_upd[observed_col] = polled_at
+            if prov_upd:
+                self._safe_update(token_address, prov_upd, label, alert_time_iso,
+                                  context="provenance_only")
+            log.debug("Poll %s %s: price already set (%.10f), skipping price write",
+                      token_address[:12], label, existing_price)
+        else:
+            # Build full update dict: price + provenance
+            upd: dict = {}
+            if price is not None:
+                upd[col] = price
+            if source_col:
+                upd[source_col] = source
+            if status_col:
+                upd[status_col] = failure_reason
+            if observed_col:
+                upd[observed_col] = polled_at
+
+            if upd:
+                self._safe_update(token_address, upd, label, alert_time_iso,
+                                  context="outcome_update")
+
+        log.info("Poll %s %s → %s [src=%s]%s",
                  token_address[:12], label,
                  f"${price:.10f}" if price else "NULL",
+                 source or "none",
                  " [LATE]" if late else "")
 
         # Check if this token is ready to finalise
         self._maybe_finalise(token_address)
+
+    def _safe_update(
+        self,
+        token_address: str,
+        upd: dict,
+        label: str,
+        alert_time_iso: str,
+        context: str = "outcome_update",
+    ):
+        """
+        Write `upd` to research_tokens with PGRST204 retry-strip pattern.
+        Spools any column that causes a schema-cache error.
+        """
+        _upd = dict(upd)
+        for _attempt in range(6):
+            try:
+                self._sb.table("research_tokens") \
+                    .update(_upd) \
+                    .eq("token_address", token_address) \
+                    .execute()
+                return
+            except Exception as e:
+                _es = str(e).lower()
+                if "pgrst204" in _es or "schema cache" in _es:
+                    _m    = _re.search(r"'(\w+)'\s+column", str(e))
+                    _miss = _m.group(1) if _m else None
+                    if _miss and _miss in _upd:
+                        spool_dropped_field(
+                            token_address=token_address, symbol="",
+                            table="research_tokens", column=_miss,
+                            value=_upd[_miss], source_file="outcome_poller.py",
+                            insert_context=context, alert_time=alert_time_iso,
+                        )
+                        _upd = {k: v for k, v in _upd.items() if k != _miss}
+                        if not _upd:
+                            return
+                    else:
+                        spool_failed_insert(
+                            token_address=token_address, symbol="",
+                            table="research_tokens",
+                            row={**_upd, "interval_label": label},
+                            error=str(e)[:200], source_file="outcome_poller.py",
+                            insert_context=context, alert_time=alert_time_iso,
+                        )
+                        return
+                else:
+                    spool_failed_insert(
+                        token_address=token_address, symbol="",
+                        table="research_tokens",
+                        row={**_upd, "interval_label": label},
+                        error=str(e)[:200], source_file="outcome_poller.py",
+                        insert_context=context, alert_time=alert_time_iso,
+                    )
+                    return
 
     def _maybe_finalise(self, token_address: str):
         """
@@ -350,7 +624,6 @@ class OutcomePoller:
                 "outcome_complete": True,
                 "data_partial":     data_partial,
             }
-            import re as _re
             _upd = dict(update)
             for _fa in range(6):
                 try:
