@@ -1,5 +1,5 @@
 batch_id: v8_readiness
-description: "V8-READINESS closing batch: test suite (N1), canary+B7 (N2), epoch ON (N3), analysis artifacts (N4), receipts hygiene (N5)"
+description: "V8-READINESS closing batch: test suite (N1), canary+B7 (N2), epoch ON (N3), analysis artifacts (N4), receipts hygiene (N5), v8 paper twin (N6), path schema + exit analyses (N7)"
 commit: ""   # filled after commit
 committed_at: "2026-07-29T00:00:00Z"
 
@@ -66,3 +66,33 @@ items:
       - {file: "docs/RECEIPTS.md", pattern: "E1 timing: PENDING"}
       - {file: "docs/RECEIPTS.md", pattern: "91 passed"}
       - {file: "docs/RECEIPTS.md", pattern: "PLACEHOLDER", must_not: true}
+
+  - id: N6
+    description: "V8 paper twin — independent book/journal, progress<70+no-dex gate, daily v8-vs-v7 cron"
+    receipts_section: "V8-READINESS BATCH"
+    receipt_complete: false   # complete when the daily cron has a real (non-zero) row from live signals
+    greps:
+      - {file: "memecoin/v8_paper.py",                  pattern: "class V8PaperBook"}
+      - {file: "memecoin/v8_paper.py",                  pattern: "def passes_v8_gate"}
+      - {file: "memecoin/scanner.py",                   pattern: "v8_paper"}
+      - {file: "research/scripts/v8_vs_v7_daily.py",     pattern: "V8-READINESS"}
+      - {file: "docs/RECEIPTS.md",                       pattern: "N6 — V8 paper twin"}
+    tests:
+      - "memecoin/tests/test_v8_paper.py"
+      - "research/tests/test_v8_vs_v7_daily.py"
+
+  - id: N7
+    description: "trader_pk path schema (+ PC1 write bug fix), path_stats E-H, report.py hour/dow section"
+    receipts_section: "V8-READINESS BATCH"
+    receipt_complete: false   # complete when E-H/section-11 have run against real path/report data
+    greps:
+      - {file: "research/path_schema.py",                pattern: "trader_pk"}
+      - {file: "research/peak_tracker.py",                pattern: "from research.path_schema import"}
+      - {file: "research/backfill_paths.py",              pattern: "trader_pk"}
+      - {file: "research/analysis/path_stats.py",         pattern: "_analyse_peak_mcap"}
+      - {file: "research/analysis/path_stats.py",         pattern: "_analyse_sniper_density"}
+      - {file: "research/analysis/report.py",              pattern: "HOUR-OF-DAY"}
+    tests:
+      - "research/tests/test_rf5_path_schema.py"
+      - "research/tests/test_path_stats_n7b.py"
+      - "research/tests/test_report_era_split.py"

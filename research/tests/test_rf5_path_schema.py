@@ -339,5 +339,70 @@ class TestLoadPathFile(unittest.TestCase):
             tmp_path.unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------------------
+# N7(a): trader_pk field (post-measurement batch, 2026-07-30)
+# ---------------------------------------------------------------------------
+
+class TestTraderPk(unittest.TestCase):
+
+    def test_trader_pk_in_header(self):
+        self.assertIn("trader_pk", PATH_HEADER)
+
+    def test_trader_pk_not_required(self):
+        """Old rows (pre-N7a) must not be rejected for lacking trader_pk."""
+        self.assertNotIn("trader_pk", PATH_REQUIRED_FIELDS)
+
+    def test_row_missing_trader_pk_defaults_to_empty_string(self):
+        row = _make_valid_live_row()
+        row.pop("trader_pk", None)
+        normalised = normalise_legacy_row(row)
+        self.assertEqual(normalised["trader_pk"], "")
+        valid, err = validate_row(normalised)
+        self.assertTrue(valid, err)
+
+    def test_row_with_trader_pk_preserved(self):
+        row = _make_valid_live_row(trader_pk="7xKXtg2CW3xkV4wtjaVwNXQ1Vsswz1SB4NQTQfxL7Q4x")
+        normalised = normalise_legacy_row(row)
+        self.assertEqual(normalised["trader_pk"], "7xKXtg2CW3xkV4wtjaVwNXQ1Vsswz1SB4NQTQfxL7Q4x")
+
+    def test_load_path_file_tolerates_pre_n7a_rows(self):
+        """A schema_version=1 file (no trader_pk column at all) must still load."""
+        fd, tmp = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        tmp_path = Path(tmp)
+        try:
+            v1_header = [c for c in PATH_HEADER if c != "trader_pk"]
+            with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(v1_header)
+                writer.writerow(["1", "", "", "1700000010000", "0.000002", "0.0",
+                                  "buy", "0", "0.5", "45.0", "live_pp",
+                                  "CURVE_ACTIVE", "false", "ok"])
+            rows, warnings = load_path_file(tmp_path)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].get("trader_pk"), "")
+            self.assertEqual(rows[0]["data_status"], "ok")
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+
+class TestPeakTrackerSchemaConsistency(unittest.TestCase):
+    """Regression test for the _SCHEMA_VER/_CSV_HEADER bug (N7a fix, 2026-07-30):
+    peak_tracker.py had a stale local 5-column _CSV_HEADER and referenced an
+    undefined _SCHEMA_VER name in its tick writerow() call — every tick write
+    raised NameError, silently swallowed by a bare except, leaving every path
+    file on disk header-only. This asserts the module now sources both from
+    the canonical schema instead of a local/undefined copy.
+    """
+
+    def test_csv_header_matches_canonical_path_header(self):
+        import research.peak_tracker as pt
+        self.assertEqual(pt._CSV_HEADER, PATH_HEADER)
+
+    def test_schema_ver_matches_canonical_version(self):
+        import research.peak_tracker as pt
+        self.assertEqual(pt._SCHEMA_VER, PATH_SCHEMA_VERSION)
+
+
 if __name__ == "__main__":
     unittest.main()

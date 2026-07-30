@@ -232,6 +232,7 @@ def _extract_rows(parsed_txs: list, mint: str, sol_price: float,
             "venue_state":       "UNKNOWN",
             "backfilled":        "true",
             "data_status":       "ok",
+            "trader_pk":         fee_payer,   # N7(a): Helius tx feePayer IS the trader
         })
 
     # Sort by timestamp ascending

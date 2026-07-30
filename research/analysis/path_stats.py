@@ -14,6 +14,19 @@ Analyses:
       verdict (negative net flow = sell pressure precedes dumps → TRUE/FALSE).
   D — Graduation velocity: d(vsol)/dt for live paths where vsol crosses 85% of
       graduation threshold (~97.75 SOL). Backfill paths excluded (vsol=0).
+  E — Peak-mcap distribution ("where do they turn"): mcap = price_usd × 1e9 at
+      the global peak tick, distributed into named stall zones, overall + per
+      progress bucket. n<MIN_N → INSUFFICIENT.
+  F — Conditional continuation ("how high after the turn"): first trough depth
+      (≥10% pullback from a local high) and the mcap band it occurred at, vs
+      the subsequent extension (peak reached after the trough, relative to the
+      trough price). Grouped by mcap band at the trough.
+  G — Unique-buyer velocity curve: cumulative distinct trader_pk with side=buy
+      at t=5/15/30/60s, vs outcome (winner = pct_change_peak >= +50%). Requires
+      trader_pk (N7a) — rows written before 2026-07-30 have trader_pk="" and are
+      excluded from n, not silently zero-filled.
+  H — Sniper density: distinct buyer count in the first 5s after the path's
+      first tick, vs outcome. Same trader_pk requirement/exclusion as G.
 
 Progress buckets (progress_at_signal = pp_vsol / 115):
   0–0.25, 0.25–0.50, 0.50–0.75, 0.75–0.90, 0.90+
@@ -85,6 +98,7 @@ def _load_path(p: Path) -> list[dict]:
                 "source":     row.get("source", "unknown"),
                 "backfilled": row.get("backfilled", "false"),
                 "data_status": row.get("data_status", "ok"),
+                "trader_pk":  row.get("trader_pk", ""),   # N7(a); "" for pre-2026-07-30 rows
             })
         except (ValueError, KeyError):
             pass
@@ -438,6 +452,244 @@ def _analyse_grad_velocity(all_paths: list[tuple], min_n: int):
     print(f"  {'mean':<20}  {mean(rates):>10.3f}")
 
 
+# ── Analysis E: Peak-mcap distribution ("where do they turn") ────────────────
+
+# mcap = price_usd × 1e9 (spec formula — pump.fun 1e9 fixed supply convention).
+_MCAP_ZONES = [
+    (0,        10_000,   "<$10k"),
+    (10_000,   25_000,   "$10-25k"),
+    (25_000,   50_000,   "$25-50k"),
+    (50_000,   100_000,  "$50-100k"),
+    (100_000,  250_000,  "$100-250k"),
+    (250_000,  float("inf"), "$250k+"),
+]
+
+
+def _mcap_zone(mcap: float) -> str:
+    for lo, hi, label in _MCAP_ZONES:
+        if lo <= mcap < hi:
+            return label
+    return _MCAP_ZONES[-1][2]
+
+
+def _analyse_peak_mcap(path_meta: list[tuple], min_n: int):
+    """
+    Global-peak mcap per token, distributed into named zones. "Where do they
+    turn" — which mcap band tokens tend to peak in, overall and per BC-progress
+    bucket entered at.
+    """
+    _hline("E — Peak-mcap distribution (\"where do they turn\")")
+    print(f"  mcap = price_usd × 1e9 at the token's global-peak tick.")
+
+    overall: list[float] = []
+    by_bucket: list[list[float]] = [[] for _ in _PROGRESS_BUCKETS]
+
+    for rows, progress in path_meta:
+        if not rows:
+            continue
+        peak_row = max(rows, key=lambda r: r["price_usd"])
+        if peak_row["price_usd"] <= 0:
+            continue
+        mcap = peak_row["price_usd"] * 1e9
+        overall.append(mcap)
+        if progress is not None:
+            by_bucket[_bucket_index(progress)].append(mcap)
+
+    def _zone_table(vals: list[float], label: str):
+        if len(vals) < min_n:
+            _insufficient(label, len(vals), min_n)
+            return
+        zone_counts: dict[str, int] = defaultdict(int)
+        for v in vals:
+            zone_counts[_mcap_zone(v)] += 1
+        qs = quantiles(vals, n=100)
+        print(f"\n  {label}  (n={len(vals)})")
+        print(f"  median=${qs[49]:,.0f}  p25=${qs[24]:,.0f}  p75=${qs[74]:,.0f}")
+        for _, _, zone_label in _MCAP_ZONES:
+            cnt = zone_counts.get(zone_label, 0)
+            pct = cnt / len(vals) * 100
+            print(f"    {zone_label:<12} n={cnt:>5}  ({pct:5.1f}%)")
+
+    _zone_table(overall, "Overall")
+    for i, label in enumerate(_BUCKET_LABELS):
+        _zone_table(by_bucket[i], f"Entered at progress {label}")
+
+
+# ── Analysis F: Conditional continuation ("how high after the turn") ─────────
+
+_TROUGH_MIN_DEPTH_PCT = 10.0   # minimum pullback from a running local high to count as a trough
+
+
+def _first_trough(rows: list[dict]) -> tuple[dict, dict, float] | None:
+    """
+    Walk ticks tracking the running high. First time price pulls back from that
+    high by >= _TROUGH_MIN_DEPTH_PCT, that low tick is "the first trough".
+    Returns (running_high_row, trough_row, depth_pct) or None if no such trough.
+    """
+    if not rows:
+        return None
+    running_high = rows[0]
+    for r in rows[1:]:
+        if r["price_usd"] > running_high["price_usd"]:
+            running_high = r
+            continue
+        if running_high["price_usd"] <= 0:
+            continue
+        depth = (running_high["price_usd"] - r["price_usd"]) / running_high["price_usd"] * 100
+        if depth >= _TROUGH_MIN_DEPTH_PCT:
+            return running_high, r, depth
+    return None
+
+
+def _analyse_conditional_continuation(path_meta: list[tuple], min_n: int):
+    """
+    For each token: find the first trough (>=10% pullback from a running high).
+    Record its depth% and the mcap band at that trough. Then measure subsequent
+    extension = (max price after the trough − trough price) / trough price.
+    Grouped by mcap band at the trough — "given it pulled back this much at this
+    mcap, how much further did it go afterward."
+    """
+    _hline("F — Conditional continuation (\"how high after the turn\")")
+    print(f"  Trough: first pullback >= {_TROUGH_MIN_DEPTH_PCT:.0f}% from a running high.")
+    print(f"  Extension = (max price after trough − trough price) / trough price.")
+
+    by_zone: dict[str, list[float]] = defaultdict(list)
+    depths: list[float] = []
+
+    for rows, _progress in path_meta:
+        trough = _first_trough(rows)
+        if trough is None:
+            continue
+        _high_row, trough_row, depth = trough
+        depths.append(depth)
+        trough_idx = rows.index(trough_row)
+        after = rows[trough_idx + 1:]
+        if not after or trough_row["price_usd"] <= 0:
+            continue
+        max_after = max(r["price_usd"] for r in after)
+        extension = (max_after - trough_row["price_usd"]) / trough_row["price_usd"] * 100
+        mcap_at_trough = trough_row["price_usd"] * 1e9
+        by_zone[_mcap_zone(mcap_at_trough)].append(extension)
+
+    n_troughs = len(depths)
+    if n_troughs < min_n:
+        _insufficient("Tokens with a qualifying trough", n_troughs, min_n)
+        return
+
+    print(f"\n  n={n_troughs} tokens had a qualifying trough  "
+          f"(median depth={median(depths):.1f}%)")
+    print(f"\n  {'mcap band @ trough':<16} {'n':>5}  {'p25 ext':>9}  {'p50 ext':>9}  {'p75 ext':>9}")
+    for _, _, zone_label in _MCAP_ZONES:
+        vals = by_zone.get(zone_label, [])
+        if len(vals) < min_n:
+            print(f"  {zone_label:<16} {len(vals):>5}  INSUFFICIENT (need ≥{min_n})")
+            continue
+        qs = quantiles(vals, n=100)
+        print(f"  {zone_label:<16} {len(vals):>5}  "
+              f"{qs[24]:>8.1f}%  {qs[49]:>8.1f}%  {qs[74]:>8.1f}%")
+
+
+# ── Analyses G/H: buyer-count features (require trader_pk, N7a) ──────────────
+
+_BUYER_VELOCITY_OFFSETS_S = [5, 15, 30, 60]
+_SNIPER_WINDOW_S          = 5
+_WINNER_THRESHOLD_PCT     = 50.0   # pct_change_peak >= this = "winner" for G/H
+
+
+def _unique_buyers_by(rows: list[dict], cutoff_ts_ms: int) -> int:
+    """Distinct trader_pk with side='buy' at ts_ms <= cutoff. Blank trader_pk excluded."""
+    seen = {
+        r["trader_pk"] for r in rows
+        if r["ts_ms"] <= cutoff_ts_ms and r["side"] == "buy" and r["trader_pk"]
+    }
+    return len(seen)
+
+
+def _has_trader_pk_data(rows: list[dict]) -> bool:
+    return any(r["trader_pk"] for r in rows)
+
+
+def _analyse_buyer_velocity(path_meta_with_outcome: list[tuple], min_n: int):
+    """
+    G: cumulative unique buyers at t=5/15/30/60s vs outcome (winner/not).
+    Only counts paths that actually have trader_pk data (post-N7a rows) —
+    pre-N7a rows have trader_pk="" everywhere and are excluded from n rather
+    than reported as buyer_count=0.
+    """
+    _hline("G — Unique-buyer velocity curve vs outcome")
+    print(f"  Cumulative distinct trader_pk (side=buy) at t=5/15/30/60s after first tick.")
+    print(f"  Winner = pct_change_peak >= +{_WINNER_THRESHOLD_PCT:.0f}%.")
+    print(f"  Requires trader_pk (N7a, live from 2026-07-30) — pre-N7a rows excluded from n.")
+
+    winner_vals: list[list[float]] = [[] for _ in _BUYER_VELOCITY_OFFSETS_S]
+    loser_vals:  list[list[float]] = [[] for _ in _BUYER_VELOCITY_OFFSETS_S]
+
+    n_with_trader_pk = 0
+    for rows, pct_peak in path_meta_with_outcome:
+        if not rows or not _has_trader_pk_data(rows):
+            continue
+        n_with_trader_pk += 1
+        t0 = rows[0]["ts_ms"]
+        is_winner = (pct_peak or 0) >= _WINNER_THRESHOLD_PCT
+        bucket = winner_vals if is_winner else loser_vals
+        for j, offset_s in enumerate(_BUYER_VELOCITY_OFFSETS_S):
+            count = _unique_buyers_by(rows, t0 + offset_s * 1000)
+            bucket[j].append(count)
+
+    if n_with_trader_pk < min_n:
+        _insufficient("Paths with trader_pk data", n_with_trader_pk, min_n)
+        return
+
+    print(f"\n  n={n_with_trader_pk} paths have trader_pk data "
+          f"(winners={len(winner_vals[0])}, losers={len(loser_vals[0])})")
+    print(f"\n  {'t offset':<10} {'winner median':>14}  {'loser median':>14}")
+    for j, offset_s in enumerate(_BUYER_VELOCITY_OFFSETS_S):
+        w = median(winner_vals[j]) if len(winner_vals[j]) >= min_n else None
+        l = median(loser_vals[j])  if len(loser_vals[j])  >= min_n else None
+        w_s = f"{w:.1f}" if w is not None else "INSUF"
+        l_s = f"{l:.1f}" if l is not None else "INSUF"
+        print(f"  +{offset_s:>3}s     {w_s:>14}  {l_s:>14}")
+
+
+def _analyse_sniper_density(path_meta_with_outcome: list[tuple], min_n: int):
+    """
+    H: distinct buyers in the first _SNIPER_WINDOW_S seconds vs outcome.
+    Same trader_pk-availability exclusion as G.
+    """
+    _hline("H — Sniper density (buyers in first 5s) vs outcome")
+    print(f"  Distinct trader_pk (side=buy) within {_SNIPER_WINDOW_S}s of the first tick.")
+    print(f"  Winner = pct_change_peak >= +{_WINNER_THRESHOLD_PCT:.0f}%.")
+    print(f"  Requires trader_pk (N7a, live from 2026-07-30) — pre-N7a rows excluded from n.")
+
+    winner_counts: list[float] = []
+    loser_counts:  list[float] = []
+
+    for rows, pct_peak in path_meta_with_outcome:
+        if not rows or not _has_trader_pk_data(rows):
+            continue
+        t0 = rows[0]["ts_ms"]
+        count = _unique_buyers_by(rows, t0 + _SNIPER_WINDOW_S * 1000)
+        is_winner = (pct_peak or 0) >= _WINNER_THRESHOLD_PCT
+        (winner_counts if is_winner else loser_counts).append(count)
+
+    n_total = len(winner_counts) + len(loser_counts)
+    if n_total < min_n:
+        _insufficient("Paths with trader_pk data", n_total, min_n)
+        return
+
+    print(f"\n  n={n_total}  (winners={len(winner_counts)}, losers={len(loser_counts)})")
+    if len(winner_counts) >= min_n:
+        print(f"  winners: median={median(winner_counts):.1f}  "
+              f"mean={mean(winner_counts):.2f}")
+    else:
+        _insufficient("  winners", len(winner_counts), min_n)
+    if len(loser_counts) >= min_n:
+        print(f"  losers:  median={median(loser_counts):.1f}  "
+              f"mean={mean(loser_counts):.2f}")
+    else:
+        _insufficient("  losers", len(loser_counts), min_n)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -470,8 +722,9 @@ def main():
         except Exception as e:
             log.warning("Supabase metadata load failed: %s — progress_at_signal will be None", e)
 
-    # Build (rows, progress_at_signal) pairs
+    # Build (rows, progress_at_signal) pairs, and (rows, pct_change_peak) pairs
     path_meta: list[tuple] = []
+    path_meta_outcome: list[tuple] = []
     loaded = 0
     skipped = 0
     for mint, path in mint_to_path.items():
@@ -482,6 +735,7 @@ def main():
         meta = meta_by_mint.get(mint, {})
         progress = meta.get("progress_at_signal")   # None if missing
         path_meta.append((rows, progress))
+        path_meta_outcome.append((rows, meta.get("pct_change_peak")))
         loaded += 1
 
     log.info("Loaded %d paths (%d skipped/empty)", loaded, skipped)
@@ -498,6 +752,10 @@ def main():
     _analyse_decay(with_progress, args.min_n)
     _analyse_predump_flow(path_meta, args.min_n)
     _analyse_grad_velocity(path_meta, args.min_n)
+    _analyse_peak_mcap(path_meta, args.min_n)
+    _analyse_conditional_continuation(path_meta, args.min_n)
+    _analyse_buyer_velocity(path_meta_outcome, args.min_n)
+    _analyse_sniper_density(path_meta_outcome, args.min_n)
 
     print(f"\n{'=' * 72}")
     print(f"  END PATH STATS")

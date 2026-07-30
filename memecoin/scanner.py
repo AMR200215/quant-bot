@@ -512,6 +512,14 @@ def _add_signal(sig: Optional[Signal]):
                 pass
         except Exception as e:
             log.warning("open_position failed for %s: %s", sig.token_symbol, e)
+
+        # N6: V8 paper twin — same signal funnel, independent book/journal.
+        # Must never affect v7 paper/live; v8_paper.book.maybe_open() self-guards.
+        try:
+            from memecoin.v8_paper import book as _v8_book
+            _v8_book.maybe_open(sig)
+        except Exception as e:
+            log.debug("v8_paper maybe_open failed (non-fatal): %s", e)
     _persist_signals()
     log.info(
         "SIGNAL [%s] %s/%s  strength=%s  composite=%.2f  %s",
@@ -2716,6 +2724,15 @@ def start(daemon: bool = True):
     _pp_monitor.subscribe_new_tokens()
     _pp_monitor.add_new_token_callback(_on_pp_new_token)
     log.info("PP subscribeNewToken wired — fresh mint tracker + dev-check enabled")
+
+    # N6: V8 paper twin monitor — independent of SOCIAL_ALERT_ONLY (it consumes
+    # the same signals that already flow in that mode). Self-guarded; failure
+    # here must never take down the rest of startup.
+    try:
+        from memecoin.v8_paper import book as _v8_book
+        _v8_book.start(daemon=daemon)
+    except Exception as _v8_err:
+        log.warning("v8_paper: monitor start failed (non-fatal): %s", _v8_err)
 
     _always_on = [
         (_portfolio_thread,    {}),
