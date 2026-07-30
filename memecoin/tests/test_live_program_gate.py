@@ -46,12 +46,12 @@ class TestEvaluateLiveEntryProgramGate(unittest.TestCase):
         result = evaluate_live_entry_program_gate(cls)
         self.assertTrue(result["allowed"])
 
-    # 2. T22 classification → blocked with token_program="T22"
-    def test_t22_blocked(self):
+    # 2. T22 without unsupported extensions → allowed
+    # bonding_curve_t22.py handles BC sells; Jupiter rescue handles post-graduation.
+    def test_t22_allowed(self):
         cls = _make_classification(token_program="T22")
         result = evaluate_live_entry_program_gate(cls)
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["token_program"], "T22")
+        self.assertTrue(result["allowed"])
 
     # 3. UNKNOWN token_program → blocked
     def test_unknown_token_program_blocked(self):
@@ -91,13 +91,12 @@ class TestEvaluateLiveEntryProgramGate(unittest.TestCase):
         result = evaluate_live_entry_program_gate(cls)
         self.assertTrue(result["allowed"])
 
-    # 8. T22 + complete=True in curve_observation → still blocked (no T22 buys)
-    def test_t22_with_complete_curve_still_blocked(self):
+    # 8. T22 + complete=True in curve_observation → allowed (graduation state doesn't gate entry)
+    def test_t22_with_complete_curve_allowed(self):
         cls = _make_classification(token_program="T22")
         curve_obs = {"complete": True}
         result = evaluate_live_entry_program_gate(cls, curve_observation=curve_obs)
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["token_program"], "T22")
+        self.assertTrue(result["allowed"])
 
     # 9. SPL + complete=True in curve_observation → allowed (graduation state doesn't affect entry gate)
     def test_spl_with_complete_curve_allowed(self):
