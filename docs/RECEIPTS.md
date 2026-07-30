@@ -539,3 +539,58 @@ All legacy-commit and pending sections resolved:
 - L6, X1, X3, X5: `commit: verified in conversation 2026-07-10 (pre-manifest era)` + batch_verify note
 - B-batch (B1–B7): `commit: ada6c06 (2026-07-09)` + batch_verify note + E1 pending line on B7
 - No silent placeholders remain in the proof ledger.
+
+### N6 — V8 paper twin: daily v8 vs v7 comparison
+
+`memecoin/v8_paper.py` — independent paper book, own journal
+(`logs/memecoin_v8_journal.csv`), own monitor thread, zero shared state with
+v7's `Portfolio`. Gate: `progress_at_signal < 0.70` AND no `dex_id` yet
+(live-computed from PumpPortal's cached vsol — zero new Helius calls).
+**Scope cut**: the spec's "smart-money-v1" half of the gate is NOT applied
+live (would require a dedicated Helius call per signal, ruled out by
+SOCIAL_ALERT_ONLY's zero-Helius-increase constraint) — joined in later from
+`research_tokens.smart_money_hit` for reporting only, not gating.
+Exit config: placeholder mirroring v7 social_alert production config —
+swap once `replay_exits.py` has a winner (blocked on N4d's PC2 backfill).
+
+0/0 rows below is expected — this was seeded from this session, no live
+scanner has run against it yet.
+
+Cron entry (VPS `/etc/cron.d/quantbot-v8`, add alongside the N3 epoch cron):
+```
+58 23 * * * root cd /root/quant-bot && set -a && . .env && set +a && \
+  .venv/bin/python research/scripts/v8_vs_v7_daily.py >> logs/v8_vs_v7_cron.log 2>&1
+```
+
+| date | v7 trades | v7 pnl% (mean) | v8 trades | v8 pnl% (mean) | v8 gate |
+|---|---|---|---|---|---|
+| 2026-07-30 | 0 | +0.0% | 0 | +0.0% | progress<70+no-dex (smart-money offline-only) |
+
+### N7 — Path schema + exit-level analyses
+
+- N7(a): `trader_pk` added to `research/path_schema.py` PATH_HEADER (schema v2).
+  Sourced live from PP's `traderPublicKey` in `peak_tracker.py` (PC1); sourced
+  from Helius `feePayer` in `backfill_paths.py` (PC2, "backfill rows already
+  carry addresses" per spec). **Also fixed while wiring this in**: PC1 had an
+  undefined-name bug (`_SCHEMA_VER` referenced but never imported, stale local
+  `_CSV_HEADER`) that silently NameError'd on every tick write, caught by a
+  bare `except: pass` — this is the real reason all 1,207 path files on disk
+  are header-only, not "PP doesn't deliver ticks" as N4(c) above states. Fixed
+  by importing `PATH_HEADER`/`PATH_SCHEMA_VERSION` from `path_schema.py`
+  (mirrors what `backfill_paths.py` already did correctly). Regression test:
+  `research/tests/test_rf5_path_schema.py::TestPeakTrackerSchemaConsistency`.
+- N7(b): `research/analysis/path_stats.py` — added E (peak-mcap distribution /
+  "where do they turn"), F (conditional continuation / "how high after the
+  turn"), G (unique-buyer velocity vs outcome), H (sniper density vs outcome).
+  G/H require `trader_pk` data and will read n=0/INSUFFICIENT until path files
+  accumulate under the N7(a) fix above — by design, not a bug.
+- N7(c): `research/analysis/report.py` — added section 11 (hour-of-day /
+  day-of-week outcome table with alerts/hour as a crowding proxy).
+
+All three items are code-complete and unit-tested
+(`research/tests/test_path_stats_n7b.py`,
+`research/tests/test_rf5_path_schema.py::TestTraderPk`,
+`research/tests/test_report_era_split.py::TestAlertDt`) but **have not been
+run against real data** — this session has no VPS or Supabase access. The
+per-cell `n` in `docs/V8_INPUTS.md` for N7(b)/(c) needs a real run once
+trader_pk data and report data are available.

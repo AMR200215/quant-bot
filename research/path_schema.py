@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 # ── Schema constants ───────────────────────────────────────────────────────────
 
 # Increment when PATH_HEADER changes
-PATH_SCHEMA_VERSION: int = 1
+PATH_SCHEMA_VERSION: int = 2
 
 # Fields that must be present and non-empty for a row to be valid
 PATH_REQUIRED_FIELDS: list[str] = ["schema_version", "ts_ms", "price_usd", "backfilled"]
@@ -59,6 +59,7 @@ PATH_HEADER: list[str] = [
     "venue_state",         # "CURVE_ACTIVE" | "GRADUATED" | "DEX_ACTIVE" | "UNKNOWN"
     "backfilled",          # "true" | "false"
     "data_status",         # "ok" | "partial" | "inferred"
+    "trader_pk",           # N7(a): PP traderPublicKey — base58 wallet, "" if unknown/legacy
 ]
 
 # Allowed values for enum-like fields

@@ -13,6 +13,7 @@ from research.analysis.report import (
     _era_split,
     _ERA_CLEAN,
     _ERA_PRERF1,
+    _alert_dt,
 )
 
 
@@ -110,6 +111,33 @@ class TestEraConstants(unittest.TestCase):
 
     def test_clean_constant_value(self):
         self.assertEqual(_ERA_CLEAN, "clean")
+
+
+class TestAlertDt(unittest.TestCase):
+    """N7(c): _alert_dt() drives section 11's hour-of-day/day-of-week bucketing."""
+
+    def test_missing_alert_time_returns_none(self):
+        self.assertIsNone(_alert_dt(_row()))
+
+    def test_z_suffixed_iso_parses(self):
+        dt = _alert_dt(_row(alert_time="2026-07-15T14:30:00Z"))
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.hour, 14)
+        self.assertEqual(dt.weekday(), 2)   # 2026-07-15 is a Wednesday
+
+    def test_offset_iso_parses(self):
+        dt = _alert_dt(_row(alert_time="2026-07-15T14:30:00+00:00"))
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.hour, 14)
+
+    def test_garbage_string_returns_none_not_raise(self):
+        self.assertIsNone(_alert_dt(_row(alert_time="not-a-timestamp")))
+
+    def test_hour_bucketing_matches_expected_hour(self):
+        # Sunday 23:59 UTC — exercises both hour and day-of-week edges
+        dt = _alert_dt(_row(alert_time="2026-07-19T23:59:00Z"))
+        self.assertEqual(dt.hour, 23)
+        self.assertEqual(dt.weekday(), 6)   # Sunday
 
 
 if __name__ == "__main__":

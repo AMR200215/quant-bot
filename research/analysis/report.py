@@ -164,6 +164,19 @@ _ERA_CLEAN    = "clean"
 _ERA_PRERF1   = "dex_conditioned_preRF1"
 
 
+def _alert_dt(row: dict) -> Optional[datetime]:
+    """Parse row['alert_time'] (ISO string, possibly 'Z'-suffixed) to a datetime.
+    Returns None if missing/unparseable. Used by section 11 (N7c) hour/weekday
+    bucketing and available standalone for tests."""
+    t = row.get("alert_time")
+    if not t:
+        return None
+    try:
+        return datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
 def _era(row: dict) -> str:
     """
     Return the measurement era for a row.
@@ -654,6 +667,56 @@ def main():
     if not clean_rows:
         print("\n  NOTE: No clean-era rows yet. All outcome data is dex_conditioned_preRF1.")
         print("        Re-run after RF1 has polled its first completed tokens (~30min window).")
+
+    # ── 11. [N7c] Hour-of-day / day-of-week outcome + crowding ───────────────
+    print(f"\n{sep}")
+    print("11. [N7c] HOUR-OF-DAY / DAY-OF-WEEK OUTCOME + ALERT CROWDING")
+    print(sep)
+    print("  alerts/hour = volume proxy for signal crowding at that hour/weekday;")
+    print("  a high-volume, low-win-rate cell suggests the desk is overloaded there.")
+
+    timed_all      = [(r, dt) for r in all_rows      if (dt := _alert_dt(r)) is not None]
+    timed_complete = [(r, dt) for r in complete_nopart if (dt := _alert_dt(r)) is not None]
+
+    if not timed_all:
+        print("\n  No rows with a parseable alert_time — skipping.")
+    else:
+        _DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+        def _hour_table(keyfn, labels, title):
+            print(f"\n  {title}")
+            print(f"  {'bucket':<6} {'alerts':>7} {'alerts/hr':>10} {'n_priced':>9}  "
+                  f"{'win%':>6}  {'>=+30%':>7}  {'>=+50%':>7}  {'med peak':>10}")
+            counts_all: dict = defaultdict(int)
+            for _r, dt in timed_all:
+                counts_all[keyfn(dt)] += 1
+            rows_c: dict = defaultdict(list)
+            for r, dt in timed_complete:
+                rows_c[keyfn(dt)].append(r)
+            # normaliser: for hour-of-day, 1 bucket = 1 hour every day in span;
+            # for day-of-week, 1 bucket = that weekday's occurrences in span.
+            span_occurrences = max(span_days / 7.0, 1.0) if labels is _DOW_LABELS else max(span_days, 1.0)
+            for key in labels:
+                total = counts_all.get(key, 0)
+                cell_rows = rows_c.get(key, [])
+                peaks = [_peak(r) for r in cell_rows if _peak(r) is not None]
+                rate = total / span_occurrences
+                if len(peaks) < 30:
+                    priced_str = f"{len(peaks)}" if peaks else "0"
+                    print(f"  {key:<6} {total:>7} {rate:>9.1f}  {priced_str:>9}  "
+                          f"{'INSUF':>6}  {'INSUF':>7}  {'INSUF':>7}  {'INSUF':>10}")
+                    continue
+                win  = sum(1 for p in peaks if p > 0) / len(peaks) * 100
+                ge30 = sum(1 for p in peaks if p >= 30) / len(peaks) * 100
+                ge50 = sum(1 for p in peaks if p >= 50) / len(peaks) * 100
+                med  = median(peaks)
+                print(f"  {key:<6} {total:>7} {rate:>9.1f}  {len(peaks):>9}  "
+                      f"{win:>5.0f}%  {ge30:>6.0f}%  {ge50:>6.0f}%  {med:>+9.1f}%")
+
+        _hour_table(lambda dt: f"{dt.hour:02d}h", [f"{h:02d}h" for h in range(24)],
+                    "By hour of day (UTC)")
+        _hour_table(lambda dt: _DOW_LABELS[dt.weekday()], _DOW_LABELS,
+                    "By day of week (UTC)")
 
     # ── CSV output ────────────────────────────────────────────────────────────
     if args.output:

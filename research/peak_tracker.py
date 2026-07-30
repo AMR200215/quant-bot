@@ -50,13 +50,12 @@ from research.config import (
     PATH_SUB_SAMPLE_INTERVAL,
 )
 from research.spool.writer import spool_dropped_field
+from research.path_schema import PATH_HEADER as _CSV_HEADER, PATH_SCHEMA_VERSION as _SCHEMA_VER
 
 log = logging.getLogger(__name__)
 
 _SOL_MINT = "So11111111111111111111111111111111111111112"
 _PEAK_COLS = ("price_peak_3m", "pct_change_peak_3m", "t_peak_3m_s")
-
-_CSV_HEADER = ["ts_ms", "price_usd", "side", "sol_amount", "vsol"]
 
 # ── RF3 tiered-window constants ───────────────────────────────────────────────
 BASE_WINDOW_S       = 900   # 15 min
@@ -423,6 +422,7 @@ class PeakTracker:
                                             _rev_id = _st.get("research_event_id", "")
                                             _ev_id  = _st.get("event_id", "")
                                         # Canonical RF5 row — column order matches PATH_HEADER
+                                        trader_pk = msg.get("traderPublicKey", "")  # N7(a)
                                         try:
                                             csv_entry["writer"].writerow([
                                                 _SCHEMA_VER,          # schema_version
@@ -439,6 +439,7 @@ class PeakTracker:
                                                 "CURVE_ACTIVE",       # venue_state
                                                 "false",              # backfilled
                                                 "ok",                 # data_status
+                                                trader_pk,            # trader_pk (N7a)
                                             ])
                                         except Exception:
                                             pass
