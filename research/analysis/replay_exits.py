@@ -63,19 +63,36 @@ _V7_SPEC = {
 }
 
 _ALT1_SPEC = {
-    "name":             "alt1_tighter_trail",
-    "hard_stop":        -0.35,       # same hard stop
+    "name":             "alt1_early_tp_heavy",
+    "hard_stop":        -0.35,       # same hard stop as v7
     "trail_tiers":      [
-        {"activates_at": 0.30, "trail_pct": 0.20},  # tighter: −20% vs −25%
-        {"activates_at": 1.00, "trail_pct": 0.20},
-        {"activates_at": 3.00, "trail_pct": 0.15},
+        {"activates_at": 0.20, "trail_pct": 0.20},  # earlier: arms at +20% (was +30%)
+        {"activates_at": 0.60, "trail_pct": 0.20},  # second tier at +60% (was +100%)
     ],
     "tp_levels":        [],
     "time_stop_min":    45,          # shorter time stop
     "time_stop_min_gain": 0.30,
     "profit_lock_min_gain":  0.40,
     "profit_lock_max_gain":  1.00,
-    "profit_lock_stall_sec": 90,     # slower profit_lock (give more room)
+    "profit_lock_stall_sec": 60,
+}
+
+_ALT2_SPEC = {
+    "name":             "alt2_wide_stop",
+    "hard_stop":        -0.50,       # wider hard stop — tolerates deeper shakeouts
+    "trail_tiers":      [            # same as v7 (default)
+        {"activates_at": 0.30, "trail_pct": 0.25},
+        {"activates_at": 1.00, "trail_pct": 0.25},
+        {"activates_at": 3.00, "trail_pct": 0.15},
+    ],
+    "tp_levels":        [],
+    "time_stop_min":    120,         # longer time stop (size cut compensates risk)
+    "time_stop_min_gain": 0.30,
+    "profit_lock_min_gain":  0.40,
+    "profit_lock_max_gain":  1.00,
+    "profit_lock_stall_sec": 60,
+    # note: size=0.5x is a capital-allocation decision, not an exit-rule param;
+    # all % PnL figures here are pre-size; apply 0.5x when computing $ EV
 }
 
 
@@ -348,6 +365,7 @@ def main():
 
     spec_a = dict(_V7_SPEC)
     spec_b = dict(_ALT1_SPEC)
+    spec_c = dict(_ALT2_SPEC)
 
     if args.spec_b_json:
         try:
@@ -371,6 +389,7 @@ def main():
 
     results_a: list[dict] = []
     results_b: list[dict] = []
+    results_c: list[dict] = []
     skipped = 0
 
     for i, p in enumerate(path_files, 1):
@@ -380,16 +399,19 @@ def main():
             continue
         res_a = _replay_one(rows, spec_a, args.exec_lag_ms)
         res_b = _replay_one(rows, spec_b, args.exec_lag_ms)
+        res_c = _replay_one(rows, spec_c, args.exec_lag_ms)
         if res_a:
             results_a.append(res_a)
         if res_b:
             results_b.append(res_b)
+        if res_c:
+            results_c.append(res_c)
 
         if i % 50 == 0:
             log.info("  %d/%d paths processed", i, len(path_files))
 
-    log.info("Done. Spec A: %d results, Spec B: %d results, skipped: %d",
-             len(results_a), len(results_b), skipped)
+    log.info("Done. Spec A: %d  Spec B: %d  Spec C: %d  skipped: %d",
+             len(results_a), len(results_b), len(results_c), skipped)
 
     if not results_a:
         print("No results — all paths too short or empty.")
@@ -397,19 +419,23 @@ def main():
 
     sa = _summarise(results_a, spec_a["name"])
     sb = _summarise(results_b, spec_b["name"])
+    sc = _summarise(results_c, spec_c["name"])
 
     print(f"\n{'=' * 72}")
     print(f"  EXIT REPLAY — {len(results_a)} paths  exec_lag={args.exec_lag_ms}ms")
     print(f"{'=' * 72}")
 
-    print(f"\n── Spec A ──")
+    print(f"\n── Spec A (v7 current) ──")
     _print_summary(sa)
-    print(f"\n── Spec B ──")
+    print(f"\n── Spec B (early-TP-heavy) ──")
     _print_summary(sb)
+    print(f"\n── Spec C (wide-stop/small-size) ──")
+    _print_summary(sc)
 
     print(f"\n{'─' * 72}")
-    print(f"  Side-by-side comparison")
+    print(f"  Side-by-side comparison (A vs B vs C)")
     _compare(sa, sb)
+    _compare(sa, sc)
 
     print(f"\n{'=' * 72}")
     print(f"  END REPLAY")
