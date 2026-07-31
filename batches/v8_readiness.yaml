@@ -28,9 +28,9 @@ items:
       - "research/tests/test_rf6_versioning.py"
 
   - id: N2
-    description: "Canary trade armed at $2 + B7 E1 timing pending next live trade"
+    description: "B7/E1 timing deferred (epoch deferred 2026-07-30 — capital decision)"
     receipts_section: "V8-READINESS BATCH"
-    receipt_complete: false   # complete when first post-E1 ENTRY TIMING log line captured
+    receipt_complete: false   # complete when V8 paper week net-positive clears (N3' line) and first ENTRY TIMING line lands
     greps:
       - {file: "memecoin/executor.py",  pattern: "_buy_timing"}
       - {file: "memecoin/executor.py",  pattern: "build_ms"}
@@ -63,7 +63,7 @@ items:
     greps:
       - {file: "docs/RECEIPTS.md", pattern: "verified in conversation 2026-07-10"}
       - {file: "docs/RECEIPTS.md", pattern: "ada6c06"}
-      - {file: "docs/RECEIPTS.md", pattern: "E1 timing: PENDING"}
+      - {file: "docs/RECEIPTS.md", pattern: "E1 timing: DEFERRED"}
       - {file: "docs/RECEIPTS.md", pattern: "91 passed"}
       - {file: "docs/RECEIPTS.md", pattern: "PLACEHOLDER", must_not: true}
 

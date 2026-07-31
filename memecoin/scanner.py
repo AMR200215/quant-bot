@@ -28,7 +28,7 @@ from memecoin.config import (
     MIN_LIQUIDITY_USD, MAX_AGE_MINUTES_NEW,
     MIN_BUY_SELL_RATIO_SOCIAL, MIN_VOL_5M_SOCIAL, MAX_VOL_5M_SOCIAL,
     MAX_VOL_H1_SOCIAL, MAX_PRICE_CHANGE_5M_SOCIAL, MAX_MCAP_SOCIAL,
-    REALTIME_PRICE_FEED, SOCIAL_ALERT_ONLY,
+    LIVE_TRADING, REALTIME_PRICE_FEED, SOCIAL_ALERT_ONLY,
     SELL_STUCK_RETRY_SEC, MIGRATION_UNCERTAIN_MANUAL_TIMEOUT_SEC,
 )
 from memecoin.data_client import (
@@ -2700,6 +2700,10 @@ def start(daemon: bool = True):
     wallets = load_all_wallets()
     ranks   = build_wallet_ranks(wallets)
 
+    if not LIVE_TRADING:
+        log.critical(
+            "LIVE TRADING DISABLED — paper + research only (capital decision 2026-07-30)"
+        )
     _health.start()
     _program_monitor.start(daemon=daemon)
 

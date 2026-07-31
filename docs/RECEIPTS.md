@@ -381,7 +381,7 @@ batch_verify: no manifest (pre-VG era). Tests pass (test_b1_ through test_b6_ al
 | code | executor.py: `_buy_timing` dict; ENTRY TIMING log updated (E1) | |
 | artifact | PENDING — will appear in next live trade's ENTRY TIMING log line | |
 
-E1 timing: PENDING — next live trade will emit build_ms/sign_ms/send_ms/land_ms/429_ms/http_build_ms/confirm_detect_ms/quote_ms. Bot armed at $2, LIVE_TRADING=true.
+E1 timing: DEFERRED — epoch deferred 2026-07-30 (capital decision). B7 timing row deferred with it. Re-arm when N3' (V8 paper week net-positive after synthetic costs) clears.
 
 ENTRY TIMING format (after E1):
 ```
@@ -493,12 +493,10 @@ RF5 path schema, RF6 smart-wallet versioning, RC1 era segmentation.
 
 ### N2 — Canary trade + B7 E1 timing (commit: TBD — this batch)
 
-Bot state: `LIVE_TRADING=true`, social_alert size=$2, max 2 concurrent (portfolio.py circuit breaker).
-E1 fields wired in executor.py (`_buy_timing` dict) + emitted in portfolio.py ENTRY TIMING log.
+Bot state: `LIVE_TRADING=false` (capital decision 2026-07-30). E1 fields wired in executor.py (`_buy_timing` dict) + emitted in portfolio.py ENTRY TIMING log.
 
-**Status: ARMED — awaiting next signal that passes screener.**
-Current rejection reason: `no_dex_data` (DexScreener not indexing fast enough for BC tokens).
-B7 row will be filled here once the first post-canary ENTRY TIMING line lands in journalctl.
+**Status: DEFERRED — epoch deferred 2026-07-30 (capital decision). B7/E1 timing row deferred with it.**
+Prerequisite to re-arm: V8 paper week net-positive after synthetic execution costs (N3' line).
 
 Pre-B7 timing reference (Jul 10–11 trades, pre-E1-deployment):
 
@@ -594,3 +592,9 @@ All three items are code-complete and unit-tested
 run against real data** — this session has no VPS or Supabase access. The
 per-cell `n` in `docs/V8_INPUTS.md` for N7(b)/(c) needs a real run once
 trader_pk data and report data are available.
+
+---
+
+## Epoch — Capital Decision (2026-07-30)
+
+Epoch deferred 2026-07-30 — capital decision. Prerequisite for any future live: V8 paper week net-positive after synthetic execution costs (N3' line). B7/E1 timing row deferred with it.

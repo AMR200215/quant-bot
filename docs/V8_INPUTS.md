@@ -61,15 +61,15 @@ Single-filter removable: 71/143 (50%)
 
 ## N4(c) — path_stats Full Output
 
-**Source**: path_stats run 2026-07-29
+> **Era note**: tick paths before 2026-07-30 are backfill-only (forward collection began at the N7 fix). All path files written before 2026-07-30 are header-only due to the PC1 NameError bug fixed in N7(a). The backfill set (PC2) is the source of truth for A–F analyses. G/H (trader_pk analyses) require forward-collected paths only (backfill rows have trader_pk from Helius feePayer — valid for G/H if Helius parse worked).
+
+**Source**: path_stats run 2026-07-29 (pre-backfill)
 
 1,200 path files on disk, ALL header-only (no tick data).
 
-**Root cause**: PC1 path collector opens a file per token but PP WebSocket does not deliver tick data for social-alert tokens (already graduated or dead before subscription fires). Path data accumulation requires either:
-1. PP subscribeNewToken ticks (only works for tokens still on BC at signal time — rare)
-2. PC2 Helius backfill (not yet run)
+**Root cause (fixed in N7a)**: PC1 path collector had a NameError bug that silently swallowed every tick write. N7(a) fixed the import — forward collection now works. Backfill (PC2) covers pre-fix history.
 
-All cells: INSUFFICIENT (n=0, need ≥100 per cell). Will populate after PC2 backfill.
+All cells: INSUFFICIENT (n=0, need ≥100 per cell). Will populate after PC2 backfill runs.
 
 ### Paths Sanity Line
 

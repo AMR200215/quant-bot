@@ -329,7 +329,17 @@ def _check():
         )
 
     # Alarm (e) — F3 live-drought
-    if drought_papers >= _DROUGHT_MIN_PAPERS and drought_attempts == 0:
+    # Suppressed while LIVE_TRADING=False (capital decision 2026-07-30).
+    # Weekly one-liner ping so "disabled by design" never silently becomes "disabled by bug".
+    from memecoin.config import LIVE_TRADING as _live_trading
+    _WEEKLY = 7 * 24 * 3600
+    if not _live_trading:
+        last_weekly = _last_alarm.get("live_disabled_weekly", 0)
+        if time.time() - last_weekly >= _WEEKLY:
+            _last_alarm["live_disabled_weekly"] = time.time()
+            log.info("live disabled by design since 2026-07-30")
+            _send_alert("live disabled by design since 2026-07-30")
+    elif drought_papers >= _DROUGHT_MIN_PAPERS and drought_attempts == 0:
         if _should_fire("live_drought"):
             top_reasons = [r for r, _ in Counter(recent_reasons).most_common(3)] if recent_reasons else ["none_logged"]
             top_str = " | ".join(top_reasons)
