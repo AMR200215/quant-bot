@@ -60,7 +60,7 @@ _MAX_SIGS    = 1000   # getSignaturesForAddress limit
 _PARSE_BATCH = 100    # Helius enhanced-tx batch size
 _RATE_SLEEP      = 0.5   # seconds between tokens (both modes)
 _MAX_RETRIES     = 4     # retries on 429 before giving up on a token
-_STD_MAX_WORKERS = 3     # parallel getTransaction workers in std_rpc mode
+_STD_MAX_WORKERS = 10    # parallel getTransaction workers in std_rpc mode
 _STD_TX_CAP      = 300   # max transactions fetched per token in std_rpc mode
 _STD_TX_SLEEP    = 0.05  # seconds between individual getTransaction calls (per worker)
 
