@@ -96,19 +96,23 @@ def _load_tokens(sb, winners: int, losers: int, win_thresh: float) -> tuple:
             offset += batch
         return rows
 
-    base = (
-        sb.table("research_tokens")
-        .select("id,token_address,symbol,pct_change_peak,alert_time,path_file")
-        .eq("outcome_complete", True)
-        .eq("chain", "solana")
-    )
+    def _base():
+        # Supabase Python client mutates the query builder in place on each
+        # chained filter call — rebuild from scratch for every query so winner
+        # and loser filters don't accumulate on the same object.
+        return (
+            sb.table("research_tokens")
+            .select("id,token_address,symbol,pct_change_peak,alert_time,path_file")
+            .eq("outcome_complete", True)
+            .eq("chain", "solana")
+        )
 
     winner_rows = _page(
-        base.gte("pct_change_peak", win_thresh).order("alert_time", desc=True)
+        _base().gte("pct_change_peak", win_thresh).order("alert_time", desc=True)
     )[:winners]
 
     loser_rows = _page(
-        base.lt("pct_change_peak", 0).order("alert_time", desc=True)
+        _base().lt("pct_change_peak", 0).order("alert_time", desc=True)
     )[:losers]
 
     return winner_rows, loser_rows
