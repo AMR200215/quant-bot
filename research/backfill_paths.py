@@ -1,38 +1,44 @@
 """
-Backfill trade-path CSVs from Helius parsed-transaction history.
+Backfill trade-path CSVs from on-chain transaction history.
 
 Fetches on-chain trade activity for:
   • Up to --winners  tokens with pct_change_peak ≥ --win-thresh  (default 200 / +50%)
   • Up to --losers   tokens with pct_change_peak <  0             (default 200)
 
-Writes per-token CSVs to logs/research_paths/backfill/<mint>.csv in the same
-format as live PeakTracker paths, with an extra "source=backfill" column.
-Updates research_tokens.path_file for each written file.
+Two parse modes (auto-detected at startup):
+  helius  — Helius enhanced API (api.helius.xyz/v0/transactions); richer labels;
+             1 credit/tx.  Used when Helius quota is available.
+  std_rpc — Standard JSON-RPC getTransaction via any public RPC
+             (https://api.mainnet-beta.solana.com by default).  No Helius quota
+             consumed; fetches run in parallel (3 workers).  Auto-selected when
+             Helius returns "max usage reached" (429).
+
+Writes per-token CSVs to logs/research_paths/backfill/<mint>.csv.gz in the same
+format as live PeakTracker paths.  Updates research_tokens.path_file for each file.
 
 Hard Helius credit cap (--credit-cap, default 50000):
-  Helius charges 1 credit per getSignaturesForAddress call and
-  1 credit per enhanced transaction parsed.
-  Each token costs: 1 (sigs) + N_parsed (parse calls).
-  The script stops issuing new tokens when the running total hits the cap.
+  Only applies in helius mode.  Ignored in std_rpc mode.
 
 Dry-run (--dry-run):
-  Prints estimated credit cost based on assumed avg tx count and exits without
-  touching Helius or writing any files.
+  Prints estimated credit cost and detected parse mode, then exits.
 
 Run:
     python -m research.backfill_paths [--dry-run] [--winners N] [--losers N]
     python -m research.backfill_paths --credit-cap 20000 --win-thresh 100
+    python -m research.backfill_paths --parse-mode std_rpc   # force public RPC
 
-CSV columns: ts_ms, price_usd, side, sol_amount, vsol, source
+CSV columns: ts_ms, price_usd, side, sol_amount, vsol, source, ...
 """
 
 import argparse
 import csv
 import gzip
+import hashlib
 import json
 import logging
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -52,8 +58,13 @@ _SOL_MINT    = "So11111111111111111111111111111111111111112"
 _LAMPORTS    = 1_000_000_000
 _MAX_SIGS    = 1000   # getSignaturesForAddress limit
 _PARSE_BATCH = 100    # Helius enhanced-tx batch size
-_RATE_SLEEP  = 0.5   # seconds between API calls — conservative to avoid 429 under live-bot load
-_MAX_RETRIES = 4     # retries on 429 / empty body before giving up on a token
+_RATE_SLEEP      = 0.5   # seconds between tokens (both modes)
+_MAX_RETRIES     = 4     # retries on 429 before giving up on a token
+_STD_MAX_WORKERS = 3     # parallel getTransaction workers in std_rpc mode
+_STD_TX_CAP      = 300   # max transactions fetched per token in std_rpc mode
+_STD_TX_SLEEP    = 0.05  # seconds between individual getTransaction calls (per worker)
+
+_PUBLIC_RPC = "https://api.mainnet-beta.solana.com"
 
 # Average tx count used for credit estimation in dry-run
 _DRY_RUN_AVG_TXS = 200
@@ -263,6 +274,146 @@ def _extract_rows(parsed_txs: list, mint: str, sol_price: float,
     return rows
 
 
+# ---------------------------------------------------------------------------
+# Standard RPC path (fallback when Helius quota exhausted)
+# ---------------------------------------------------------------------------
+
+def _check_helius_quota(rpc_url: str) -> bool:
+    """Return True if Helius reports 'max usage reached' (quota exhausted)."""
+    try:
+        r = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getSlot"},
+                          timeout=10)
+        if r.status_code == 429:
+            body = r.text.lower()
+            return "max usage" in body or "max_usage" in body
+    except Exception:
+        pass
+    return False
+
+
+def _fetch_one_tx_std(sig: str, rpc_url: str) -> dict | None:
+    """Fetch a single transaction via standard getTransaction RPC. Returns None on error."""
+    try:
+        r = requests.post(
+            rpc_url,
+            json={
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getTransaction",
+                "params": [sig, {"encoding": "json", "commitment": "confirmed",
+                                 "maxSupportedTransactionVersion": 0}],
+            },
+            timeout=15,
+        )
+        if r.status_code == 429:
+            time.sleep(2.0)   # brief back-off; worker will move on
+            return None
+        data = r.json()
+        return data.get("result")
+    except Exception:
+        return None
+
+
+def _parse_txs_std(sigs: list, rpc_url: str) -> list:
+    """
+    Fetch up to _STD_TX_CAP transactions in parallel via standard getTransaction.
+    Returns list of result dicts (some may be None; callers must filter).
+    """
+    capped = sigs[:_STD_TX_CAP]
+    results = [None] * len(capped)
+
+    def _worker(idx_sig):
+        idx, sig = idx_sig
+        time.sleep(_STD_TX_SLEEP * (idx % _STD_MAX_WORKERS))  # stagger start
+        return idx, _fetch_one_tx_std(sig, rpc_url)
+
+    with ThreadPoolExecutor(max_workers=_STD_MAX_WORKERS) as pool:
+        for idx, res in pool.map(_worker, enumerate(capped)):
+            results[idx] = res
+
+    return [r for r in results if r is not None]
+
+
+def _extract_rows_std(tx_results: list, mint: str, sol_price: float,
+                      research_event_id: str = "") -> list:
+    """
+    Convert standard getTransaction result dicts → canonical RF5 row dicts.
+
+    Price derivation:
+      sol_amount = |pre/post native balance change of fee payer| in SOL
+      token_amount = |pre/post uiTokenAmount for the mint held by fee payer's ATA|
+      price_usd = (sol_amount / token_amount) * sol_price
+
+    source = "backfill_std_rpc"; vsol = 0 (not available in history).
+    """
+    rows = []
+    for result in tx_results:
+        if not isinstance(result, dict) or result.get("err"):
+            continue
+
+        ts = result.get("blockTime")
+        if not ts:
+            continue
+        ts_ms = int(ts) * 1000
+
+        meta = result.get("meta") or {}
+        msg = (result.get("transaction") or {}).get("message") or {}
+        account_keys = msg.get("accountKeys") or []
+        if not account_keys:
+            continue
+
+        fee_payer = account_keys[0]
+        pre_bals  = meta.get("preBalances") or []
+        post_bals = meta.get("postBalances") or []
+        sol_amount = 0.0
+        if pre_bals and post_bals:
+            sol_amount = abs(post_bals[0] - pre_bals[0]) / _LAMPORTS
+
+        # Token amount: largest delta for this mint across all ATAs
+        token_amount = 0.0
+        pre_tb  = {t["accountIndex"]: t for t in (meta.get("preTokenBalances") or [])
+                   if t.get("mint") == mint}
+        post_tb = {t["accountIndex"]: t for t in (meta.get("postTokenBalances") or [])
+                   if t.get("mint") == mint}
+        for idx in set(pre_tb) | set(post_tb):
+            pre_ui  = float((pre_tb.get(idx, {}).get("uiTokenAmount") or {}).get("uiAmount") or 0)
+            post_ui = float((post_tb.get(idx, {}).get("uiTokenAmount") or {}).get("uiAmount") or 0)
+            delta = abs(post_ui - pre_ui)
+            if delta > token_amount:
+                token_amount = delta
+
+        if token_amount == 0 or sol_amount == 0:
+            continue
+
+        price_usd = (sol_amount / token_amount) * sol_price
+        price_sol = round(price_usd / sol_price, 12) if sol_price > 0 else 0.0
+        event_id  = hashlib.sha256(f"backfill:{mint}:{ts_ms}".encode()).hexdigest()[:32]
+
+        rows.append({
+            "schema_version":    str(_SCHEMA_VER),
+            "research_event_id": research_event_id,
+            "event_id":          event_id,
+            "ts_ms":             ts_ms,
+            "price_usd":         round(price_usd, 12),
+            "price_sol":         price_sol,
+            "side":              "unknown",
+            "token_amount":      round(token_amount, 0),
+            "sol_amount":        round(sol_amount, 9),
+            "vsol":              0.0,
+            "source":            "backfill_std_rpc",
+            "venue_state":       "UNKNOWN",
+            "backfilled":        "true",
+            "data_status":       "ok",
+            "trader_pk":         fee_payer,
+        })
+
+    rows.sort(key=lambda r: r["ts_ms"])
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Token processor — dispatches to helius or std_rpc path
+# ---------------------------------------------------------------------------
+
 def _write_csv(mint: str, rows: list, out_dir: Path) -> str:
     """
     Write canonical RF5 rows to out_dir/<mint>.csv.gz.
@@ -292,53 +443,66 @@ def _update_db(sb, row_id: str, path_str: str):
 
 
 def _process_token(tok: dict, rpc_url: str, parse_url: str, sol_price: float,
-                   out_dir: Path, sb, credit_budget: list) -> int:
+                   out_dir: Path, sb, credit_budget: list,
+                   parse_mode: str = "helius", std_rpc_url: str = _PUBLIC_RPC) -> int:
     """
-    Process one token. Updates credit_budget[0] in place.
-    Returns credits consumed by this token.
+    Process one token. Updates credit_budget[0] in place (helius mode only).
+    Returns credits consumed (helius) or tx count (std_rpc).
+    parse_mode: "helius" (default) or "std_rpc" (public RPC fallback).
     """
     mint   = tok.get("token_address", "")
     sym    = tok.get("symbol") or mint[:8]
     peak   = tok.get("pct_change_peak")
     peak_s = f"{peak:+.0f}%" if peak is not None else "n/a"
 
-    log.info("  %s (%s) peak=%s", sym, mint[:8], peak_s)
+    log.info("  %s (%s) peak=%s [%s]", sym, mint[:8], peak_s, parse_mode)
 
-    # Fetch signatures (1 credit)
-    sigs = _fetch_sigs(mint, rpc_url)
-    credit_budget[0] -= 1
+    # Fetch signatures (1 credit in helius mode; free in std_rpc mode)
+    sigs = _fetch_sigs(mint, rpc_url if parse_mode == "helius" else std_rpc_url)
+    if parse_mode == "helius":
+        credit_budget[0] -= 1
     time.sleep(_RATE_SLEEP)
 
     if not sigs:
         log.debug("  no sigs for %s", mint[:8])
         return 1
 
-    all_rows: list = []
-    total_parsed = 0
-    for i in range(0, len(sigs), _PARSE_BATCH):
-        batch = sigs[i:i + _PARSE_BATCH]
-        if credit_budget[0] < len(batch):
-            log.warning("  credit cap reached mid-token %s — stopping parse", mint[:8])
-            break
-        parsed = _parse_txs(batch, parse_url)
-        credits_used = len(batch)
-        credit_budget[0] -= credits_used
-        total_parsed += credits_used
-        rows = _extract_rows(parsed, mint, sol_price,
-                             research_event_id=tok.get("id", ""))
-        all_rows.extend(rows)
-        time.sleep(_RATE_SLEEP)
-        if credit_budget[0] <= 0:
-            break
+    # --- Helius enhanced path ---
+    if parse_mode == "helius":
+        all_rows: list = []
+        total_parsed = 0
+        for i in range(0, len(sigs), _PARSE_BATCH):
+            batch = sigs[i:i + _PARSE_BATCH]
+            if credit_budget[0] < len(batch):
+                log.warning("  credit cap reached mid-token %s — stopping parse", mint[:8])
+                break
+            parsed = _parse_txs(batch, parse_url)
+            credits_used = len(batch)
+            credit_budget[0] -= credits_used
+            total_parsed += credits_used
+            rows = _extract_rows(parsed, mint, sol_price,
+                                 research_event_id=tok.get("id", ""))
+            all_rows.extend(rows)
+            time.sleep(_RATE_SLEEP)
+            if credit_budget[0] <= 0:
+                break
+        credits_consumed = 1 + total_parsed
+
+    # --- Standard RPC path (public mainnet) ---
+    else:
+        tx_results = _parse_txs_std(sigs, std_rpc_url)
+        all_rows = _extract_rows_std(tx_results, mint, sol_price,
+                                     research_event_id=tok.get("id", ""))
+        credits_consumed = len(sigs[:_STD_TX_CAP])  # informational only
 
     if not all_rows:
         log.debug("  no tradeable rows extracted for %s", mint[:8])
-        return 1 + total_parsed
+        return credits_consumed
 
     rel_path = _write_csv(mint, all_rows, out_dir)
     _update_db(sb, tok["id"], rel_path)
     log.info("  → %d rows → %s", len(all_rows), rel_path)
-    return 1 + total_parsed
+    return credits_consumed
 
 
 def main():
@@ -357,6 +521,11 @@ def main():
                         help="hard Helius credit cap (default: 50000)")
     parser.add_argument("--skip-existing", action="store_true",
                         help="skip tokens that already have a path_file in DB")
+    parser.add_argument("--parse-mode",   type=str, default="auto",
+                        choices=["auto", "helius", "std_rpc"],
+                        help="parse mode: auto (detect quota), helius, or std_rpc (default: auto)")
+    parser.add_argument("--std-rpc-url",  type=str, default=_PUBLIC_RPC,
+                        help=f"RPC URL for std_rpc mode (default: {_PUBLIC_RPC})")
     args = parser.parse_args()
 
     from research.config import SUPABASE_URL, SUPABASE_KEY, HELIUS_API_KEY, RESEARCH_PATHS_DIR
@@ -365,7 +534,7 @@ def main():
         log.error("SUPABASE_URL and SUPABASE_KEY required")
         sys.exit(1)
     if not HELIUS_API_KEY:
-        log.error("HELIUS_API_KEY required")
+        log.error("HELIUS_API_KEY required (even for std_rpc mode — used for dry-run estimate)")
         sys.exit(1)
 
     from supabase import create_client
@@ -387,36 +556,61 @@ def main():
         log.warning("No tokens to process")
         sys.exit(0)
 
-    # Dry-run: estimate credits
+    # Dry-run: detect mode then estimate
     if args.dry_run:
-        est_sigs     = len(all_tokens)
-        est_parse    = len(all_tokens) * _DRY_RUN_AVG_TXS
-        est_total    = est_sigs + est_parse
-        pct_of_cap   = est_total / args.credit_cap * 100
-        print("\n=== Dry-run Credit Estimate ===")
+        helius_rpc_dr = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+        dr_mode = args.parse_mode
+        if dr_mode == "auto":
+            log.info("Dry-run: checking Helius quota...")
+            dr_mode = "std_rpc" if _check_helius_quota(helius_rpc_dr) else "helius"
+
+        est_sigs   = len(all_tokens)
+        est_parse  = len(all_tokens) * _DRY_RUN_AVG_TXS
+        est_total  = est_sigs + est_parse
+        pct_of_cap = est_total / args.credit_cap * 100
+        print(f"\n=== Dry-run Credit Estimate (mode={dr_mode}) ===")
         print(f"Tokens to process:      {len(all_tokens)}")
-        print(f"  getSignaturesForAddress calls: {est_sigs}   ({est_sigs} credits)")
-        print(f"  Enhanced TX parse (avg {_DRY_RUN_AVG_TXS} txns/token): {est_parse} credits")
-        print(f"Total estimated credits: {est_total:,}  ({pct_of_cap:.1f}% of --credit-cap {args.credit_cap:,})")
-        if est_total > args.credit_cap:
-            n_covered = int(args.credit_cap / (1 + _DRY_RUN_AVG_TXS))
-            print(f"WARNING: estimate exceeds cap. Would fully cover ~{n_covered} tokens.")
+        if dr_mode == "helius":
+            print(f"  getSignaturesForAddress calls: {est_sigs}   ({est_sigs} credits)")
+            print(f"  Enhanced TX parse (avg {_DRY_RUN_AVG_TXS} txns/token): {est_parse} credits")
+            print(f"Total estimated credits: {est_total:,}  ({pct_of_cap:.1f}% of --credit-cap {args.credit_cap:,})")
+            if est_total > args.credit_cap:
+                n_covered = int(args.credit_cap / (1 + _DRY_RUN_AVG_TXS))
+                print(f"WARNING: estimate exceeds cap. Would fully cover ~{n_covered} tokens.")
+        else:
+            est_min = est_sigs * _STD_TX_CAP * _STD_TX_SLEEP / _STD_MAX_WORKERS
+            print(f"  std_rpc mode: 0 Helius credits. Public RPC, {_STD_MAX_WORKERS} workers.")
+            print(f"  Estimated time: ~{est_min/60:.0f}-{est_min*2/60:.0f} min for {len(all_tokens)} tokens.")
         print(f"\nTo run for real:  python -m research.backfill_paths"
               f" --winners {args.winners} --losers {args.losers}"
-              f" --credit-cap {args.credit_cap}")
+              f" --parse-mode {dr_mode}")
         return
 
-    sol_price = _get_sol_price()
-    rpc_url   = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-    parse_url = f"https://api.helius.xyz/v0/transactions/?api-key={HELIUS_API_KEY}"
-    out_dir   = RESEARCH_PATHS_DIR / "backfill"
+    sol_price  = _get_sol_price()
+    helius_rpc = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+    parse_url  = f"https://api.helius.xyz/v0/transactions/?api-key={HELIUS_API_KEY}"
+    out_dir    = RESEARCH_PATHS_DIR / "backfill"
 
-    credit_budget = [args.credit_cap]   # mutable wrapper for in-place updates
+    # Determine parse mode
+    parse_mode = args.parse_mode
+    if parse_mode == "auto":
+        log.info("Checking Helius quota...")
+        if _check_helius_quota(helius_rpc):
+            parse_mode = "std_rpc"
+            log.warning("Helius quota exhausted — switching to std_rpc (public mainnet)")
+        else:
+            parse_mode = "helius"
+            log.info("Helius quota OK — using enhanced API")
+
+    std_rpc_url = args.std_rpc_url
+    rpc_url     = helius_rpc if parse_mode == "helius" else std_rpc_url
+
+    credit_budget = [args.credit_cap]   # mutable wrapper; only decremented in helius mode
     done = 0
     skipped = 0
 
-    log.info("Starting backfill (credit cap: %d, SOL price: $%.2f)",
-             args.credit_cap, sol_price)
+    log.info("Starting backfill (mode=%s, credit_cap=%d, SOL=$%.2f)",
+             parse_mode, args.credit_cap, sol_price)
 
     for i, tok in enumerate(all_tokens, 1):
         if credit_budget[0] <= 0:
@@ -426,7 +620,8 @@ def main():
                  tok.get("symbol") or tok.get("token_address", "")[:8])
         try:
             used = _process_token(
-                tok, rpc_url, parse_url, sol_price, out_dir, sb, credit_budget
+                tok, rpc_url, parse_url, sol_price, out_dir, sb, credit_budget,
+                parse_mode=parse_mode, std_rpc_url=std_rpc_url,
             )
             done += 1
             remaining = credit_budget[0]
