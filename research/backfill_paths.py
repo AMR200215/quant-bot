@@ -52,7 +52,8 @@ _SOL_MINT    = "So11111111111111111111111111111111111111112"
 _LAMPORTS    = 1_000_000_000
 _MAX_SIGS    = 1000   # getSignaturesForAddress limit
 _PARSE_BATCH = 100    # Helius enhanced-tx batch size
-_RATE_SLEEP  = 0.15  # seconds between API calls (courteous, not needed on paid plan)
+_RATE_SLEEP  = 0.5   # seconds between API calls — conservative to avoid 429 under live-bot load
+_MAX_RETRIES = 4     # retries on 429 / empty body before giving up on a token
 
 # Average tx count used for credit estimation in dry-run
 _DRY_RUN_AVG_TXS = 200
@@ -119,24 +120,42 @@ def _load_tokens(sb, winners: int, losers: int, win_thresh: float) -> tuple:
 
 
 def _fetch_sigs(mint: str, rpc_url: str) -> list:
-    """getSignaturesForAddress → list of sig strings (oldest first, no errors)."""
-    try:
-        r = requests.post(
-            rpc_url,
-            json={
-                "jsonrpc": "2.0", "id": 1,
-                "method":  "getSignaturesForAddress",
-                "params":  [mint, {"limit": _MAX_SIGS, "commitment": "confirmed"}],
-            },
-            timeout=20,
-        )
-        result = r.json().get("result") or []
-    except Exception as e:
-        log.warning("getSignaturesForAddress failed for %s: %s", mint[:8], e)
-        return []
-    # result is DESC (newest first); reverse to oldest-first; skip failed txs
-    result.reverse()
-    return [s["signature"] for s in result if not s.get("err")]
+    """getSignaturesForAddress → list of sig strings (oldest first, no errors).
+    Retries with exponential backoff on 429 or empty/non-JSON body."""
+    backoff = 2.0
+    for attempt in range(_MAX_RETRIES):
+        try:
+            r = requests.post(
+                rpc_url,
+                json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method":  "getSignaturesForAddress",
+                    "params":  [mint, {"limit": _MAX_SIGS, "commitment": "confirmed"}],
+                },
+                timeout=20,
+            )
+            if r.status_code == 429:
+                wait = backoff * (2 ** attempt)
+                log.warning("getSignaturesForAddress 429 for %s — sleeping %.1fs (attempt %d/%d)",
+                            mint[:8], wait, attempt + 1, _MAX_RETRIES)
+                time.sleep(wait)
+                continue
+            result = r.json().get("result") or []
+        except Exception as e:
+            if attempt < _MAX_RETRIES - 1:
+                wait = backoff * (2 ** attempt)
+                log.warning("getSignaturesForAddress error for %s: %s — retry in %.1fs",
+                            mint[:8], e, wait)
+                time.sleep(wait)
+                continue
+            log.warning("getSignaturesForAddress failed for %s after %d attempts: %s",
+                        mint[:8], _MAX_RETRIES, e)
+            return []
+        # result is DESC (newest first); reverse to oldest-first; skip failed txs
+        result.reverse()
+        return [s["signature"] for s in result if not s.get("err")]
+    log.warning("getSignaturesForAddress gave up for %s after %d attempts", mint[:8], _MAX_RETRIES)
+    return []
 
 
 def _parse_txs(sigs: list, parse_url: str) -> list:
