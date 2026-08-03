@@ -126,6 +126,12 @@ PP_WS_URL           = (
     if PUMPPORTAL_API_KEY else "wss://pumpportal.fun/api/data"
 )
 
+# Daily message budget for research's PumpPortal subscription (metered:
+# 0.01 SOL / 10,000 messages as of 2026-08). 50,000 msgs/day ~= 0.05 SOL,
+# conservatively under $4/day even if SOL price moves up from ~$74.
+# New token subscriptions pause for the rest of the UTC day once hit.
+PP_DAILY_MSG_BUDGET = 50_000
+
 # Trade-path persistence (PC1)
 RESEARCH_PATHS_DIR      = Path(__file__).parent.parent / "logs" / "research_paths"
 PATH_DEADMAN_MIN_FILES  = 100   # alert if fewer path files created today while alerts flowed

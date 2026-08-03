@@ -50,6 +50,15 @@ try:
 except Exception:
     _PP_API_KEY = ""
 
+def _live_trading_enabled() -> bool:
+    """Re-check LIVE_TRADING at call time (not import time) — cheap, config value
+    doesn't change at runtime, but avoids stale-import surprises across reloads."""
+    try:
+        from memecoin.config import LIVE_TRADING as _lt
+        return _lt
+    except Exception:
+        return False
+
 WS_URL = (
     f"wss://pumpportal.fun/api/data?api-key={_PP_API_KEY}"
     if _PP_API_KEY else "wss://pumpportal.fun/api/data"
@@ -67,6 +76,14 @@ SOL_PRICE_REFRESH_SEC = 60.0
 # 1000 slots = ~33 min at 30/min — covers the bulk of TG alert timing.
 # Memory: ~2KB/slot × 1000 = ~2MB. Acceptable on 4GB VPS.
 MAX_SCREENING_SLOTS = 1000
+
+# Daily cap on NEW screening subscriptions (subscribeTokenTrade is metered:
+# 0.01 SOL/10k messages as of 2026-08). Proxy on subscription count, not raw
+# message count, for simplicity — legitimate Telegram-driven screening runs
+# ~400-1200/day, so this comfortably covers that while blocking runaway
+# scenarios (2026-08-03: an unconditional auto-subscribe-on-every-launch bug
+# hit 812 subs in 25min — this cap would have limited that to ~1min).
+SCREENING_DAILY_SUB_BUDGET = 2000
 
 # Reconnect delays: 0.5 → 1 → 2 → 5 (capped)
 _RECONNECT_DELAY_BASE = 0.5
@@ -189,6 +206,18 @@ class PumpPortalMonitor:
     """
 
     def __init__(self):
+        # ── Metered subscribeTokenTrade daily budget (defense in depth) ────
+        # 2026-08-03: subscribe_new_tokens()'s auto-escalation burned 812
+        # screening subs in 25min unconditionally. This is a hard ceiling on
+        # top of the call-site LIVE_TRADING gates, so a future new caller
+        # can't repeat that mistake. ~15k msgs/day ~= 0.015 SOL ~= $1.10 at
+        # $74/SOL — combined with research/peak_tracker.py's 50k/day cap,
+        # total worst case stays close to the user's $4/day target.
+        self._screen_budget_lock             = threading.Lock()
+        self._screen_budget_date: str        = ""
+        self._screen_msg_count_today: int    = 0
+        self._screen_budget_alerted: bool    = False
+
         # ── Position monitoring ───────────────────────────────────────────
         self._subscribed: set[str]   = set()
         self._sub_lock               = threading.Lock()
@@ -509,12 +538,47 @@ class PumpPortalMonitor:
     # Public API — screening accumulator
     # ------------------------------------------------------------------
 
+    def _screening_budget_ok(self) -> bool:
+        """Daily cap on new screening subscriptions — see SCREENING_DAILY_SUB_BUDGET."""
+        import datetime as _dt
+        today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+        with self._screen_budget_lock:
+            if today != self._screen_budget_date:
+                self._screen_budget_date     = today
+                self._screen_msg_count_today = 0
+                self._screen_budget_alerted  = False
+            if self._screen_msg_count_today >= SCREENING_DAILY_SUB_BUDGET:
+                if not self._screen_budget_alerted:
+                    self._screen_budget_alerted = True
+                    log.warning(
+                        "PumpPortal: daily screening-subscription budget (%d) "
+                        "reached — new screening subs paused until UTC rollover",
+                        SCREENING_DAILY_SUB_BUDGET,
+                    )
+                    try:
+                        from app.alerts import send_alert as _sa
+                        _sa(
+                            f"PumpPortal: daily screening-subscription budget "
+                            f"({SCREENING_DAILY_SUB_BUDGET}) reached — paused "
+                            f"until UTC rollover."
+                        )
+                    except Exception:
+                        pass
+                return False
+            self._screen_msg_count_today += 1
+            return True
+
     def subscribe_screening(self, mint: str, creator_pubkey: Optional[str] = None):
         """
         Start accumulating trade data for a mint in screening mode.
         LRU-evicts oldest slot when MAX_SCREENING_SLOTS is reached.
         Safe to call if mint is already subscribed for position monitoring.
         """
+        with self._screening_lock:
+            _already_tracked = mint in self._screening
+        if not _already_tracked and not self._screening_budget_ok():
+            return
+
         evicted_mint = None
 
         with self._screening_lock:
@@ -994,9 +1058,17 @@ class PumpPortalMonitor:
                 creator = msg.get("traderPublicKey", "")
                 name    = msg.get("name", "")
                 symbol  = msg.get("symbol", "")
-                self.subscribe_screening(mint, creator_pubkey=creator or None)
-                log.debug("PP new_token %s (%s) creator=%s — screening subscribed",
-                          symbol or mint[:8], mint[:8], creator[:8] if creator else "?")
+                # Metered subscribeTokenTrade — only worth the spend when a live
+                # buy could actually follow. Paused 2026-08-03: was auto-firing
+                # for every pump.fun launch platform-wide (812 in 25min observed),
+                # unconditionally, regardless of LIVE_TRADING — pure wasted spend
+                # while paused. Telegram social_alert screening (scanner.py's own
+                # subscribe_screening calls) still works independently for the
+                # paper "pumpportal_screen" research signal.
+                if _live_trading_enabled():
+                    self.subscribe_screening(mint, creator_pubkey=creator or None)
+                    log.debug("PP new_token %s (%s) creator=%s — screening subscribed",
+                              symbol or mint[:8], mint[:8], creator[:8] if creator else "?")
                 # Fire new-token callbacks (scanner.py populates fresh_mints, dev check, etc.)
                 with self._nt_cb_lock:
                     _nt_cbs = list(self._new_token_callbacks)

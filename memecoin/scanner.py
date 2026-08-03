@@ -975,7 +975,9 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     # should already be 1-2s of live ticks cached.  Dramatically cuts the rate
     # of preflight_no_price blocks (target: <3% of live-eligible signals).
     # The slot is evicted on rejection; kept alive on pass.
-    if chain == "solana":
+    # LIVE_TRADING-gated: this exists purely to speed up the live-buy preflight
+    # (metered subscribeTokenTrade) — pointless spend while paused (2026-08-03).
+    if chain == "solana" and LIVE_TRADING:
         try:
             _pp_monitor.subscribe_screening(address)
         except Exception as _sub_err:
@@ -1536,11 +1538,16 @@ def _portfolio_thread():
                 # ── PumpPortal subscription management ───────────────────────────
                 # Diff open pumpfun positions against what we're subscribed to.
                 # Subscribe new; unsubscribe closed. Graduated/BSC tokens skip PP.
+                # LIVE positions only — subscribeTokenTrade is metered (PumpPortal
+                # 2026-08 pricing: 0.01 SOL/10k messages) and paper positions don't
+                # need sub-second precision; DexScreener fallback is fine for them.
+                # Revisit if LIVE_TRADING flips back on and this needs both cohorts.
                 open_pumpfun = {
                     p.token_address
                     for p in portfolio.open_positions()
                     if p.chain == "solana"
                     and (p.dex_id or "") in ("pumpfun", "pumpswap")
+                    and p.is_live
                 }
                 new_mints   = open_pumpfun - _subscribed_mints
                 stale_mints = _subscribed_mints - open_pumpfun

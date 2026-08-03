@@ -48,6 +48,7 @@ from research.config import (
     RESEARCH_PATHS_DIR,
     PATH_DEADMAN_MIN_FILES,
     PATH_SUB_SAMPLE_INTERVAL,
+    PP_DAILY_MSG_BUDGET,
 )
 from research.spool.writer import spool_dropped_field
 from research.path_schema import PATH_HEADER as _CSV_HEADER, PATH_SCHEMA_VERSION as _SCHEMA_VER
@@ -122,6 +123,13 @@ class PeakTracker:
         self._today_date: str    = ""
         self._tokens_scheduled_today: int = 0
         self._path_files_today: int  = 0
+
+        # PumpPortal message budget (metered: 0.01 SOL / 10k messages as of 2026-08).
+        # New subscriptions pause once hit; already-subscribed tokens finish their
+        # current window naturally (max ~15min residual) rather than being force-
+        # unsubscribed mid-flight.
+        self._pp_messages_today: int = 0
+        self._pp_budget_alerted: bool = False
 
         # Concurrent-subscription sampling for p95 report
         self._sub_samples: list  = []   # list of int counts
@@ -279,12 +287,14 @@ class PeakTracker:
             p95 = int(quantiles(samples, n=100)[94]) if len(samples) >= 20 else max(samples)
             log.info(
                 "PeakTracker DAY REPORT %s | tokens_scheduled=%d path_files=%d "
-                "sub_p95=%d sub_peak=%d",
+                "sub_p95=%d sub_peak=%d pp_messages=%d/%d",
                 day_str,
                 scheduled,
                 self._path_files_today,
                 p95,
                 max(samples),
+                self._pp_messages_today,
+                PP_DAILY_MSG_BUDGET,
             )
             if max(samples) >= 50:
                 log.warning(
@@ -394,6 +404,24 @@ class PeakTracker:
                                 mint = msg.get("mint")
                                 if not mint:
                                     continue
+                                self._pp_messages_today += 1
+                                if (self._pp_messages_today >= PP_DAILY_MSG_BUDGET
+                                        and not self._pp_budget_alerted):
+                                    self._pp_budget_alerted = True
+                                    log.warning(
+                                        "PeakTracker: PumpPortal daily message budget "
+                                        "(%d) reached — pausing new subscriptions until "
+                                        "UTC rollover", PP_DAILY_MSG_BUDGET,
+                                    )
+                                    try:
+                                        from app.alerts import send_alert as _sa
+                                        _sa(
+                                            f"PeakTracker: PumpPortal daily message budget "
+                                            f"({PP_DAILY_MSG_BUDGET}) reached — new research "
+                                            f"subscriptions paused until UTC rollover."
+                                        )
+                                    except Exception:
+                                        pass
                                 price = self._price_from_msg(msg)
                                 now = time.time()
                                 with self._lock:
@@ -454,6 +482,11 @@ class PeakTracker:
                             with self._pending_lock:
                                 new = list(self._pending)
                                 self._pending.clear()
+                            if self._pp_messages_today >= PP_DAILY_MSG_BUDGET:
+                                # Budget hit — drop pending tokens rather than
+                                # subscribing (already-tracked tokens keep running
+                                # to their natural expiry; see alert in _recv()).
+                                continue
                             for addr in new:
                                 try:
                                     await ws.send(json.dumps({
@@ -589,6 +622,8 @@ class PeakTracker:
                 self._sub_samples.clear()
                 self._tokens_scheduled_today = 0
                 self._path_files_today = 0
+                self._pp_messages_today = 0
+                self._pp_budget_alerted = False
                 self._today_date = current_date
 
     # ── Supabase write ────────────────────────────────────────────────────────
