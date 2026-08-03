@@ -49,6 +49,11 @@ CAPITAL_USD = 8     # ← actual wallet balance (update as it grows)
 # ---------------------------------------------------------------------------
 LIVE_TRADING = os.getenv("LIVE_TRADING", "false").lower() == "true"
 
+# PumpPortal data-API key — required for subscribeTokenTrade/subscribeAccountTrade
+# (linked wallet must hold >=0.02 SOL). Without it, real-time position price
+# monitoring silently falls back to DexScreener/Jupiter (~5-30s lag).
+PUMPPORTAL_API_KEY = os.getenv("PUMPPORTAL_API_KEY", "")
+
 # Focus mode: when True, only the social_alert (TG) path runs.
 # Disables wallet tracker, market scanner, pumpfun_listener, near-miss poller.
 # Zero Helius credits consumed by those subsystems.

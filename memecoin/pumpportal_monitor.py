@@ -45,7 +45,15 @@ import requests
 
 log = logging.getLogger(__name__)
 
-WS_URL = "wss://pumpportal.fun/api/data"
+try:
+    from memecoin.config import PUMPPORTAL_API_KEY as _PP_API_KEY
+except Exception:
+    _PP_API_KEY = ""
+
+WS_URL = (
+    f"wss://pumpportal.fun/api/data?api-key={_PP_API_KEY}"
+    if _PP_API_KEY else "wss://pumpportal.fun/api/data"
+)
 
 # Price is considered stale if no update received in this many seconds.
 PRICE_STALE_SEC = 15.0

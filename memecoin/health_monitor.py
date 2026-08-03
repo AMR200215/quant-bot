@@ -12,6 +12,10 @@ Alarms:
   (e) F3 live-drought: >=3 social_alert paper opens in 3h AND 0 live buy
       attempts in 3h → "live pipeline silent: last block reasons: <top 3>"
       Detects Bug-1-class silent deaths within 3h instead of 3 days.
+  (j) PumpPortal live feed silent >5min while holding an open live position
+      → real-time price monitoring has silently degraded to the DexScreener/
+      Jupiter fallback (~5-30s lag). Root cause behind repeated hard-stop
+      overshoot on live trades (2026-08-03 investigation) — see PUMPPORTAL_API_KEY.
 
 Extended pipeline timestamps (set via update_health_timestamp):
   _last_tg_connected          — last time TG client connected
@@ -21,6 +25,8 @@ Extended pipeline timestamps (set via update_health_timestamp):
   _last_research_insert       — last successful Supabase insert by tracker
   _last_pc1_path_event        — last time peak_tracker opened a new CSV
   _last_paper_decision        — last time scanner made a screener decision
+  _last_pp_live_tick          — last real (non-fallback) PumpPortal price tick
+                                 applied to an open LIVE position
 
 Usage (from scanner.py / portfolio.py):
     from memecoin.health_monitor import (
@@ -54,14 +60,16 @@ _pipeline_timestamps: dict[str, float] = {
     "_last_research_insert":       0.0,
     "_last_pc1_path_event":        0.0,
     "_last_paper_decision":        0.0,
+    "_last_pp_live_tick":          0.0,
 }
 
 _VALID_TIMESTAMP_KEYS = frozenset(_pipeline_timestamps.keys())
 
 # Stall thresholds
-_QUEUE_STALL_S   = 20 * 60   # 20 min: queue listener not committing while TG is live
-_INSERT_STALL_S  = 30 * 60   # 30 min: no Supabase insert while queue is flowing
-_PC1_STALL_S     = 60 * 60   # 1 h: no path event while inserts are flowing
+_QUEUE_STALL_S        = 20 * 60   # 20 min: queue listener not committing while TG is live
+_INSERT_STALL_S       = 30 * 60   # 30 min: no Supabase insert while queue is flowing
+_PC1_STALL_S          = 60 * 60   # 1 h: no path event while inserts are flowing
+_PP_LIVE_TICK_STALL_S = 5 * 60    # 5 min: no real PumpPortal tick while holding a live position
 
 # Timestamps of recent events (kept for sliding-window rate calcs)
 _TG_WINDOW_SEC      = 2 * 3600    # 2h TG silence alarm
@@ -145,7 +153,8 @@ def update_health_timestamp(key: str, ts: float):
     Valid keys:
         _last_tg_connected, _last_tg_message,
         _last_queue_alert_written, _last_queue_alert_committed,
-        _last_research_insert, _last_pc1_path_event, _last_paper_decision
+        _last_research_insert, _last_pc1_path_event, _last_paper_decision,
+        _last_pp_live_tick
     """
     if key not in _VALID_TIMESTAMP_KEYS:
         log.debug("update_health_timestamp: unknown key %r (ignored)", key)
@@ -428,6 +437,30 @@ def _check():
                     )
     except Exception as e:
         log.debug("health_monitor: batch_verify check failed: %s", e)
+
+    # Alarm (j) — live position open but no real PumpPortal tick for >5min.
+    # Silent degradation to DexScreener/Jupiter fallback (~5-30s lag) was the
+    # root cause behind repeated hard-stop overshoot on live trades (2026-08-03
+    # investigation). This is only meaningful while holding an open live
+    # position — it's expected/harmless to be silent otherwise.
+    last_pp_tick = pts["_last_pp_live_tick"]
+    try:
+        from memecoin.scanner import portfolio as _portfolio
+        _open_live = _portfolio._count_open_live()
+    except Exception:
+        _open_live = 0
+    if _open_live > 0 and now - last_pp_tick > _PP_LIVE_TICK_STALL_S:
+        if _should_fire("pp_live_feed_silent"):
+            stale_desc = f"{int((now - last_pp_tick) / 60)}m" if last_pp_tick > 0 else "since startup"
+            log.warning(
+                "HEALTH ALARM: PumpPortal live feed silent for %s while holding %d live position(s)",
+                stale_desc, _open_live,
+            )
+            _send_alert(
+                f"HEALTH: PumpPortal real-time feed silent for {stale_desc} while holding "
+                f"{_open_live} live position(s) — likely degraded to DexScreener/Jupiter "
+                f"fallback (~5-30s lag). Check PUMPPORTAL_API_KEY / wallet funding / WS connection."
+            )
 
 
 def _monitor_loop():

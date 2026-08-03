@@ -3094,6 +3094,9 @@ class Portfolio:
                 pos.current_price = pp_price
                 pos.peak_price = max(pos.peak_price, pp_price)
                 _used_dex_source = True
+                if pos.is_live:
+                    from memecoin.health_monitor import update_health_timestamp as _uht
+                    _uht("_last_pp_live_tick", time.time())
             else:
                 # DexScreener fallback — used when PumpPortal has no fresh data
                 # (graduated tokens, or token not yet subscribed)

@@ -120,7 +120,11 @@ POLLER_LOOKBACK_HOURS = 2
 # Tick-level peak tracker (PeakTracker)
 # ---------------------------------------------------------------------------
 TICK_PEAK_WINDOW_S  = 900                          # 15 min window per token
-PP_WS_URL           = "wss://pumpportal.fun/api/data"
+PUMPPORTAL_API_KEY  = os.getenv("PUMPPORTAL_API_KEY", "")
+PP_WS_URL           = (
+    f"wss://pumpportal.fun/api/data?api-key={PUMPPORTAL_API_KEY}"
+    if PUMPPORTAL_API_KEY else "wss://pumpportal.fun/api/data"
+)
 
 # Trade-path persistence (PC1)
 RESEARCH_PATHS_DIR      = Path(__file__).parent.parent / "logs" / "research_paths"
