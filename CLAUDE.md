@@ -21,7 +21,7 @@
 
 A research bot with two independent modules:
 1. **Prediction markets** (`app/`) — scans Polymarket/Kalshi-style markets, uses Bayesian probability + Kelly sizing. Runs via GitHub Actions twice daily (9AM + 6PM UTC). Commits scan results to `logs/market_journal.csv`.
-2. **Memecoin trading** (`memecoin/`) — social alert + whale copy-trade signals on Solana. Runs as a persistent web server (`python -m app.web`). **Live trading is active as of June 2026.**
+2. **Memecoin trading** (`memecoin/`) — social alert + whale copy-trade signals on Solana. Runs as a persistent web server (`python -m app.web`). **Live trading is PAUSED (`LIVE_TRADING=false` in VPS `.env`, set 2026-08-03) — paper + research only until the user says go-live post-V8.**
 
 ---
 
@@ -39,7 +39,7 @@ A research bot with two independent modules:
 
 - **`SOCIAL_ALERT_ONLY=True`** — wallet tracker, market scanner, pumpfun listener, near-miss poller are all OFF (zero Helius credits). Only the Telegram social alert feed (`pumpdotfunalert` channel) drives signals.
 - **Signal type**: `social_alert` — fires when a token is mentioned in the Telegram channel
-- **Live trading**: active. Each qualifying signal attempts a real on-chain buy on Solana.
+- **Live trading**: PAUSED as of 2026-08-03 (`LIVE_TRADING=false` in VPS `.env` — this is the durable, restart-safe gate, checked first in `portfolio.py:780`'s live-buy decision). **Do not flip this to `true` without the user explicitly saying go-live.** Note: Telegram `/buys_off` and `/sells_off` are runtime-only kill switches that reset to enabled on every service restart (`kill_switch.py` re-initializes from `config.py`'s hardcoded default) — they are NOT a durable way to keep live trading off; `.env`'s `LIVE_TRADING` is.
 - **Trade size**: ~$3–5 per trade (size-normalized based on stop distance)
 - **Bot wallet**: `8PNHvFWeMT7CqpUvJiAwVgAK545t5KV3uCPd8DUfaTiM` (Solana, confirmed on Solscan)
 - **BSC**: not active in current mode
