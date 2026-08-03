@@ -61,34 +61,61 @@ Single-filter removable: 71/143 (50%)
 
 ## N4(c) — path_stats Full Output
 
-> **Era note**: tick paths before 2026-07-30 are backfill-only (forward collection began at the N7 fix). All path files written before 2026-07-30 are header-only due to the PC1 NameError bug fixed in N7(a). The backfill set (PC2) is the source of truth for A–F analyses. G/H (trader_pk analyses) require forward-collected paths only (backfill rows have trader_pk from Helius feePayer — valid for G/H if Helius parse worked).
+> **STATUS 2026-08-03: STILL BLOCKED — do not treat as ready for the V8 freeze session.** PC2 backfill ran to completion (400/400 tokens, 0 script errors), but see the two root-cause findings below. Net usable data: **67 path files, all backfill-sourced, 0 forward-collected.** Every cell below needs n≥100; none clear that bar.
 
-**Source**: path_stats run 2026-07-29 (pre-backfill)
+**Finding 1 — PC2 backfill silent low yield (17%).** `research.backfill_paths --winners 200 --losers 200 --parse-mode std_rpc` processed all 400 tokens with zero fetch/parse errors, but only 67 produced any tradeable rows (`_extract_rows_std` in `research/backfill_paths.py:336`, gated by `if token_amount == 0 or sol_amount == 0: continue`). The other 333 silently returned 0 rows — logged only at `log.debug` (`backfill_paths.py:499`, invisible at the script's own `logging.INFO` level, `backfill_paths.py:48`) so the run *looked* clean end-to-end. The `sol_amount`/`token_amount` heuristic (fee-payer's raw pre/post balance deltas, largest per-mint token delta across all touched ATAs) likely misses most real swaps — probably wrong for relayed/aggregator-routed txs where the fee payer isn't the trader, or multi-instruction txs where the largest token delta isn't the swap leg. **Not yet root-caused to a fix** — would need to compare a failing tx's raw `getTransaction` body against what the heuristic expects.
 
-1,200 path files on disk, ALL header-only (no tick data).
+**Finding 2 — forward (PC1/live) collection is at 0% tick yield, not fixed by N7(a) as previously believed.** VPS `quantbot-research.service` day reports show `path_files` opened matching `tokens_scheduled` every day (Jul29: 1459, Jul30: 1218, Jul31: 1082, Aug1: 667, Aug2: 420) — but `journalctl -u quantbot-research --since "24 hours ago" | grep -oE "ticks=[0-9]+" | sort | uniq -c` returns **`420 ticks=0`** — literally every one of the last 420 tracked tokens ended its ~15–25min tracking window with zero ticks written. Prime suspect: `_price_from_msg()` (`research/peak_tracker.py:210`) derives price only from `vSolInBondingCurve`/`vTokensInBondingCurve` on incoming PumpPortal `subscribeTokenTrade` messages and returns `None` (dropping the tick entirely, `peak_tracker.py:397-411`, wrapped in a bare `except: pass` at line 444/446) if either is 0/absent. If PumpPortal's live payload no longer carries those fields as expected (schema drift) or they're legitimately empty for a chunk of message types, every tick silently vanishes — matching the observed 100% failure rate exactly. **Not yet confirmed** — would need one raw WS message dumped to verify field presence. This means the "N7(a) fixed forward collection" note below (written 2026-07-29) is **incorrect as of today** — forward collection has produced effectively zero usable ticks since at least Jul 30, most likely obscured because the same "header-only" symptom looks identical whether the cause is the old NameError or this new price-derivation gap.
+>
+> Historical day-folders (2026-07-29 → 2026-08-01, ~4,400 gzipped files per the day-report counts) are **no longer present on the VPS disk** (`find /root/quant-bot/logs/research_paths` only returns the 2026-08-02 and backfill/ dirs, 14 files total) — cause not identified (ruled out: git/gitignore since `research_paths/` was never tracked, logrotate, tmpfiles.d, cron, disk-space eviction). Moot for N4(c)/(d) purposes since per Finding 2 those files would have been header-only anyway, but flagging as an unexplained data-loss event worth a separate look.
 
-**Root cause (fixed in N7a)**: PC1 path collector had a NameError bug that silently swallowed every tick write. N7(a) fixed the import — forward collection now works. Backfill (PC2) covers pre-fix history.
+**Source**: path_stats run 2026-08-03 (post-PC2-backfill) — `python3 -m research.analysis.path_stats`, log at `logs/path_stats_20260803.log`
 
-All cells: INSUFFICIENT (n=0, need ≥100 per cell). Will populate after PC2 backfill runs.
+67 path files found (all under `logs/research_paths/backfill/`), 0 with `progress_at_signal` metadata (field not yet flowing from outcome_poller, unchanged from N4b note).
+
+All cells: **INSUFFICIENT** (max n=67 pre-split; every sub-bucket splits further, so effectively n=0-57 per cell, need ≥100):
+
+| Section | n | status |
+|---|---|---|
+| A — shakeout depth by drawdown bucket (×3 targets) | 0 per bucket | INSUFFICIENT |
+| B — post-peak retention by drawdown bucket | 0 per bucket | INSUFFICIENT |
+| C — pre-dump order flow | 19 | INSUFFICIENT (need ≥100) |
+| D — graduation velocity | 0 | INSUFFICIENT (backfill paths excluded, vsol=0 in std_rpc history) |
+| E — peak-mcap distribution | 67 overall, 0 per progress bucket | INSUFFICIENT |
+| F — conditional continuation | 57 (qualifying trough) | INSUFFICIENT |
+| G — unique-buyer velocity | 67 | INSUFFICIENT |
+| H — sniper density | 67 | INSUFFICIENT |
 
 ### Paths Sanity Line
 
 | field | value |
 |---|---|
-| File count | 1,207 (1,187 .csv + 20 .csv.gz) |
-| Date range | 2026-07-28 → 2026-07-29 (PC1 started with RF1 deployment) |
-| Winner-path count | 0 with tick data (all header-only) |
-| Backfill set | NOT YET RUN — run `python -m research.backfill_paths --dry-run` first |
+| File count | 67 (.csv.gz, all backfill) |
+| Date range | backfill covers alert_time back to whenever the 200th winner/loser by recency falls (recent weeks) |
+| Winner-path count | 67 with real tick data (17% yield off 400 attempted) |
+| Backfill set | RAN 2026-08-02 17:22 → 2026-08-03 01:59 (400/400, 0 errors, 17% usable yield) |
 
 ---
 
 ## N4(d) — replay_exits
 
-**Source**: replay_exits run 2026-07-29
+> **STATUS 2026-08-03: numbers below are NOT reliable — same 67-path dataset as N4(c), plus a likely data-quality artifact (see caveat).** Do not use for TP/stop calibration yet.
 
-0 results — all 1,201 paths too short or empty (same root cause as N4c).
+**Source**: replay_exits run 2026-08-03 — `python3 -m research.analysis.replay_exits`, log at `logs/replay_exits_20260803.log`
 
-### Three Comparison Configs (spec defined, data pending)
+n=64 (3 of 67 paths skipped — too short/empty). All three specs ran clean, no errors.
+
+| Spec | n | win_rate | mean_pnl | median_pnl | p25 | p75 | p90 | exit reasons |
+|---|---|---|---|---|---|---|---|---|
+| A (v7 current) | 64 | 54.7% | +72,529.6% | +2.4% | -94.4% | +75.5% | +462,376.5% | hard_stop:37 trail_stop:15 path_end:12 |
+| B (early-TP-heavy) | 64 | 54.7% | +72,530.4% | +2.4% | -94.4% | +76.6% | +462,376.5% | hard_stop:37 trail_stop:16 path_end:11 |
+| C (wide-stop/small-size) | 64 | 54.7% | +72,530.5% | +2.4% | -80.2% | +75.5% | +462,376.5% | hard_stop:36 trail_stop:15 path_end:13 |
+
+Winner by median PnL: Spec A (ties on median with B/C; A vs B delta +0.8-0.9pp mean_pnl, essentially noise at this n).
+
+**Caveat — mean_pnl and p90 are not credible.** +72,530% mean and +462,377% p90 on a memecoin dataset almost certainly reflect the same std_rpc price-derivation heuristic from Finding 1 above producing a handful of garbage micro-price outliers (e.g., a tx where the "largest token delta across all touched ATAs" isn't the actual swap leg, producing a wildly wrong implied price). Median (+2.4%) is far more plausible and is probably the only usable number here, and even that is on n=64 — well under the ≥100 target and drawn from the same 17%-yield, unvalidated extraction path.
+
+### Three Comparison Configs
 
 | Spec | hard_stop | trail_tiers | time_stop | notes |
 |---|---|---|---|---|
@@ -96,4 +123,8 @@ All cells: INSUFFICIENT (n=0, need ≥100 per cell). Will populate after PC2 bac
 | B (early-TP-heavy) | default | [+20%/−20%, +60%/−20%] | 45min | tighter exit |
 | C (wide-stop/small-size) | -50% | default | 120min | size=0.5x |
 
-Results: PENDING PC2 backfill. All three specs ready in replay_exits.py.
+---
+
+## Bottom line for the 2026-08-05 V8 freeze session
+
+**Not ready.** N4(a) is on track (3,257 clean-era outcome_complete rows since Jul28, growing ~450-1,250/day — the 7-day re-run will have a real sample by Aug5). N4(b) is populated and usable as-is. **N4(c) and N4(d) are not** — real usable sample is 67 tokens (need ≥100 per cell, and there are ~8-12 cells), and the numbers that did compute (replay_exits mean/p90) show signs of being corrupted by the backfill's price-derivation heuristic. Two independent bugs need root-causing before this section can support a TP/stop decision: (1) why 83% of std_rpc backfill attempts silently extract 0 rows, and (2) why forward PumpPortal tick collection has been at 0% yield for at least 4 days despite looking healthy in file-open/gzip counts.

@@ -212,7 +212,7 @@ class PeakTracker:
         vsol = float(msg.get("vSolInBondingCurve") or 0)
         vtok = float(msg.get("vTokensInBondingCurve") or 0)
         if vsol > 0 and vtok > 0:
-            return (vsol / vtok) * self._sol_price
+            return (vsol / (vtok / 1e6)) * self._sol_price
         return None
 
     def _open_csv(self, addr: str) -> str:
@@ -379,10 +379,10 @@ class PeakTracker:
                     # Re-subscribe all live tokens after reconnect
                     with self._lock:
                         live_addrs = [a for a, s in self._tracked.items() if not s["done"]]
-                    for addr in live_addrs:
+                    if live_addrs:
                         await ws.send(json.dumps({
-                            "action": "subscribeTokenTrade",
-                            "tokenAddress": addr,
+                            "method": "subscribeTokenTrade",
+                            "keys": live_addrs,
                         }))
 
                     async def _recv():
@@ -457,8 +457,8 @@ class PeakTracker:
                             for addr in new:
                                 try:
                                     await ws.send(json.dumps({
-                                        "action": "subscribeTokenTrade",
-                                        "tokenAddress": addr,
+                                        "method": "subscribeTokenTrade",
+                                        "keys": [addr],
                                     }))
                                     # Open CSV (asyncio thread) then update DB in executor
                                     rel_path = self._open_csv(addr)
