@@ -161,6 +161,13 @@ class FileQueueListener:
                 if not self._path.exists():
                     time.sleep(1)
                     continue
+                cur_size = self._path.stat().st_size
+                if self._last_pos > cur_size:
+                    log.warning(
+                        "FileQueueListener: file shrank (offset=%d > size=%d) — "
+                        "resetting to 0", self._last_pos, cur_size
+                    )
+                    self._last_pos = 0
                 with open(self._path) as f:
                     f.seek(self._last_pos)
                     for line in f:
