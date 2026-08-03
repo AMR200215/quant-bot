@@ -30,7 +30,7 @@ A research bot with two independent modules:
 - **Server**: Hetzner CX23, 2 vCPU / 4GB RAM, Ubuntu 22.04 — IP `178.105.94.113`
 - **Service**: systemd unit `quantbot` (gunicorn, 1 worker, 4 threads, port 8080)
 - **Deploy flow**: edit locally → `git push origin main` → `ssh root@178.105.94.113 'cd /root/quant-bot && git pull --rebase origin main && systemctl restart quantbot'`
-- **Helius RPC**: PAID plan — never suggest upgrading. If rate-limited, diagnose root cause.
+- **Helius RPC**: downgraded to free/normal plan 2026-08-03 (was paid). 429 rate-limits are now expected more often — diagnose root cause first, but an upgrade is a legitimate option to raise if rate-limiting is actually blocking something important.
 - **Primary branch**: `main`
 
 ---
