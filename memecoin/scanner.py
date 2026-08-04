@@ -2453,6 +2453,22 @@ def _on_pp_price_tick(mint: str, price_usd: float) -> None:
         if pos.entry_price <= 0:
             continue
 
+        # Sanity check: reject a single tick that implies an implausible jump
+        # vs the last known-good price before it can poison peak_price via
+        # max() — see memecoin.portfolio._is_price_sane docstring (SPOTTY
+        # incident, 2026-08: a corrupted tick left peak_price=$22 on a token
+        # trading at $0.000015, permanently wrecking PnL%/trailing-stop math).
+        from memecoin.portfolio import _is_price_sane
+        _price_ref = pos.current_price if pos.current_price > 0 else pos.entry_price
+        if not _is_price_sane(_price_ref, price_usd):
+            log.warning(
+                "PRICE SANITY REJECT (PP tick) %s — ref=$%.10f candidate=$%.10f "
+                "(%.0fx) — ignoring tick",
+                pos.token_symbol, _price_ref, price_usd,
+                price_usd / _price_ref if _price_ref else 0,
+            )
+            continue
+
         gain = (price_usd - pos.entry_price) / pos.entry_price
 
         # Update peak price on every PP tick — catches sub-0.5s pumps the poll loop misses
