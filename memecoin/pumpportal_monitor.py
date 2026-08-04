@@ -1028,10 +1028,17 @@ class PumpPortalMonitor:
         v_tokens = msg.get("vTokensInBondingCurve")
         if v_sol and v_tokens and float(v_tokens) > 0:
             return (float(v_sol) / (float(v_tokens) / 1e6)) * sol_price
+        # NOTE: unlike vTokensInBondingCurve (raw base units, needs /1e6),
+        # per-trade tokenAmount/solAmount arrive already in human-readable
+        # (UI) units — dividing by 1e6 here inflated price ~1,000,000x for
+        # every graduated/pump-amm token (no vSol/vTokens on those messages,
+        # so this branch is the only path). Root-caused 2026-08-04 from
+        # corrupted paper-close PnL (e.g. exit_price=$16.73 on a token whose
+        # entry was $0.00001295 — off by ~1e6, matching this exact bug).
         sol_amt   = msg.get("solAmount")
         token_amt = msg.get("tokenAmount")
         if sol_amt and token_amt and float(token_amt) > 0:
-            return (float(sol_amt) / (float(token_amt) / 1e6)) * sol_price
+            return (float(sol_amt) / float(token_amt)) * sol_price
         return 0.0
 
     def _handle_message(self, msg: dict):
