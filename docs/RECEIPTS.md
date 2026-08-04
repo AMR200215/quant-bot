@@ -598,3 +598,44 @@ trader_pk data and report data are available.
 ## Epoch — Capital Decision (2026-07-30)
 
 Epoch deferred 2026-07-30 — capital decision. Prerequisite for any future live: V8 paper week net-positive after synthetic execution costs (N3' line). B7/E1 timing row deferred with it.
+
+---
+
+## Price Sanity Guard (2026-08-04, commit: TBD — this session)
+
+**Incident**: SPOTTY (SOL) — Telegram TP-hit alerts showed
+`Current PnL: +146555675.7%` across all three TP levels, then
+`[PAPER CLOSE] ... Peak: $22.056644` against an entry of `$1.505e-05`
+(~1.47M x). `cc472cd` (same day, earlier) fixed the specific
+`_compute_price()` unit bug (erroneous `/1e6` on already-human-readable
+`tokenAmount`/`solAmount` in the graduated-token fallback branch) that
+produces exactly this class of ~1e6x inflation — but that fix alone did
+not stop recurrence, because **nothing anywhere validated a price before
+letting it become the new `peak_price` via `max()`**. One bad tick from
+any source (that bug, a different future bug, a msg-parse error, an API
+hiccup) sticks forever — `max()` never comes back down.
+
+**Fix**: `memecoin/portfolio.py::_is_price_sane(reference, candidate)` —
+rejects a candidate price more than 100x above/below the last known-good
+reference price (fails open when there's no reference yet). Applied at
+all four sites that ratchet `peak_price`: the three price sources in
+`Portfolio.update_prices()` (PP override, DexScreener fallback, Jupiter
+last-resort) and `scanner.py::_on_pp_price_tick` (the per-tick PP
+callback — the path that actually fired for SPOTTY, since alerts arrived
+faster than the 2s poll). Rejected ticks are logged
+(`PRICE SANITY REJECT ...`) and simply don't move `current_price`/
+`peak_price` that cycle.
+
+100x is deliberately generous: this repo's own trade history (SAM +839%,
+missed-winner max +1118%) never approaches 100x even across a token's
+**entire life**, let alone one tick — so the guard should never block a
+real move, only corruption.
+
+**Status**: code-complete, unit + integration tested
+(`tests/test_half2.py::TestPriceSanity`, including a test that reproduces
+the exact SPOTTY magnitude through `_on_pp_price_tick` and asserts
+`peak_price` does not move and no exit is queued). **Not yet proven
+live** — this session has no VPS access to deploy/observe it against a
+real signal. Needs: deploy, confirm no `PRICE SANITY REJECT` false
+positives on a real large pump, and confirm no further
+`Current PnL: +1...e+07%`-style alerts.
