@@ -216,11 +216,22 @@ class PeakTracker:
             pass
 
     def _price_from_msg(self, msg: dict) -> Optional[float]:
-        """Derive USD price from bonding-curve reserves."""
+        """
+        Derive USD price from bonding-curve reserves, falling back to
+        per-trade amounts for graduated/pump-amm tokens (no vSol/vTokens
+        on those messages — same gap found and fixed in
+        memecoin/pumpportal_monitor.py's _compute_price on 2026-08-04).
+        tokenAmount/solAmount arrive already in human-readable UI units —
+        do NOT apply the /1e6 that vTokensInBondingCurve needs.
+        """
         vsol = float(msg.get("vSolInBondingCurve") or 0)
         vtok = float(msg.get("vTokensInBondingCurve") or 0)
         if vsol > 0 and vtok > 0:
             return (vsol / (vtok / 1e6)) * self._sol_price
+        sol_amt   = msg.get("solAmount")
+        token_amt = msg.get("tokenAmount")
+        if sol_amt and token_amt and float(token_amt) > 0:
+            return (float(sol_amt) / float(token_amt)) * self._sol_price
         return None
 
     def _open_csv(self, addr: str) -> str:
