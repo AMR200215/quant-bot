@@ -354,10 +354,16 @@ def _analyse_predump_flow(all_paths: list[tuple], min_n: int):
                 drop = (start_price - min_in_window) / start_price
                 if drop >= _DUMP_THRESHOLD:
                     dump_starts.append(start_ts)
-                    # Skip ahead to avoid double-counting the same dump
-                    i += max(1, int(_DUMP_WINDOW_S * 1000 / (
-                        (ts_list[-1] - ts_list[0]) / max(len(rows) - 1, 1)
-                    )))
+                    # Skip ahead to avoid double-counting the same dump.
+                    # Guard: sparse/short paths (common in the 2026-08-06
+                    # backfill re-run — some tokens only got 1-3 recovered
+                    # ticks) can have ts_list[-1] == ts_list[0], making the
+                    # avg-tick-interval term 0 -> ZeroDivisionError.
+                    avg_tick_interval_ms = (ts_list[-1] - ts_list[0]) / max(len(rows) - 1, 1)
+                    if avg_tick_interval_ms > 0:
+                        i += max(1, int(_DUMP_WINDOW_S * 1000 / avg_tick_interval_ms))
+                    else:
+                        i += 1
                     continue
             i += 1
 
