@@ -975,9 +975,18 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     # should already be 1-2s of live ticks cached.  Dramatically cuts the rate
     # of preflight_no_price blocks (target: <3% of live-eligible signals).
     # The slot is evicted on rejection; kept alive on pass.
-    # LIVE_TRADING-gated: this exists purely to speed up the live-buy preflight
-    # (metered subscribeTokenTrade) — pointless spend while paused (2026-08-03).
-    if chain == "solana" and LIVE_TRADING:
+    # NOT LIVE_TRADING-gated (reverted 2026-08-06): the live-buy-preflight
+    # speedup is moot while paused, but this same subscription is also what
+    # populates pp_vsol -> progress_at_signal for research (via the PP
+    # snapshot file below, read by research/tracker.py). Gating it behind
+    # LIVE_TRADING silently zeroed progress_at_signal for every row since
+    # 2026-08-03 even after PumpPortal itself was fixed. Safe to leave
+    # unconditional: this call site is scoped to actual TG-alert volume
+    # (~400-1200/day), already covered by SCREENING_DAILY_SUB_BUDGET
+    # regardless of LIVE_TRADING — the runaway-spend bug this gate was
+    # added for lived in a different, still-gated call site
+    # (pumpportal_monitor._handle_message's auto-subscribe-on-create).
+    if chain == "solana":
         try:
             _pp_monitor.subscribe_screening(address)
         except Exception as _sub_err:
