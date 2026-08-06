@@ -130,18 +130,20 @@ def _load_tokens(sb, winners: int, losers: int, win_thresh: float) -> tuple:
     return winner_rows, loser_rows
 
 
-def _fetch_sigs(mint: str, rpc_url: str) -> list:
-    """getSignaturesForAddress → list of sig strings (oldest first, no errors).
-    Retries with exponential backoff on 429 or empty/non-JSON body."""
+def _fetch_sigs_page(mint: str, rpc_url: str, before: str | None) -> list | None:
+    """One getSignaturesForAddress page (DESC/newest-first). None = gave up after retries."""
     backoff = 2.0
     for attempt in range(_MAX_RETRIES):
         try:
+            params = {"limit": _MAX_SIGS, "commitment": "confirmed"}
+            if before:
+                params["before"] = before
             r = requests.post(
                 rpc_url,
                 json={
                     "jsonrpc": "2.0", "id": 1,
                     "method":  "getSignaturesForAddress",
-                    "params":  [mint, {"limit": _MAX_SIGS, "commitment": "confirmed"}],
+                    "params":  [mint, params],
                 },
                 timeout=20,
             )
@@ -151,7 +153,7 @@ def _fetch_sigs(mint: str, rpc_url: str) -> list:
                             mint[:8], wait, attempt + 1, _MAX_RETRIES)
                 time.sleep(wait)
                 continue
-            result = r.json().get("result") or []
+            return r.json().get("result") or []
         except Exception as e:
             if attempt < _MAX_RETRIES - 1:
                 wait = backoff * (2 ** attempt)
@@ -161,12 +163,59 @@ def _fetch_sigs(mint: str, rpc_url: str) -> list:
                 continue
             log.warning("getSignaturesForAddress failed for %s after %d attempts: %s",
                         mint[:8], _MAX_RETRIES, e)
+            return None
+    log.warning("getSignaturesForAddress gave up for %s after %d attempts", mint[:8], _MAX_RETRIES)
+    return None
+
+
+def _fetch_sigs(mint: str, rpc_url: str, alert_ts: float | None = None,
+                 window_s: int = 900, max_pages: int = 8) -> list:
+    """
+    getSignaturesForAddress → list of sig strings (oldest first, no errors).
+
+    Without alert_ts: legacy single-page behavior (most-recent _MAX_SIGS).
+
+    With alert_ts: paginates backward via `before` (up to max_pages, i.e.
+    max_pages * _MAX_SIGS signatures) until blockTime <= alert_ts, then
+    filters to [alert_ts, alert_ts + window_s] — the token's actual trading
+    window — instead of blindly taking "whatever's most recent right now".
+    Root-caused 2026-08-06: for tokens with heavy activity after their alert
+    (or backfill runs some time after the alert), the real trading-window
+    signatures can fall entirely outside the most-recent _MAX_SIGS, causing
+    0 extracted rows despite the token having genuine trade history. Bounded
+    by max_pages since some tokens (bot wars, sniper competition) can have
+    10,000+ tx in minutes — not worth chasing those all the way back.
+    """
+    if alert_ts is None:
+        result = _fetch_sigs_page(mint, rpc_url, before=None)
+        if not result:
             return []
-        # result is DESC (newest first); reverse to oldest-first; skip failed txs
         result.reverse()
         return [s["signature"] for s in result if not s.get("err")]
-    log.warning("getSignaturesForAddress gave up for %s after %d attempts", mint[:8], _MAX_RETRIES)
-    return []
+
+    window_start = alert_ts
+    window_end   = alert_ts + window_s
+    all_sigs: list = []
+    before: str | None = None
+    for _page in range(max_pages):
+        result = _fetch_sigs_page(mint, rpc_url, before)
+        if not result:
+            break
+        all_sigs.extend(result)
+        oldest = result[-1]
+        oldest_bt = oldest.get("blockTime")
+        before = oldest["signature"]
+        if oldest_bt and oldest_bt <= window_start:
+            break
+        time.sleep(_STD_TX_SLEEP)
+
+    windowed = [
+        s for s in all_sigs
+        if s.get("blockTime") and window_start <= s["blockTime"] <= window_end
+        and not s.get("err")
+    ]
+    windowed.reverse()   # oldest-first, matching existing contract
+    return [s["signature"] for s in windowed]
 
 
 def _parse_txs(sigs: list, parse_url: str) -> list:
@@ -457,8 +506,19 @@ def _process_token(tok: dict, rpc_url: str, parse_url: str, sol_price: float,
 
     log.info("  %s (%s) peak=%s [%s]", sym, mint[:8], peak_s, parse_mode)
 
+    alert_ts = None
+    _alert_raw = tok.get("alert_time")
+    if _alert_raw:
+        try:
+            alert_ts = datetime.fromisoformat(str(_alert_raw).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            alert_ts = None
+
     # Fetch signatures (1 credit in helius mode; free in std_rpc mode)
-    sigs = _fetch_sigs(mint, rpc_url if parse_mode == "helius" else std_rpc_url)
+    # Time-targeted at alert_ts when known — see _fetch_sigs docstring for why
+    # (blind "most recent" misses the real trading window for many tokens).
+    sigs = _fetch_sigs(mint, rpc_url if parse_mode == "helius" else std_rpc_url,
+                       alert_ts=alert_ts)
     if parse_mode == "helius":
         credit_budget[0] -= 1
     time.sleep(_RATE_SLEEP)
