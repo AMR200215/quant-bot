@@ -507,6 +507,61 @@ class TestCurveOracle(unittest.TestCase):
         self.assertIsNone(r["price_usd"])
         self.assertNotEqual(r["venue_state"], "GRADUATED")
 
+    # ── PROGRESS-FIX PF3: state-only batch (no SOL/USD dependency) ──────────
+
+    def test_curve_state_batch_works_without_sol_usd(self):
+        """get_curve_state_batch must succeed with no sol_price_usd argument
+        at all — progress capture needs vsol_ui even when the SOL/USD cache
+        is stale/unavailable, unlike get_curve_prices_batch."""
+        raw = _build_curve_account_bytes(
+            virtual_token_reserves=500_000_000_000_000,
+            virtual_sol_reserves=35_000_000_000,   # 35 SOL
+            complete=False,
+        )
+        rpc_resp = _rpc_ok_response([_account_entry(raw)])
+
+        with patch("research.curve_oracle.derive_curve_address", return_value="FakeCurveAddrState"):
+            with patch("requests.post", self._mock_post(rpc_resp)):
+                results = curve_oracle.get_curve_state_batch(
+                    mints=[MINT_A], helius_key="test-key",
+                )
+
+        r = results[MINT_A]
+        self.assertEqual(r["venue_state"], "CURVE_ACTIVE")
+        self.assertIsNone(r["price_usd"])          # never computed in this path
+        self.assertAlmostEqual(r["vsol_ui"], 35.0, places=3)
+        self.assertFalse(r["complete"])
+        self.assertIsNone(r["failure_reason"])
+
+    def test_curve_state_batch_graduated_still_returns_vsol(self):
+        """complete=True in state-only mode: still GRADUATED, vsol_ui present
+        (unlike the price path, which drops vsol_ui to None on graduation)."""
+        raw = _build_curve_account_bytes(
+            virtual_token_reserves=1,
+            virtual_sol_reserves=115_000_000_000,   # 115 SOL, at graduation
+            complete=True,
+        )
+        rpc_resp = _rpc_ok_response([_account_entry(raw)])
+
+        with patch("research.curve_oracle.derive_curve_address", return_value="FakeCurveAddrGradState"):
+            with patch("requests.post", self._mock_post(rpc_resp)):
+                results = curve_oracle.get_curve_state_batch(
+                    mints=[MINT_A], helius_key="test-key",
+                )
+
+        r = results[MINT_A]
+        self.assertEqual(r["venue_state"], "GRADUATED")
+        self.assertTrue(r["complete"])
+        self.assertAlmostEqual(r["vsol_ui"], 115.0, places=3)
+
+    def test_decode_curve_account_state_direct(self):
+        """_decode_curve_account_state has zero SOL/USD parameters at all —
+        can't accidentally reintroduce the dependency."""
+        import inspect
+        sig = inspect.signature(curve_oracle._decode_curve_account_state)
+        self.assertNotIn("sol_price_usd", sig.parameters)
+        self.assertNotIn("sol_price_age_s", sig.parameters)
+
     # ── 11. get_sol_usd_cached thread-safety smoke test ──────────────────────
 
     def test_get_sol_usd_cached_returns_tuple(self):

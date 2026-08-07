@@ -47,6 +47,12 @@ class Signal:
     momentum_score: float = 0.0
     composite_score: float = 0.0
     notes: str = ""
+    # PROGRESS-FIX PF5/PF6: deterministic event_id computed at alert-received
+    # time (scanner._on_telegram_signal), threaded through so research and
+    # v8_paper consume the exact same ProgressCapture result for the same
+    # real-world alert. Empty for signal paths that don't originate from a
+    # single discrete alert event (e.g. copy_trade).
+    event_id: str = ""
     # --- enriched fields for model training ---
     price_change_5m: float = 0.0
     price_change_1h: float = 0.0
@@ -323,6 +329,7 @@ def make_social_alert_signal(
     screen: dict,
     source: str = "telegram",
     channel: str = "",
+    event_id: str = "",
 ) -> Optional[Signal]:
     """
     Signal fired when a token address is found in a Telegram/social channel.
@@ -363,6 +370,7 @@ def make_social_alert_signal(
         momentum_score=round(momentum, 3),
         composite_score=composite,
         notes=f"social:{source} channel={channel} age={age:.0f}min",
+        event_id=event_id,
     )
     sig.paper_entry_price = screen["price_usd"]
     sig.paper_entry_time  = sig.timestamp

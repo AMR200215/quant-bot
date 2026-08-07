@@ -127,6 +127,11 @@ class ScreeningState:
     first_seen_price: float         = 0.0
     latest_price:     float         = 0.0
     latest_vsol:      float         = 0.0   # vSolInBondingCurve at most recent trade
+    latest_vsol_ts:   float         = 0.0   # PROGRESS-FIX PF3-A: set ONLY when a real
+                                             # PumpPortal message carrying vSolInBondingCurve
+                                             # is processed — 0.0 means "never observed",
+                                             # distinguishes a freshly-created (never updated)
+                                             # ScreeningState from a genuinely warm one
     unique_buyers:    set           = field(default_factory=set)
     buy_count:        int           = 0
     sell_count:       int           = 0
@@ -243,6 +248,15 @@ class PumpPortalMonitor:
         # Signature: fn(mint: str, price_usd: float) — must not block.
         self._creator_sell_callbacks: list = []
         self._cs_cb_lock             = threading.Lock()
+
+        # ── Screening vsol-update callbacks (PROGRESS-FIX PF3-C) ───────────
+        # Fired when a real PumpPortal message updates a screening mint's
+        # latest_vsol (i.e. state.latest_vsol_ts changes) — NOT on state
+        # creation. Lets progress_capture.py wait on an actual event instead
+        # of polling for its pp_post_alert fallback.
+        # Signature: fn(mint: str, vsol_ui: float) — must not block.
+        self._vsol_update_callbacks: list = []
+        self._vu_cb_lock             = threading.Lock()
 
         # ── Account trade subscriptions (Tier 1/2 whale wallets) ─────────
         # subscribeAccountTrade fires when any tracked wallet buys/sells ANY token.
@@ -433,6 +447,15 @@ class PumpPortalMonitor:
         """
         with self._cb_lock:
             self._price_callbacks.append(fn)
+
+    def add_vsol_update_callback(self, fn) -> None:
+        """
+        PROGRESS-FIX PF3-C: register a callback fired when a screening mint's
+        latest_vsol is updated by a real PumpPortal message.
+        Signature: fn(mint: str, vsol_ui: float) → None — must not block.
+        """
+        with self._vu_cb_lock:
+            self._vsol_update_callbacks.append(fn)
 
     def add_creator_sell_callback(self, fn) -> None:
         """
@@ -1175,9 +1198,9 @@ class PumpPortalMonitor:
         with self._screening_lock:
             sc_state = self._screening.get(mint)
         if sc_state is not None:
-            self._update_screening(sc_state, msg, price_usd)
+            self._update_screening(sc_state, msg, price_usd, mint)
 
-    def _update_screening(self, state: ScreeningState, msg: dict, price_usd: float):
+    def _update_screening(self, state: ScreeningState, msg: dict, price_usd: float, mint: str = ""):
         tx_type = msg.get("txType", "")
         trader  = msg.get("traderPublicKey", "")
         sol_amt = float(msg.get("solAmount") or 0)
@@ -1216,6 +1239,15 @@ class PumpPortalMonitor:
         vsol = msg.get("vSolInBondingCurve")
         if vsol is not None:
             state.latest_vsol = float(vsol)
+            state.latest_vsol_ts = now   # PROGRESS-FIX PF3-A: real observation, not creation
+            if mint:
+                with self._vu_cb_lock:
+                    _vu_cbs = list(self._vsol_update_callbacks)
+                for _vucb in _vu_cbs:
+                    try:
+                        _vucb(mint, state.latest_vsol)
+                    except Exception as _vue:
+                        log.debug("vsol_update callback error: %s", _vue)
 
         state.lru_ts = now
 

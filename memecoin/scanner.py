@@ -944,6 +944,22 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     _alert_received_ts = _t0
     _health.bump_tg_message()
 
+    # PROGRESS-FIX PF5: deterministic event_id, computed once, threaded through
+    # signal_queue.jsonl (-> research's TGAlert/research_tokens.event_id) and
+    # progress_capture (-> progress_snapshots.jsonl). Same alert => same ID
+    # everywhere; a realert of the same mint gets its own distinct event_id
+    # since alert_ts differs, avoiding the old mint+120s-window mismatch risk.
+    import hashlib as _hashlib
+    _event_id = _hashlib.sha256(f"{chain}:{address}:{_t0}".encode()).hexdigest()[:16]
+
+    # PROGRESS-FIX PF3: start progress capture at alert time, off the
+    # critical path — never blocks this function.
+    try:
+        from memecoin.progress_capture import capture_progress_async as _cap_progress
+        _cap_progress(_event_id, address, _t0, chain)
+    except Exception as _cap_err:
+        log.debug("progress_capture start failed %s: %s", address[:8], _cap_err)
+
     # ── Telemetry: start entry trace ──
     # P4' ACCEPTANCE CRITERIA:
     # "one real end-to-end jsonl trace from VPS (alert_received → trace_finished)"
@@ -1045,6 +1061,7 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                     "alert_time":    _time.strftime("%Y-%m-%dT%H:%M:%S.000Z", _time.gmtime(_t0)),
                     "raw_text":      (message_text or "")[:500],
                     "ts":            _t0,
+                    "event_id":      _event_id,   # PROGRESS-FIX PF5
                 })
                 with open(_queue_path, "a") as _qf:
                     _qf.write(_queue_entry + "\n")
@@ -1271,7 +1288,8 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                  address[:8], bs, v5m, vh1, pc5m, _screen_latency)
 
         channel = "pumpdotfunalert"
-        sig = make_social_alert_signal(chain, address, screen, source="telegram", channel=channel)
+        sig = make_social_alert_signal(chain, address, screen, source="telegram", channel=channel,
+                                       event_id=_event_id)   # PROGRESS-FIX PF6
         # Attach timing for entry latency instrumentation (Step 2)
         sig._t_tg_receive  = _t0
         sig._t_screen_end  = _t_screen_end

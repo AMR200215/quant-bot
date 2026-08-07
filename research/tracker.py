@@ -40,6 +40,58 @@ log = logging.getLogger(__name__)
 # Contains PP price/vsol/buy-pressure at exact alert time — bypasses DexScreener lag.
 _PP_SNAPSHOTS_PATH = Path(__file__).parent / "data" / "pp_snapshots.jsonl"
 
+# PROGRESS-FIX PF5: event-keyed progress store, written by
+# memecoin/progress_capture.py. Replaces mint+-120s matching (_read_pp_snapshot,
+# still used for the OTHER pp_* enrichment fields — price/buy-pressure — which
+# this migration doesn't touch) for progress_at_signal specifically.
+_PROGRESS_SNAPSHOTS_PATH = Path(__file__).parent / "data" / "progress_snapshots.jsonl"
+_PROGRESS_WAIT_TOTAL_S   = 1.5   # bounded — this is the research process, never blocks trading
+_PROGRESS_WAIT_STEP_S    = 0.3
+
+
+def _read_progress_snapshot(event_id: str, max_wait_s: float = _PROGRESS_WAIT_TOTAL_S) -> dict:
+    """
+    Return the ProgressCapture result for this exact event_id, or {} if it
+    never arrives within max_wait_s. Capture runs asynchronously on the
+    live-bot side, so a short bounded wait/retry here (safe — this is the
+    research process, not the trading path) catches the common case where
+    this INSERT runs slightly before capture has finished (curve_account
+    capture typically resolves in well under a second).
+
+    Exact event_id match only — no mint+time-window guessing (PF5).
+    """
+    if not event_id:
+        return {}
+    deadline = time.time() + max_wait_s
+    while True:
+        result = _scan_progress_file(event_id)
+        if result or time.time() >= deadline:
+            return result
+        time.sleep(_PROGRESS_WAIT_STEP_S)
+
+
+def _scan_progress_file(event_id: str) -> dict:
+    if not _PROGRESS_SNAPSHOTS_PATH.exists():
+        return {}
+    try:
+        best: dict = {}
+        with open(_PROGRESS_SNAPSHOTS_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                    if e.get("event_id") == event_id:
+                        best = e   # take last match — a later re-write for the
+                                   # same event_id (shouldn't normally happen,
+                                   # capture writes once) wins
+                except Exception:
+                    pass
+        return best
+    except Exception:
+        return {}
+
 
 def _read_pp_snapshot(token_address: str, alert_ts: float) -> dict:
     """
@@ -118,8 +170,14 @@ def _enrich_with_pp(snap: dict, pp: dict) -> dict:
     if pp_sol > 0 and sol_px > 0 and not snap.get("volume_5m"):
         snap["volume_5m"] = round(pp_sol * sol_px, 2)
 
-    # Mark that PP data was used — helps analysis distinguish data sources
-    snap["pp_snapshot_ok"] = True
+    # PROGRESS-FIX PF7: pp_snapshot_ok must mean a real PumpPortal observation
+    # existed, not merely that a (possibly all-default) snapshot dict was
+    # written. Previously set unconditionally here, so a freshly-created
+    # ScreeningState read back before any real tick arrived (the exact PF1
+    # race) still reported pp_snapshot_ok=True with every pp_* value at its
+    # zero default — a silently false "yes, PP data was used".
+    snap["pp_snapshot_ok"] = (pp_price > 0 or pp_vsol > 0 or pp_buys > 0
+                               or pp_sells > 0 or pp_sol > 0)
 
     return snap
 
@@ -315,10 +373,34 @@ class Tracker:
             _pp_extras["pp_snapshot_ok"] = True
         pp_vsol = snap.get("pp_vsol")
         if pp_vsol:
+            # Retained for compatibility (PF8) — this is the OLD pp_snapshot-
+            # derived value, NOT authoritative for progress_at_signal anymore
+            # (see PROGRESS-FIX block below). Kept purely as a debugging/
+            # cross-check field; do not derive progress_at_signal from it —
+            # that path had the exact subscribe-then-immediately-read race
+            # (PF1) that motivated this whole fix.
             _pp_extras["pp_vsol"] = pp_vsol
-            # Bonding curve completion (PROGRESS-FIX PF9: canonical GRAD_SOL_UI,
-            # no more locally hardcoded 115.0)
-            _pp_extras["progress_at_signal"] = round(pp_vsol / GRAD_SOL_UI, 4)
+
+        # PROGRESS-FIX PF2/PF5/PF6/PF8: canonical, source-provenanced
+        # progress capture, keyed by event_id — the SAME value memecoin/
+        # v8_paper.py uses for the same event (PF6). NEVER coerces a
+        # missing/failed measurement to 0 — stays NULL with an explicit
+        # progress_status reason (PF2, PF11 depend on this distinction).
+        _progress = _read_progress_snapshot(alert.event_id) if alert.event_id else {}
+        if _progress:
+            _pp_extras["vsol_at_signal"]          = _progress.get("vsol_at_signal")
+            _pp_extras["progress_at_signal"]       = _progress.get("progress_at_signal")
+            _pp_extras["progress_source"]          = _progress.get("progress_source")
+            _obs_at = _progress.get("progress_observed_at")
+            if _obs_at:
+                _pp_extras["progress_observed_at"] = datetime.fromtimestamp(_obs_at, tz=timezone.utc).isoformat()
+            _pp_extras["progress_capture_lag_ms"]  = _progress.get("progress_capture_lag_ms")
+            _pp_extras["progress_status"]          = _progress.get("progress_status")
+            _pp_extras["progress_data_ok"]         = _progress.get("progress_status") == "ok"
+            _pp_extras["progress_schema_version"]  = 1
+        else:
+            _pp_extras["progress_status"]  = "capture_missing"   # never arrived in time
+            _pp_extras["progress_data_ok"] = False
         if snap.get("top10_holder_pct") is not None:
             _pp_extras["top10_holder_pct"] = snap["top10_holder_pct"]
         if snap.get("creator_holds_pct") is not None:

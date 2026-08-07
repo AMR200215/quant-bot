@@ -93,29 +93,52 @@ def _paths():
 # Entry gate
 # ---------------------------------------------------------------------------
 
-def compute_progress_at_signal(chain: str, token_address: str) -> float | None:
-    """Live progress_at_signal = pp_vsol / 115. None if PP has no cached state
-    for this token yet (fail-closed: caller treats None as gate-fail)."""
+# PROGRESS-FIX PF6: how long passes_v8_gate will wait for an in-flight
+# capture before failing closed. By the time this runs (after screen_token's
+# ~1-2s), capture usually already has a head start from _t0 — this is just a
+# short final grace period, not the primary wait mechanism (that's PF3's
+# async capture, started at alert time). Paper-only book, not live capital.
+_GATE_CAPTURE_WAIT_S = 0.5
+
+
+def compute_progress_at_signal(chain: str, token_address: str, event_id: str = "") -> float | None:
+    """
+    PROGRESS-FIX PF6: no longer an independent measurement — reads the SAME
+    canonical ProgressCapture result (memecoin/progress_capture.py) that
+    research/tracker.py consumes for this event_id, so Research and V8
+    cannot disagree about the same signal (the old version called
+    get_screening_state() live, on its own timing, independently of what
+    research had already captured/stored).
+
+    Returns None (fail-closed) on any failure — including the old race
+    where a freshly-created ScreeningState with vsol=0 falsely looked like
+    "no progress data" via a different code path; now that's just one of
+    several explicit progress_status failure reasons upstream.
+    """
     if chain != "solana":
         return None
+    if not event_id:
+        # No event_id means this signal didn't originate from
+        # capture_progress_async's alert-time hookup (e.g. a non-Telegram
+        # signal path) — nothing to look up.
+        return None
     try:
-        from memecoin.pumpportal_monitor import monitor as _pp_monitor
-        state = _pp_monitor.get_screening_state(token_address)
-        if state is None:
+        from memecoin.progress_capture import wait_for_capture
+        cap = wait_for_capture(event_id, timeout_s=_GATE_CAPTURE_WAIT_S)
+        if cap is None or cap.progress_status != "ok" or cap.progress_at_signal is None:
             return None
-        vsol = getattr(state, "latest_vsol", 0) or 0
-        if vsol <= 0:
-            return None
-        return round(vsol / _GRAD_SOL, 4)
+        return cap.progress_at_signal
     except Exception as e:
-        log.debug("v8_paper: progress_at_signal lookup failed for %s: %s",
-                  token_address[:8] if token_address else "?", e)
+        log.debug("v8_paper: progress_at_signal lookup failed for %s (event %s): %s",
+                  token_address[:8] if token_address else "?", event_id[:12], e)
         return None
 
 
 def passes_v8_gate(signal) -> tuple[bool, str, float | None]:
     """Returns (passed, reason, progress_at_signal)."""
-    progress = compute_progress_at_signal(signal.chain, signal.token_address)
+    progress = compute_progress_at_signal(
+        signal.chain, signal.token_address, getattr(signal, "event_id", ""),
+    )
     if progress is None:
         return False, "progress_unknown", None
     if progress >= V8_PROGRESS_MAX:

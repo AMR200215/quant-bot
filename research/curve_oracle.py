@@ -201,6 +201,60 @@ def _derive_curve_address_pure(mint: str) -> Optional[str]:
 
 
 # ── Account data parsing ──────────────────────────────────────────────────────
+#
+# PROGRESS-FIX PF3: state parsing (this account's raw reserves/graduation
+# flag) is now separate from USD price calculation, so callers that only
+# need vsol_ui/progress (e.g. progress capture) can succeed even when
+# SOL/USD is stale or unavailable — the old _parse_curve_account rejected
+# everything up front on a stale SOL/USD price, which was correct for its
+# own price_usd-producing callers but wrong to force on state-only callers.
+
+def _decode_curve_account_state(data_b64: str, mint: str) -> dict:
+    """
+    Decode a base64-encoded bonding-curve account into its raw reserves and
+    graduation flag. No SOL/USD dependency at all — succeeds independent of
+    price-feed availability.
+
+    Returns a dict with:
+      virtual_token_reserves (int|None), virtual_sol_reserves (int|None),
+      vsol_ui (float|None), complete (bool|None), failure_reason (str|None)
+    failure_reason is one of: curve_parse_error, curve_layout_unknown, or None.
+    """
+    result = {
+        "virtual_token_reserves": None,
+        "virtual_sol_reserves":   None,
+        "vsol_ui":                None,
+        "complete":               None,
+        "failure_reason":         "curve_parse_error",
+    }
+
+    try:
+        raw = base64.b64decode(data_b64)
+    except Exception as e:
+        log.debug("_decode_curve_account_state: base64 decode failed for %s: %s", mint[:8], e)
+        return result
+
+    if len(raw) < _MIN_ACCOUNT_DATA_LEN:
+        log.debug("_decode_curve_account_state: data too short (%d bytes) for %s", len(raw), mint[:8])
+        result["failure_reason"] = "curve_layout_unknown"
+        return result
+
+    try:
+        virtual_token_reserves, = struct.unpack_from("<Q", raw, _OFFSET_VIRTUAL_TOKEN)
+        virtual_sol_reserves,   = struct.unpack_from("<Q", raw, _OFFSET_VIRTUAL_SOL)
+        complete_byte,          = struct.unpack_from("<?", raw, _OFFSET_COMPLETE)
+    except struct.error as e:
+        log.debug("_decode_curve_account_state: struct unpack failed for %s: %s", mint[:8], e)
+        result["failure_reason"] = "curve_layout_unknown"
+        return result
+
+    result["virtual_token_reserves"] = virtual_token_reserves
+    result["virtual_sol_reserves"]   = virtual_sol_reserves
+    result["vsol_ui"]                = virtual_sol_reserves / 1e9
+    result["complete"]               = bool(complete_byte)
+    result["failure_reason"]         = None
+    return result
+
 
 def _parse_curve_account(
     data_b64: str,
@@ -209,7 +263,7 @@ def _parse_curve_account(
     sol_price_age_s: float,
 ) -> dict:
     """
-    Parse a base64-encoded bonding-curve account.
+    Parse a base64-encoded bonding-curve account into a price_usd result.
     Returns a result dict with venue_state, price_usd, vsol_ui, complete,
     failure_reason populated.
     """
@@ -221,7 +275,9 @@ def _parse_curve_account(
         "failure_reason": "curve_parse_error",
     }
 
-    # Reject stale SOL/USD price
+    # Reject stale SOL/USD price (only relevant here — this function must
+    # produce a USD price. State-only callers use _decode_curve_account_state
+    # directly and don't need SOL/USD at all.)
     if sol_price_age_s > SOL_USD_MAX_CACHE_AGE_S or sol_price_usd <= 0:
         result["venue_state"]    = "PARSE_ERROR"
         result["failure_reason"] = "sol_usd_stale"
@@ -229,31 +285,14 @@ def _parse_curve_account(
                   sol_price_age_s, mint[:8])
         return result
 
-    # Decode base64
-    try:
-        raw = base64.b64decode(data_b64)
-    except Exception as e:
-        log.debug("_parse_curve_account: base64 decode failed for %s: %s", mint[:8], e)
-        result["failure_reason"] = "curve_parse_error"
+    state = _decode_curve_account_state(data_b64, mint)
+    if state["failure_reason"] is not None:
+        result["failure_reason"] = state["failure_reason"]
         return result
 
-    # Validate minimum length
-    if len(raw) < _MIN_ACCOUNT_DATA_LEN:
-        log.debug("_parse_curve_account: data too short (%d bytes) for %s", len(raw), mint[:8])
-        result["failure_reason"] = "curve_layout_unknown"
-        return result
-
-    # Unpack fields
-    try:
-        virtual_token_reserves, = struct.unpack_from("<Q", raw, _OFFSET_VIRTUAL_TOKEN)
-        virtual_sol_reserves,   = struct.unpack_from("<Q", raw, _OFFSET_VIRTUAL_SOL)
-        complete_byte,          = struct.unpack_from("<?", raw, _OFFSET_COMPLETE)
-    except struct.error as e:
-        log.debug("_parse_curve_account: struct unpack failed for %s: %s", mint[:8], e)
-        result["failure_reason"] = "curve_layout_unknown"
-        return result
-
-    complete = bool(complete_byte)
+    virtual_token_reserves = state["virtual_token_reserves"]
+    virtual_sol_reserves   = state["virtual_sol_reserves"]
+    complete                = state["complete"]
     result["complete"] = complete
 
     if complete:
@@ -327,17 +366,44 @@ def get_curve_prices_batch(
     return results
 
 
+def get_curve_state_batch(mints: list, helius_key: str) -> dict:
+    """
+    PROGRESS-FIX PF3: fetch bonding-curve STATE (vsol_ui, complete) for a
+    batch of mints via Helius getMultipleAccounts — no SOL/USD price
+    dependency at all. Used by progress capture, which only needs
+    vsol_ui/GRAD_SOL_UI, not a USD price, and must succeed even when the
+    SOL/USD cache is stale or unavailable.
+
+    Returns the same shape as get_curve_prices_batch but price_usd is
+    always None (never computed in this path).
+    """
+    if not mints:
+        return {}
+
+    results: dict = {}
+    for batch_start in range(0, len(mints), CURVE_BATCH_SIZE):
+        batch_mints = mints[batch_start: batch_start + CURVE_BATCH_SIZE]
+        _fetch_batch(batch_mints, helius_key, None, None, results)
+
+    return results
+
+
 def _fetch_batch(
     mints: list,
     helius_key: str,
-    sol_price_usd: float,
-    sol_price_age_s: float,
+    sol_price_usd: Optional[float],
+    sol_price_age_s: Optional[float],
     results: dict,
 ) -> None:
     """
     Internal: derive curve addresses for `mints`, call getMultipleAccounts,
     parse results, write into `results` dict.
+
+    sol_price_usd/sol_price_age_s = None -> state-only mode (used by
+    get_curve_state_batch): parses via _decode_curve_account_state instead
+    of _parse_curve_account, price_usd always None, no SOL/USD requirement.
     """
+    state_only = sol_price_usd is None
     # Step 1: derive curve addresses for all mints in batch
     mint_to_curve: dict[str, Optional[str]] = {}
     for mint in mints:
@@ -447,8 +513,36 @@ def _fetch_batch(
             }
             continue
 
-        data_b64   = data_field[0]
-        parsed     = _parse_curve_account(data_b64, mint, sol_price_usd, sol_price_age_s)
+        data_b64 = data_field[0]
+
+        if state_only:
+            state = _decode_curve_account_state(data_b64, mint)
+            if state["failure_reason"] is not None:
+                parsed = {
+                    "price_usd":      None,
+                    "vsol_ui":        None,
+                    "complete":       None,
+                    "venue_state":    "PARSE_ERROR",
+                    "failure_reason": state["failure_reason"],
+                }
+            elif state["complete"]:
+                parsed = {
+                    "price_usd":      None,
+                    "vsol_ui":        state["vsol_ui"],
+                    "complete":       True,
+                    "venue_state":    "GRADUATED",
+                    "failure_reason": None,
+                }
+            else:
+                parsed = {
+                    "price_usd":      None,
+                    "vsol_ui":        state["vsol_ui"],
+                    "complete":       False,
+                    "venue_state":    "CURVE_ACTIVE",
+                    "failure_reason": None,
+                }
+        else:
+            parsed = _parse_curve_account(data_b64, mint, sol_price_usd, sol_price_age_s)
 
         results[mint] = {
             **parsed,

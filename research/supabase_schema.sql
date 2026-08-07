@@ -72,6 +72,33 @@ DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN last_realert_time    TIMESTAM
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN smart_money_hit_v1 BOOL; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN smart_money_count_v1 INT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN smart_money_data_ok_v1 BOOL; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- ── PROGRESS-FIX PF8 migration (2026-08-08) ───────────────────────────────────
+-- Source-provenanced progress capture (see memecoin/progress_capture.py).
+-- progress_at_signal/pp_vsol are RETAINED for compatibility (pp_vsol was
+-- previously the only source; progress_at_signal's meaning is now
+-- vsol_at_signal / GRAD_SOL_UI regardless of which source produced it).
+-- pp_snapshot_ok's semantics are also fixed here (PF7): it must only be
+-- TRUE when a genuine PumpPortal observation existed, never for a
+-- freshly-created, never-updated ScreeningState.
+--
+-- NOTE: this repo has no DDL-execution path from application code (no
+-- DATABASE_URL / direct Postgres connection configured, only the
+-- PostgREST-based SUPABASE_URL/SUPABASE_KEY, which cannot run ALTER TABLE).
+-- Apply this block manually via the Supabase SQL editor. Until applied,
+-- research/tracker.py's existing PGRST204-retry-and-strip logic means the
+-- new fields are silently dropped on INSERT rather than failing — degraded
+-- but not broken.
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN vsol_at_signal          FLOAT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_source         TEXT;  EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_observed_at    TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_capture_lag_ms INT;   EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_status         TEXT;  EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_data_ok        BOOL;  EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_schema_version INT;   EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- event_id already exists (RF0 migration, line ~36) — reused as-is for PF5's
+-- event-keyed identity, not redefined here.
+CREATE INDEX IF NOT EXISTS idx_rt_event_id ON research_tokens (event_id);
 -- ── END MIGRATION ─────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS research_tokens (
