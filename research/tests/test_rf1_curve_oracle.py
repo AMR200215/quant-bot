@@ -169,11 +169,16 @@ class TestCurveOracle(unittest.TestCase):
         self.assertIsNotNone(r["vsol_ui"])
         self.assertAlmostEqual(r["vsol_ui"], 35.0, places=3)
 
-        # Price formula check:
-        # price_sol = 35_000_000_000 / 500_000_000_000_000
-        # price_usd = price_sol * 150.0 / 1e9
-        expected_price_sol = 35_000_000_000 / 500_000_000_000_000
-        expected_price_usd = expected_price_sol * 150.0 / 1e9
+        # Price formula check (FIXED 2026-08-07, PROGRESS-FIX PF0 — was
+        # tautologically re-deriving the buggy no-decimal-conversion
+        # formula as "expected"; now the dimensionally correct one):
+        # vsol_sol = 35_000_000_000 / 1e9 = 35 SOL
+        # vtoken_ui = 500_000_000_000_000 / 1e6 = 500,000,000 tokens
+        # price_usd = (vsol_sol / vtoken_ui) * sol_usd
+        vsol_sol  = 35_000_000_000 / 1e9
+        vtoken_ui = 500_000_000_000_000 / 1e6
+        expected_price_usd = (vsol_sol / vtoken_ui) * 150.0
+        self.assertAlmostEqual(expected_price_usd, 1.05e-5, places=10)  # = $0.0000105/token
         self.assertAlmostEqual(r["price_usd"], expected_price_usd, places=15)
         self.assertIsNotNone(r["rpc_latency_ms"])
         self.assertEqual(r["curve_address"], "FakeCurveAddr1")
@@ -388,14 +393,69 @@ class TestCurveOracle(unittest.TestCase):
         self.assertEqual(r["venue_state"], "CURVE_ACTIVE")
         self.assertIsNotNone(r["price_usd"])
 
-        # Formula as implemented: price_usd = (v_sol / v_token) * sol_usd / 1e9
-        expected = (v_sol_lamports / v_token_lamports) * sol_usd / 1e9
-        self.assertAlmostEqual(r["price_usd"], expected, places=20)
+        # FIXED 2026-08-07 (PROGRESS-FIX PF0): this assertion previously
+        # re-derived "expected" using the SAME buggy formula as the
+        # implementation ((v_sol/v_token)*sol_usd/1e9, no token-decimal
+        # conversion) — a tautological check that could never fail
+        # regardless of correctness, even though this test's own docstring
+        # already stated the correct answer ($0.00015). Now asserts against
+        # the actual dimensionally-correct value.
+        vsol_sol = v_sol_lamports / 1e9
+        vtoken_ui = v_token_lamports / 1e6
+        expected = (vsol_sol / vtoken_ui) * sol_usd
+        self.assertAlmostEqual(expected, 0.00015, places=10)   # sanity: matches docstring
+        self.assertAlmostEqual(r["price_usd"], expected, places=15)
 
-        # Sanity: this is price per base unit (1e-6 of a token)
-        # Per human-readable token: expected * 1e6 = 0.00015 USD at $150 SOL
-        price_per_human_token = r["price_usd"] * 1_000_000   # 1e6 base units per token
-        self.assertAlmostEqual(price_per_human_token, 1.5e-4, places=10)
+        # FIXED 2026-08-07 (PROGRESS-FIX PF0): r["price_usd"] is now ALREADY
+        # price-per-human-readable-token (the fix converts virtual_token_reserves
+        # to UI units internally) — no further *1e6 adjustment needed. The old
+        # version of this block assumed price_usd was still "per base unit" and
+        # multiplied by 1e6, which would now be wrong by exactly that factor.
+        self.assertAlmostEqual(r["price_usd"], 1.5e-4, places=10)
+
+    def test_progress_fix_pf0_documented_fixture(self):
+        """
+        PROGRESS-FIX PF0 fixture — exact sample from
+        docs/PUMPFUN_COMPATIBILITY_REPORT.md:
+            virtual_token_reserves = 1,063,494,656,015,142
+            virtual_sol_reserves   = 3,107,652,233
+        At ~$150 SOL/USD (back-derived to land on the report's documented
+        approximate scale), correct price ~= $4.38e-7/token. The pre-fix
+        formula would have given ~$4.38e-13/token (1,000,000x too small).
+        """
+        v_token_lamports = 1_063_494_656_015_142
+        v_sol_lamports   = 3_107_652_233
+        sol_usd          = 150.0
+
+        raw = _build_curve_account_bytes(
+            virtual_token_reserves=v_token_lamports,
+            virtual_sol_reserves=v_sol_lamports,
+            complete=False,
+        )
+        rpc_resp = _rpc_ok_response([_account_entry(raw)])
+
+        with patch("research.curve_oracle.derive_curve_address", return_value="FakeCurveAddrPF0"):
+            with patch("requests.post", self._mock_post(rpc_resp)):
+                results = curve_oracle.get_curve_prices_batch(
+                    mints=[MINT_A],
+                    helius_key="test-key",
+                    sol_price_usd=sol_usd,
+                    sol_price_age_s=5.0,
+                )
+
+        r = results[MINT_A]
+        self.assertEqual(r["venue_state"], "CURVE_ACTIVE")
+        self.assertIsNotNone(r["price_usd"])
+
+        # Correct (fixed) value: on the ~$4.38e-7 scale, not ~$4.38e-13
+        self.assertGreater(r["price_usd"], 1e-8)     # rules out the old 1e6x-too-small bug
+        self.assertLess(r["price_usd"], 1e-5)
+        self.assertAlmostEqual(r["price_usd"], 4.3835e-7, delta=1e-9)
+
+        # Explicitly assert the OLD buggy value is NOT what we get
+        buggy_value = (v_sol_lamports / v_token_lamports) * sol_usd / 1e9
+        self.assertNotAlmostEqual(r["price_usd"], buggy_value, places=10)
+        self.assertAlmostEqual(buggy_value, 4.3835e-13, delta=1e-15)   # confirms old bug's scale
 
     # ── 9. RPC JSON error field → RPC_ERROR, not graduation ──────────────────
 

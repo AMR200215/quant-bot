@@ -39,6 +39,7 @@ from research.config import (
     SCREENER_MAX_VOL_5M,
     SCREENER_MAX_PRICE_CHANGE_5M,
     SCREENER_MAX_RUGCHECK_SCORE,
+    GRAD_SOL_UI,
 )
 
 
@@ -422,15 +423,16 @@ def main():
 
     # ── 7. [W3b] progress_at_signal buckets ──────────────────────────────────
     print(f"\n{sep}")
-    print("7. PROGRESS_AT_SIGNAL BUCKETS  [RC1: clean era only]  (pp_vsol / 115)")
+    print(f"7. PROGRESS_AT_SIGNAL BUCKETS  [RC1: clean era only]  (pp_vsol / {GRAD_SOL_UI:.0f})")
     print(sep)
     # Compute on-the-fly from pp_vsol if progress_at_signal column is missing
+    # (PROGRESS-FIX PF9: canonical GRAD_SOL_UI, no more locally hardcoded 115.0)
     def _progress(r):
         p = r.get("progress_at_signal")
         if p is not None:
             return p
         vsol = r.get("pp_vsol")
-        return round(vsol / 115.0, 4) if vsol else None
+        return round(vsol / GRAD_SOL_UI, 4) if vsol else None
 
     _PROG_EDGES = [(0.50, "<50%"), (0.70, "50-70%"), (0.85, "70-85%"), (1.01, "85%+")]
 

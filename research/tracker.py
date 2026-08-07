@@ -28,7 +28,7 @@ from typing import Callable, Optional
 from research.config import (
     SUPABASE_URL, SUPABASE_KEY,
     CATEGORY_INTERVALS, DEDUP_WINDOW_HOURS,
-    GRAD_VSOL_THRESHOLD,
+    GRAD_VSOL_THRESHOLD, GRAD_SOL_UI,
 )
 from research.snapshot import fetch_snapshot_with_retry
 from research.spool.writer import spool_dropped_field, spool_failed_insert
@@ -316,8 +316,9 @@ class Tracker:
         pp_vsol = snap.get("pp_vsol")
         if pp_vsol:
             _pp_extras["pp_vsol"] = pp_vsol
-            # Bonding curve completion: pp_vsol / 115 SOL (graduation ~= 115 SOL)
-            _pp_extras["progress_at_signal"] = round(pp_vsol / 115.0, 4)
+            # Bonding curve completion (PROGRESS-FIX PF9: canonical GRAD_SOL_UI,
+            # no more locally hardcoded 115.0)
+            _pp_extras["progress_at_signal"] = round(pp_vsol / GRAD_SOL_UI, 4)
         if snap.get("top10_holder_pct") is not None:
             _pp_extras["top10_holder_pct"] = snap["top10_holder_pct"]
         if snap.get("creator_holds_pct") is not None:

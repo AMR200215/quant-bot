@@ -13,10 +13,26 @@ Bonding-curve account layout (base64 decoded, little-endian, pump.fun layout):
   Offset 40: tokenTotalSupply     (u64)
   Offset 48: complete             (bool, 1 byte)
 
-Price formula:
-  price_sol = virtualSolReserves / virtualTokenReserves   (raw lamports)
-  price_usd = price_sol * sol_price_usd / 1e9             (convert lamports→SOL)
-  vsol_ui   = virtualSolReserves / 1e9
+Price formula (FIXED 2026-08-07 — see PROGRESS-FIX PF0):
+  vsol_sol            = virtualSolReserves / 1e9                 (lamports -> SOL)
+  vtoken_ui            = virtualTokenReserves / PUMPFUN_TOKEN_DECIMALS_DIVISOR
+                                                                  (raw base units -> UI tokens)
+  price_sol_per_token  = vsol_sol / vtoken_ui
+  price_usd            = price_sol_per_token * sol_price_usd
+  vsol_ui              = virtualSolReserves / 1e9                (unchanged)
+
+  Previous formula (price_sol = virtualSolReserves / virtualTokenReserves;
+  price_usd = price_sol * sol_price_usd / 1e9) never converted
+  virtualTokenReserves from raw base units to UI units (pump.fun tokens use
+  6 decimals) — it silently underpriced every curve_account-sourced price by
+  exactly 1,000,000x. Fixture check (docs/PUMPFUN_COMPATIBILITY_REPORT.md
+  sample): virtual_token_reserves=1,063,494,656,015,142,
+  virtual_sol_reserves=3,107,652,233 -> old formula ~$4.38e-13/token,
+  correct formula ~$4.38e-7/token. See RECEIPTS.md PROGRESS-FIX PF0 for the
+  historical-row contamination audit; ratio-based metrics computed entirely
+  from curve_account-to-curve_account comparisons are unaffected (the
+  constant scaling factor cancels), but any absolute price/mcap value, or a
+  ratio mixing curve_account with another price source, is not.
 
 Never treat RPC errors or parse failures as graduation.
 complete=True in the curve data is the ONLY valid graduation signal here.
@@ -252,10 +268,14 @@ def _parse_curve_account(
         result["failure_reason"] = "curve_parse_error"
         return result
 
-    # Price calculation
-    price_sol = virtual_sol_reserves / virtual_token_reserves   # lamports ratio
-    price_usd = price_sol * sol_price_usd / 1e9                  # convert to USD
-    vsol_ui   = virtual_sol_reserves / 1e9                       # SOL (human-readable)
+    # Price calculation (fixed 2026-08-07, PROGRESS-FIX PF0 — see module
+    # docstring; previously missing the token-decimal conversion, silently
+    # underpricing every curve_account read by exactly 1,000,000x)
+    vsol_sol            = virtual_sol_reserves / 1e9
+    vtoken_ui            = virtual_token_reserves / (10 ** PUMP_DECIMALS)
+    price_sol_per_token  = vsol_sol / vtoken_ui
+    price_usd            = price_sol_per_token * sol_price_usd
+    vsol_ui              = virtual_sol_reserves / 1e9             # unchanged
 
     result["price_usd"]      = price_usd
     result["vsol_ui"]        = vsol_ui

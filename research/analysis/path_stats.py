@@ -45,6 +45,7 @@ from pathlib import Path
 from statistics import mean, median, quantiles, stdev
 
 from research.path_schema import load_path_file
+from research.config import GRAD_SOL_UI
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -55,7 +56,10 @@ logging.basicConfig(
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-_GRAD_SOL           = 115.0          # bonding curve graduation threshold
+# PROGRESS-FIX PF9: canonical GRAD_SOL_UI from research.config, no more locally
+# hardcoded 115.0 (kept as _GRAD_SOL alias so existing call sites below don't
+# need renaming).
+_GRAD_SOL           = GRAD_SOL_UI    # bonding curve graduation threshold
 _GRAD_85_VSOL       = _GRAD_SOL * 0.85   # ~97.75 SOL
 _GRAD_70_VSOL       = _GRAD_SOL * 0.70   # ~80.5 SOL
 

@@ -42,6 +42,8 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from memecoin.config import GRAD_SOL_UI as _GRAD_SOL   # PROGRESS-FIX PF9: canonical, was a locally hardcoded 115.0 manually kept "in sync" with path_stats.py's own copy
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -50,7 +52,6 @@ log = logging.getLogger(__name__)
 
 V8_CONFIG_TAG      = "v8_candidate_2026-07-30"
 V8_PROGRESS_MAX    = 0.70          # gate: progress_at_signal must be below this
-_GRAD_SOL          = 115.0         # bonding curve graduation threshold (matches path_stats.py)
 _MONITOR_INTERVAL_S = 5.0
 
 # PLACEHOLDER — see module docstring. Mirrors v7 social_alert prod config
