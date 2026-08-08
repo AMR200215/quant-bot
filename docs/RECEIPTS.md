@@ -595,6 +595,155 @@ trader_pk data and report data are available.
 
 ---
 
+## PROGRESS-FIX — event-time, source-provenanced progress_at_signal (2026-08-08)
+
+Bounded measurement-integrity batch (spec sections PF0-PF13). Scope
+boundary held throughout: **no changes to V7 trading filters, V8's
+`progress_at_signal < 0.70` candidate threshold, entry/exit logic, sizing,
+execution routing, live-trading enablement, or PumpPortal spend limits.**
+`LIVE_TRADING` remains `false` on the VPS, unchanged by this batch.
+
+### Status by section
+
+| Section | What | Status |
+|---|---|---|
+| PF0 | curve_oracle.py unit bug (price formula) fixed; historical audit | Done — 0 affected rows (see below) |
+| PF2 | Canonical `ProgressCapture` dataclass, NULL never coerced to 0 | Done |
+| PF3 | Capture at alert time, off critical path, source order pp_warm→curve_account→pp_post_alert→failure | Done |
+| PF4 | Independent of screening-state lifetime (survives scanner eviction) | Done |
+| PF5 | Event-keyed durable store (not mint+time-window) | Done |
+| PF6 | Research and V8 share one canonical value | Done |
+| PF7 | `pp_snapshot_ok` truthfulness fix | Done |
+| PF8 | Schema migration | Done — applied manually via Supabase SQL editor 2026-08-08 ~22:15 UTC |
+| PF9 | One canonical `GRAD_SOL_UI` constant | Done |
+| PF10 | Bounded historical recovery from path ticks | Done — 41/31,014 rows recovered (see below) |
+| PF11 | `path_stats.py` coverage reporting, no silent None→0 | Done |
+| PF12 | Deploy + monitor ≥100 fresh alerts | **Partial** — deployed and verified working end-to-end; live alert volume has not yet produced 100 fresh eligible alerts since the last fix (see below) |
+| PF13 | 15 regression tests | Done — 55 tests passing across 5 files |
+
+### Answers to the spec's questions
+
+- **Is `progress_at_signal` now measured independently of a future PP trade?** Yes — primary source is a direct on-chain bonding-curve account read (`curve_account`), independent of PumpPortal entirely; `pp_warm`/`pp_post_alert` are the fallback sources, both bounded and event-driven, not polling for a future trade indefinitely.
+- **Is it tied to original alert time?** Yes — `alert_ts` is captured once in `memecoin/scanner.py` at the top of `_on_telegram_signal`, before any other work, and threaded through as the anchor for lag calculation.
+- **Is capture lag recorded?** Yes — `progress_capture_lag_ms` on every result, success or failure.
+- **Can scanner rejection/eviction destroy the measurement?** No — verified by test (`test_curve_account_independent_of_screening`): the capture waiter registry lives in `progress_capture.py`, not in `pumpportal_monitor._screening`.
+- **Do Research and V8 use exactly the same value?** Yes, for a given event_id — both read the one `ProgressCapture` result `progress_capture.py` produces (Research via the durable file, V8 via the in-process cache). Verified by test (`test_research_and_v8_read_identical_progress_for_same_event`).
+- **Can missing measurement become progress=0?** No — `ProgressCapture.failure()` always sets `progress_at_signal=None`; verified at the dataclass level, the tracker-insert level, and the `path_stats.py` bucket-analysis level (the two silent `if progress is None: progress = 0.0` lines found in `_analyse_shakeout`/`_analyse_decay` were dead code given callers already pre-filter, but fixed anyway).
+- **Is `pp_snapshot_ok` truthful?** Yes — now requires at least one real non-zero PP observation, not merely that a snapshot dict exists.
+- **Is `GRAD_SOL_UI` defined canonically once per service?** Yes — `research.config.GRAD_SOL_UI` and `memecoin.config.GRAD_SOL_UI`, both currently `115.0`, guarded by `test_grad_sol_ui_canonical.py` against a third copy appearing.
+- **Was the curve-oracle token-decimal price bug fixed?** Yes — `virtual_token_reserves` is now correctly divided by `10**6` before the price ratio; fixture-verified against the exact example in the spec (old formula ≈4.38e-13/token, correct ≈4.38e-7/token).
+- **Were existing curve_account outcome rows audited for that bug?** Yes — **0 affected rows**. Queried every `price_source_t*m` provenance column across all 31,014 `research_tokens` rows (26,169 of them `social_alert_bc`): only `dexscreener` (4,748) and `jupiter` (5) appear as sources; no row was ever actually populated via the `CURVE_ACTIVE`/curve_account path in production (curve accounts were almost always already missing/graduated by poll time — `curve_account_missing` was ~98% of curve attempts per the existing RF1 audit above — so DexScreener supplied the surviving prices in practice). The buggy formula existed in code but never wrote a corrupted value to a persisted row.
+- **What percentage of fresh eligible alerts now have trustworthy progress?** Not yet answerable at the required sample size — see PF12 below.
+
+### PF10 — historical recovery result
+
+Pre-registered candidate lag thresholds (chosen before any outcome inspection): 5/15/30/60/120s.
+
+| threshold | recoverable | % of 31,014 candidates |
+|---|---|---|
+| 5s | 34 | 0.1% |
+| 15s | 38 | 0.1% |
+| 30s | 40 | 0.1% |
+| **60s (chosen)** | **41** | **0.1%** |
+| 120s | 52 | 0.2% |
+
+Chosen threshold: 60s, for coverage/cleanliness (loosening to 120s only
+adds 11 more rows at the cost of "at signal" meaning a tick up to 2
+minutes stale). Applied via `research/analysis/backfill_progress_from_paths.py --apply --threshold-s 60`
+on the VPS: 41 rows recovered (`progress_source="pc_path_nearest_tick"`),
+82 skipped for exceeding the threshold, 30,891 left `NULL` — no usable
+historical path data exists for them (30,794 have no path file at all;
+97 have a path file but it's entirely backfill-sourced, vsol=0
+throughout, no genuine live observation to recover from). This is a
+materially small recovery — path-file instrumentation covers a small
+fraction of historically-alerted tokens, and even where a path exists,
+the nearest live tick is typically ~3 minutes from the original alert
+(p50 lag among matches: 185,943ms) — reported as-is, not chased with a
+looser threshold.
+
+### PF12 — live verification status
+
+Deployed and confirmed working end-to-end in production (VPS commits
+`6fd6109`, `0a6dbe5`, `5e994c7`, `64dbbf3`, `1656bea`), but has not yet
+accumulated the required ≥100 fresh eligible alerts to make a statistically
+honest coverage/success-rate claim. Two real production issues were found
+and fixed during this verification (both outside PROGRESS-FIX's own scope,
+but blocking an honest read of it):
+
+1. **Helius free-plan 429s with no RPC fallback** — `research/curve_oracle.py`'s
+   `_fetch_batch` had a single RPC call, no retry/fallback. Added the same
+   mainnet-beta→Ankr fallback chain `memecoin/executor.py` already uses.
+   Commit `5e994c7`.
+2. **`telegram_monitor.py` address-extraction bug** (pre-existing, unrelated
+   to PROGRESS-FIX, found only because it was making PF12's numbers look
+   broken) — extracted every base58-looking substring in an alert message
+   instead of just the token mint, producing ~92x signal amplification
+   (4,327 signals from 47 real alerts in one measured window). Fixed by
+   anchoring extraction to the alert template (verified 0 failures across
+   823 real historical messages). Commit `ad10a3a`. Full writeup:
+   https://claude.ai/code/artifact/7cdc91c9-7d69-49c0-a16c-2e0d8aeb8bbd
+
+After both fixes, one real capture was observed with `progress_source=curve_account`,
+`progress_status=ok` (`vsol_at_signal=98.41`, `progress_at_signal=0.8557`,
+`progress_capture_lag_ms=999.5`) — proof the primary source path works
+end-to-end against production Helius/RPC. The PF8 schema migration was
+also found to be un-applied at this point (880 `progress_*` field writes
+had been silently dropped by the existing PGRST204-strip resilience since
+initial deploy) — applied manually via the Supabase SQL editor, confirmed
+live.
+
+As of this entry, real Telegram alert volume has been low (~2 confirmed
+alerts in the ~15 minutes following the extraction-bug fix, then a
+multi-hour quiet stretch — confirmed via `signal_queue.jsonl`'s offset
+catching up to file size with only heartbeat lines appended, not a
+pipeline defect). **Monitoring continues; this entry will be updated with
+the full coverage/success-rate/disagreement numbers once ≥100 fresh
+eligible alerts have been observed.**
+
+### Tests
+
+55 tests passing: `test_progress_capture.py` (18), `test_rf1_curve_oracle.py`
+(19), `test_grad_sol_ui_canonical.py` (6), `test_v8_paper_progress_integration.py`
+(5, new), `test_tracker_progress.py` (7, new).
+
+### Also fixed (found while building PF10, not in original scope)
+
+`research/tracker.py` was only persisting `event_id` to `research_tokens`
+for backfilled rows — live rows got `progress_at_signal` captured
+correctly at insert time (the value doesn't depend on the column), but
+then lost their `event_id` afterward, breaking any later cross-reference
+back to the capture that produced it. Now stored unconditionally.
+
+### Modified/added files
+
+`memecoin/progress_capture.py` (new), `memecoin/pumpportal_monitor.py`,
+`memecoin/scanner.py`, `memecoin/signals.py`, `memecoin/telegram_monitor.py`,
+`memecoin/v8_paper.py`, `research/analysis/backfill_progress_from_paths.py`
+(new), `research/analysis/path_stats.py`, `research/analysis/report.py`,
+`research/curve_oracle.py`, `research/supabase_schema.sql`,
+`research/tracker.py`, plus the 5 test files above.
+
+### Deferred / not done
+
+- PF12's full coverage receipt (source breakdown, lag percentiles,
+  Research/V8 disagreement count) — pending real alert volume.
+- Historical paper-trading/research data collected during the
+  telegram-extraction bug's ~92x noise window is not retroactively
+  cleaned — the fix only stops new noise.
+- Whether the live-buy preflight path would hard-block a non-mint address
+  (from the extraction bug, hypothetically, had it coincided with live
+  trading) was not directly verified — inference only.
+
+### Status
+
+**`PROGRESS_FIX_LIVE_PARTIAL`** — code deployed, migration applied,
+mechanism verified correct end-to-end against real production data, but
+the ≥100-fresh-alert live-verification sample size has not yet been met.
+No trading threshold, execution, sizing, or exit behavior was changed by
+this batch; `LIVE_TRADING=false` unchanged throughout.
+
+---
+
 ## Epoch — Capital Decision (2026-07-30)
 
 Epoch deferred 2026-07-30 — capital decision. Prerequisite for any future live: V8 paper week net-positive after synthetic execution costs (N3' line). B7/E1 timing row deferred with it.
