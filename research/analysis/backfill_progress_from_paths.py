@@ -37,6 +37,7 @@ from pathlib import Path
 
 from research.config import SUPABASE_URL, SUPABASE_KEY, RESEARCH_PATHS_DIR, GRAD_SOL_UI
 from research.analysis.path_stats import _load_path as load_path_file
+from research.analysis.path_stats import _discover_paths
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -47,14 +48,6 @@ logging.basicConfig(
 
 # Pre-registered BEFORE looking at any outcome/performance data.
 _CANDIDATE_THRESHOLDS_S = [5, 15, 30, 60, 120]
-
-
-def _discover_path_for_mint(mint: str, research_paths_dir: Path) -> Path | None:
-    for p in research_paths_dir.rglob(f"{mint}.csv"):
-        return p
-    for p in research_paths_dir.rglob(f"{mint}.csv.gz"):
-        return p
-    return None
 
 
 def _nearest_live_tick(rows: list[dict], alert_ts_ms: int):
@@ -96,13 +89,20 @@ def _fetch_recoverable_rows(sb) -> list[dict]:
 
 def _match_candidates(rows: list[dict], research_paths_dir: Path):
     """For each candidate row, find its nearest live tick (if any). Returns
-    (matches, no_path_count, no_live_tick_count)."""
+    (matches, no_path_count, no_live_tick_count).
+
+    Builds the mint->path index once (single directory walk, same helper
+    path_stats.py uses) rather than re-scanning the whole paths directory
+    per row — with 3000+ path files and tens of thousands of candidate
+    rows, a per-row rglob() is O(rows x files) and never finishes.
+    """
+    mint_to_path = _discover_paths(research_paths_dir, live_only=False)
     matches = []
     no_path = 0
     no_live_tick = 0
     for row in rows:
         mint = row["token_address"]
-        path = _discover_path_for_mint(mint, research_paths_dir)
+        path = mint_to_path.get(mint)
         if path is None:
             no_path += 1
             continue
