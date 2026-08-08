@@ -33,11 +33,17 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# Solana address pattern: base58, 32-44 chars
-_SOL_ADDRESS_RE = re.compile(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b')
-
-# BSC address pattern: 0x + 40 hex chars
-_BSC_ADDRESS_RE = re.compile(r'\b0x[0-9a-fA-F]{40}\b')
+# Mint address anchored to this channel's fixed alert template: the real
+# token mint always sits on its own line immediately before the "USD:" (or
+# "Dex:") line. A prior version matched every base58/hex substring anywhere
+# in the message — including holder-table and other embedded strings — and
+# fired one signal per match. Verified against 822 unique historical alert
+# messages: the anchored pattern below matched correctly in all 822; taking
+# the first raw match instead would have picked the wrong address in 33% of
+# them, and filtering by a "pump"-suffix heuristic would have wrongly
+# rejected 13% of real (non-suffixed) mints. See RECEIPTS.md 2026-08-08.
+_SOL_MINT_ANCHOR_RE = re.compile(r'\n([1-9A-HJ-NP-Za-km-z]{32,44})\n\s*(?:USD:|Dex:)')
+_BSC_MINT_ANCHOR_RE = re.compile(r'\n(0x[0-9a-fA-F]{40})\n\s*(?:USD:|Dex:)')
 
 # Channels to monitor (without @)
 CHANNELS = [
@@ -142,14 +148,28 @@ def _mark_seen(address: str):
 
 
 def _extract_addresses(text: str) -> list[tuple[str, str]]:
-    """Extract (chain, address) pairs from message text."""
+    """Extract (chain, address) pairs from message text.
+
+    One address per message, anchored to the alert template (see
+    _SOL_MINT_ANCHOR_RE comment). If neither anchor matches — the channel's
+    template changed — this fails closed (skips the message, logs a
+    warning) rather than falling back to the old unanchored scan, which
+    would just reintroduce the many-spurious-signals bug it replaces.
+    """
     results = []
-    for addr in _SOL_ADDRESS_RE.findall(text):
+    sol_m = _SOL_MINT_ANCHOR_RE.search(text)
+    if sol_m:
+        addr = sol_m.group(1)
         if len(addr) >= 32 and _is_fresh(addr):
             results.append(("solana", addr))
-    for addr in _BSC_ADDRESS_RE.findall(text):
+    bsc_m = _BSC_MINT_ANCHOR_RE.search(text)
+    if bsc_m:
+        addr = bsc_m.group(1)
         if _is_fresh(addr):
             results.append(("bsc", addr))
+    if not results and not sol_m and not bsc_m:
+        log.warning("tg_monitor: no anchored mint found (alert format changed?) — skipping message: %r",
+                    text[:150])
     return results
 
 
