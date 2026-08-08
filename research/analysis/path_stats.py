@@ -141,7 +141,9 @@ def _load_metadata(sb) -> dict[str, dict]:
     while True:
         resp = (
             sb.table("research_tokens")
-            .select("token_address,progress_at_signal,pct_change_peak,path_file,symbol")
+            .select("token_address,progress_at_signal,pct_change_peak,path_file,symbol,"
+                    "progress_source,progress_observed_at,progress_capture_lag_ms,"
+                    "progress_status")
             .eq("outcome_complete", True)
             .eq("chain", "solana")
             .range(offset, offset + batch - 1)
@@ -204,8 +206,12 @@ def _analyse_shakeout(
         for rows, progress in path_meta:
             if not rows:
                 continue
+            # PROGRESS-FIX PF11: never coerce missing progress to 0 — callers
+            # are expected to pre-filter to with_progress, but this function
+            # stays safe (skips, doesn't guess) even if called with raw
+            # path_meta directly.
             if progress is None:
-                progress = 0.0
+                continue
             entry = rows[0]["price_usd"]
             if entry <= 0:
                 continue
@@ -254,8 +260,10 @@ def _analyse_decay(path_meta: list[tuple], min_n: int):
     for rows, progress in path_meta:
         if not rows:
             continue
+        # PROGRESS-FIX PF11: never coerce missing progress to 0 (see note
+        # in _analyse_shakeout above).
         if progress is None:
-            progress = 0.0
+            continue
 
         # Global peak
         peak_row = max(rows, key=lambda r: r["price_usd"])
@@ -737,15 +745,25 @@ def main():
     path_meta_outcome: list[tuple] = []
     loaded = 0
     skipped = 0
+    joined = 0             # PF11: paths that matched a research_tokens row at all
+    source_counts: "Counter" = defaultdict(int)   # PF11: progress_source breakdown
+    capture_lags_ms: list[float] = []             # PF11: for p50/p95
     for mint, path in mint_to_path.items():
         rows = _load_path(path)
         if not rows:
             skipped += 1
             continue
         meta = meta_by_mint.get(mint, {})
+        if meta:
+            joined += 1
         progress = meta.get("progress_at_signal")   # None if missing
         path_meta.append((rows, progress))
         path_meta_outcome.append((rows, meta.get("pct_change_peak")))
+        if progress is not None:
+            source_counts[meta.get("progress_source") or "unknown"] += 1
+            lag = meta.get("progress_capture_lag_ms")
+            if lag is not None:
+                capture_lags_ms.append(lag)
         loaded += 1
 
     log.info("Loaded %d paths (%d skipped/empty)", loaded, skipped)
@@ -756,6 +774,30 @@ def main():
 
     # Filter to paths with progress_at_signal set for bucket analyses
     with_progress = [(r, p) for r, p in path_meta if p is not None]
+    excluded_missing = loaded - len(with_progress)
+    coverage_pct = (len(with_progress) / loaded * 100) if loaded else 0.0
+
+    # PF11: coverage report — printed unconditionally at startup, before any
+    # bucket analysis runs, so a coverage collapse is visible even if nobody
+    # reads past the first screen.
+    _hline("PF11 — progress_at_signal coverage report")
+    print(f"  Total path files discovered:        {len(mint_to_path)}")
+    print(f"  Paths joined to research metadata:   {joined}/{loaded}")
+    print(f"  Paths with progress_at_signal set:   {len(with_progress)}/{loaded}  ({coverage_pct:.1f}%)")
+    print(f"  Excluded (progress missing, NOT 0):  {excluded_missing}")
+    if source_counts:
+        print(f"  Coverage by progress_source:")
+        for src, cnt in sorted(source_counts.items(), key=lambda kv: -kv[1]):
+            print(f"    {src:<24} {cnt:>5}")
+    if capture_lags_ms:
+        lags_sorted = sorted(capture_lags_ms)
+        p50 = lags_sorted[len(lags_sorted) // 2]
+        p95_idx = min(int(len(lags_sorted) * 0.95), len(lags_sorted) - 1)
+        p95 = lags_sorted[p95_idx]
+        print(f"  Capture lag (ms):  p50={p50:.0f}  p95={p95:.0f}  (n={len(capture_lags_ms)})")
+    else:
+        print(f"  Capture lag (ms):  no rows carry progress_capture_lag_ms")
+
     log.info("%d/%d paths have progress_at_signal metadata", len(with_progress), len(path_meta))
 
     _analyse_shakeout(with_progress, args.min_n)

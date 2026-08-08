@@ -252,6 +252,43 @@ class TestSourceC_PPPostAlert(unittest.TestCase):
         self.assertEqual(cap_a.vsol_at_signal, 8.0)
         self.assertEqual(cap_b.vsol_at_signal, 8.0)
 
+    def test_curve_account_independent_of_screening(self):
+        """PF4/PF13#4: an in-flight pp_post_alert waiter must resolve even
+        after the scanner evicts the mint's ScreeningState (rejection path).
+        The waiter lives in pc._waiting, owned by this module — not in
+        pumpportal_monitor._screening, so an eviction there cannot touch it."""
+        fake_screening = {"mintEvict": _FakeScreeningState(latest_vsol=0.0, latest_vsol_ts=0.0)}
+
+        def _evict(mints):
+            for m in mints:
+                fake_screening.pop(m, None)
+
+        with patch("memecoin.progress_capture.PP_POST_ALERT_TIMEOUT_S", 2.0):
+            with patch("memecoin.progress_capture._ensure_callback_registered"):
+                pc._fallback_pp_post_alert("evEvict", "mintEvict", time.time(), "curve_rpc_error")
+                for _ in range(20):
+                    with pc._waiting_lock:
+                        if "mintEvict" in pc._waiting:
+                            break
+                    time.sleep(0.02)
+
+                # Simulate the scanner rejecting this token immediately after
+                # alert: the ScreeningState is gone from pumpportal_monitor's
+                # own registry entirely.
+                _evict({"mintEvict"})
+                self.assertNotIn("mintEvict", fake_screening)
+
+                # The waiter registry (this module's, not pumpportal_monitor's)
+                # must still hold the entry and still resolve correctly.
+                with pc._waiting_lock:
+                    self.assertIn("mintEvict", pc._waiting)
+                pc._on_vsol_update("mintEvict", 42.0)
+                cap = pc.wait_for_capture("evEvict", timeout_s=1.0)
+
+        self.assertIsNotNone(cap)
+        self.assertEqual(cap.progress_status, "ok")
+        self.assertEqual(cap.vsol_at_signal, 42.0)
+
 
 class TestEventIdIsolation(unittest.TestCase):
 

@@ -406,11 +406,18 @@ class Tracker:
         if snap.get("creator_holds_pct") is not None:
             _pp_extras["creator_holds_pct"] = snap["creator_holds_pct"]
 
+        # PROGRESS-FIX PF10 fix (2026-08-08): event_id was previously only
+        # persisted for backfilled rows. Live rows got progress_at_signal
+        # captured fine (alert.event_id is used directly at insert time
+        # above), but the row itself lost the event_id afterward — breaking
+        # any later cross-reference back to progress_snapshots.jsonl or a
+        # Research/V8 same-event comparison. Store it unconditionally.
+        _pp_extras["event_id"] = alert.event_id
+
         # Backfill provenance — stored in extras so missing columns degrade gracefully
         if alert.backfilled:
             _pp_extras["backfilled"]        = True
             _pp_extras["source"]            = alert.source
-            _pp_extras["event_id"]          = alert.event_id
             if alert.backfill_batch_id:
                 _pp_extras["backfill_batch_id"] = alert.backfill_batch_id
         else:
