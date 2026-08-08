@@ -58,6 +58,17 @@ log = logging.getLogger(__name__)
 
 PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 
+# PROGRESS-FIX PF3 follow-up (2026-08-08): Helius is on the free/rate-limited
+# plan (see CLAUDE.md) and getMultipleAccounts was 429ing on nearly every
+# call, silently starving progress_capture's curve_account source (observed
+# in production: 61/62 fresh captures fell through to pp_post_alert/timeout,
+# zero succeeded via curve_account). Same two-tier public fallback pattern
+# memecoin/executor.py already uses for its own RPC calls — read-only
+# getMultipleAccounts, no wallet/signing involved, so reusing public RPCs
+# here carries no execution risk.
+_RPC_FALLBACK_1 = "https://api.mainnet-beta.solana.com"
+_RPC_FALLBACK_2 = "https://rpc.ankr.com/solana"
+
 # Bonding-curve account layout offsets (after 8-byte discriminator)
 _OFFSET_VIRTUAL_TOKEN  =  8
 _OFFSET_VIRTUAL_SOL    = 16
@@ -430,24 +441,38 @@ def _fetch_batch(
     # Step 2: build pubkeys list in same order as ok_mints
     pubkeys = [mint_to_curve[m] for m in ok_mints]
 
-    # Step 3: call getMultipleAccounts
-    rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+    # Step 3: call getMultipleAccounts, with public-RPC fallback on
+    # Helius failure/429 (see _RPC_FALLBACK_1/_2 comment above).
     payload = {
         "jsonrpc": "2.0",
         "id":      1,
         "method":  "getMultipleAccounts",
         "params":  [pubkeys, {"encoding": "base64", "commitment": "confirmed"}],
     }
+    rpc_tiers = [f"https://mainnet.helius-rpc.com/?api-key={helius_key}",
+                 _RPC_FALLBACK_1, _RPC_FALLBACK_2]
 
     t0 = time.time()
-    try:
-        resp = requests.post(rpc_url, json=payload, timeout=10)
-        rpc_latency_ms = (time.time() - t0) * 1000
-        resp.raise_for_status()
-        rpc_data = resp.json()
-    except Exception as e:
-        rpc_latency_ms = (time.time() - t0) * 1000
-        log.warning("curve_oracle: RPC error for batch of %d mints: %s", len(ok_mints), e)
+    rpc_data = None
+    last_err: Optional[Exception] = None
+    for tier_i, rpc_url in enumerate(rpc_tiers):
+        try:
+            resp = requests.post(rpc_url, json=payload, timeout=10)
+            resp.raise_for_status()
+            rpc_data = resp.json()
+            if tier_i > 0:
+                log.info("curve_oracle: recovered via fallback RPC tier %d for batch of %d mints",
+                          tier_i, len(ok_mints))
+            break
+        except Exception as e:
+            last_err = e
+            if tier_i < len(rpc_tiers) - 1:
+                log.debug("curve_oracle: RPC tier %d failed (%s), trying next tier", tier_i, e)
+    rpc_latency_ms = (time.time() - t0) * 1000
+
+    if rpc_data is None:
+        log.warning("curve_oracle: RPC error for batch of %d mints (all tiers): %s",
+                     len(ok_mints), last_err)
         # Mark ALL ok_mints as RPC_ERROR — NOT graduation
         for mint in ok_mints:
             results[mint] = {

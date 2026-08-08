@@ -952,14 +952,6 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     import hashlib as _hashlib
     _event_id = _hashlib.sha256(f"{chain}:{address}:{_t0}".encode()).hexdigest()[:16]
 
-    # PROGRESS-FIX PF3: start progress capture at alert time, off the
-    # critical path — never blocks this function.
-    try:
-        from memecoin.progress_capture import capture_progress_async as _cap_progress
-        _cap_progress(_event_id, address, _t0, chain)
-    except Exception as _cap_err:
-        log.debug("progress_capture start failed %s: %s", address[:8], _cap_err)
-
     # ── Telemetry: start entry trace ──
     # P4' ACCEPTANCE CRITERIA:
     # "one real end-to-end jsonl trace from VPS (alert_received → trace_finished)"
@@ -1007,6 +999,21 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
             _pp_monitor.subscribe_screening(address)
         except Exception as _sub_err:
             log.debug("Early PP subscribe failed %s: %s", address[:8], _sub_err)
+
+    # PROGRESS-FIX PF3: start progress capture at alert time, off the
+    # critical path — never blocks this function. Fired AFTER
+    # subscribe_screening() above (not before): progress_capture's Source A
+    # (pp_warm) and Source C (pp_post_alert) both depend on a live
+    # subscribeTokenTrade subscription for `address` already being in
+    # flight, else Source A always misses (no ScreeningState yet) and Source
+    # C's 2s wait races the subscription's own setup latency. Observed in
+    # production before this reorder: 61/62 fresh captures fell through to
+    # pp_timeout with zero pp_warm/pp_post_alert successes.
+    try:
+        from memecoin.progress_capture import capture_progress_async as _cap_progress
+        _cap_progress(_event_id, address, _t0, chain)
+    except Exception as _cap_err:
+        log.debug("progress_capture start failed %s: %s", address[:8], _cap_err)
 
     # ── Write PP snapshot to shared file for research pipeline ───────────────
     # Research tracker reads this to get entry data (price, vsol, buy pressure)
