@@ -93,6 +93,14 @@ DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN vsol_at_signal          FLOAT
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_source         TEXT;  EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_observed_at    TIMESTAMPTZ; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_capture_lag_ms INT;   EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- PF8 correction (2026-08-08, found during PF12 live verification): the
+-- code always produces a float (ProgressCapture.progress_capture_lag_ms =
+-- round((now - alert_ts) * 1000, 1), e.g. 451.9) -- INT rejects any
+-- fractional value ("invalid input syntax for type integer"), which was
+-- silently stuck via research/spool's PGRST204 handling (that path only
+-- catches unknown-column errors, not type-mismatch errors, so these rows
+-- kept failing with max_retries_exceeded). Idempotent to re-run.
+ALTER TABLE research_tokens ALTER COLUMN progress_capture_lag_ms TYPE FLOAT;
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_status         TEXT;  EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_data_ok        BOOL;  EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_schema_version INT;   EXCEPTION WHEN duplicate_column THEN NULL; END $$;
