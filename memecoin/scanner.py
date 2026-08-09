@@ -513,13 +513,23 @@ def _add_signal(sig: Optional[Signal]):
         except Exception as e:
             log.warning("open_position failed for %s: %s", sig.token_symbol, e)
 
-        # N6: V8 paper twin — same signal funnel, independent book/journal.
-        # Must never affect v7 paper/live; v8_paper.book.maybe_open() self-guards.
-        try:
-            from memecoin.v8_paper import book as _v8_book
-            _v8_book.maybe_open(sig)
-        except Exception as e:
-            log.debug("v8_paper maybe_open failed (non-fatal): %s", e)
+    # N6: V8 paper twin — same signal funnel (every signal that reaches this
+    # function, i.e. survives dedup), independent book/journal. Bug fixed
+    # 2026-08-09: this was previously nested inside the `sig.strength in
+    # (medium, strong)` block above, making V8 see only the subset of
+    # signals v7's OWN strength classifier already liked -- not an
+    # independent sample. V8 has its own gate (passes_v8_gate: progress <
+    # 0.70, no dex_id yet) and must apply it to the full funnel, not a
+    # v7-pre-filtered one, or "V8 vs v7" isn't actually measuring V8's
+    # approach against the real population. Confirmed safe to widen:
+    # maybe_open() self-guards (dedup by token_address, own gate, never
+    # raises) and writes to its own journal only -- zero shared state with
+    # v7's Portfolio or live trading.
+    try:
+        from memecoin.v8_paper import book as _v8_book
+        _v8_book.maybe_open(sig)
+    except Exception as e:
+        log.debug("v8_paper maybe_open failed (non-fatal): %s", e)
     _persist_signals()
     log.info(
         "SIGNAL [%s] %s/%s  strength=%s  composite=%.2f  %s",
