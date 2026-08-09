@@ -683,22 +683,45 @@ but blocking an honest read of it):
    823 real historical messages). Commit `ad10a3a`. Full writeup:
    https://claude.ai/code/artifact/7cdc91c9-7d69-49c0-a16c-2e0d8aeb8bbd
 
-After both fixes, one real capture was observed with `progress_source=curve_account`,
-`progress_status=ok` (`vsol_at_signal=98.41`, `progress_at_signal=0.8557`,
-`progress_capture_lag_ms=999.5`) — proof the primary source path works
-end-to-end against production Helius/RPC. The PF8 schema migration was
-also found to be un-applied at this point (880 `progress_*` field writes
-had been silently dropped by the existing PGRST204-strip resilience since
-initial deploy) — applied manually via the Supabase SQL editor, confirmed
-live.
+Two further issues surfaced once real post-fix alerts started arriving:
 
-As of this entry, real Telegram alert volume has been low (~2 confirmed
-alerts in the ~15 minutes following the extraction-bug fix, then a
-multi-hour quiet stretch — confirmed via `signal_queue.jsonl`'s offset
-catching up to file size with only heartbeat lines appended, not a
-pipeline defect). **Monitoring continues; this entry will be updated with
-the full coverage/success-rate/disagreement numbers once ≥100 fresh
-eligible alerts have been observed.**
+3. **PF8 migration was never actually applied** — 880 `progress_*` field
+   writes had been silently dropped by the existing PGRST204-strip
+   resilience since initial deploy (degraded-but-not-broken as designed,
+   but meant Research's persisted data carried none of this batch's work).
+   Applied manually via the Supabase SQL editor.
+4. **`progress_capture_lag_ms` was declared `INT` in the PF8 migration
+   itself — a bug in this batch, not a pre-existing one.** The code always
+   produces a one-decimal float (e.g. `451.9`); Postgres rejected every
+   real value with `invalid input syntax for type integer`, which the
+   PGRST204-strip path doesn't catch (it only handles unknown-column
+   errors, not type mismatches) — so every fresh post-fix row was failing
+   the full INSERT and landing in `research/spool/failed_inserts.jsonl`
+   instead. Corrected via `ALTER TABLE research_tokens ALTER COLUMN
+   progress_capture_lag_ms TYPE FLOAT` (applied manually, same as #3).
+
+Both spool files (`failed_inserts.jsonl`, `dropped_fields.jsonl`) were
+then replayed via the existing `research/analysis/replay_spool.py` —
+**0 items still failed** after the type fix; all recoverable rows/fields
+were recovered.
+
+**Interim result, 27/100 fresh eligible alerts observed (as of this
+entry, 2026-08-08 ~23:55 UTC, since the extraction-bug fix at 20:03:54
+UTC):**
+
+| metric | value |
+|---|---|
+| fresh eligible alerts | 27 |
+| `progress_source=curve_account`, `progress_status=ok` | 27 (100%) |
+| any failure (`pp_timeout`, `capture_missing`, etc.) | 0 |
+| capture lag | min=361ms, p50=452ms, p90=861ms, max=882ms |
+
+100% success rate so far, entirely via the primary `curve_account` source
+— the RPC fallback chain and the anchored extraction fix are working
+together as intended. Real alert arrival rate is roughly one every
+5-15 minutes; **monitoring continues toward the 100-alert threshold, this
+entry will be updated with the final numbers (including Research/V8
+disagreement count) once met.**
 
 ### Tests
 
