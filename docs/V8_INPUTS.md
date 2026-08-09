@@ -138,3 +138,41 @@ Winner by median PnL: Spec A (ties on median with B/C; A vs B delta +0.8-0.9pp m
 **Not ready, and will not be ready by 2026-08-05 for N4(c)/(d) specifically — this is now a known, bounded gap rather than an open mystery.** N4(a) is on track (3,257 clean-era outcome_complete rows since Jul28, growing ~450-1,250/day — the 7-day re-run will have a real sample by Aug5). N4(b) is populated and usable as-is.
 
 **N4(c) and N4(d) are not ready and cannot become ready before Aug 5 without a funding decision.** Real usable sample is 67 backfill-sourced tokens (need ≥100 per cell, ~8-12 cells), and the replay_exits mean/p90 numbers show signs of corruption from the backfill's price-derivation heuristic (Finding 1). Forward collection — the only path to a clean, large sample — is confirmed blocked on PumpPortal requiring a funded (≥0.02 SOL) API key for `subscribeTokenTrade` (Finding 2, root-caused 2026-08-03; two independent code bugs were also found and fixed along the way — wrong subscribe format `e36a867`, and a stuck alert-queue offset `7ccb518` — but neither was the actual blocker). Options for the Aug 5 session: (a) fund a PumpPortal API key today and accept only ~1-2 days of forward data by Aug5 (thin but real, and compounding daily after); (b) root-cause Finding 1's 17%-yield backfill heuristic to widen the backfill-only sample; (c) go into the Aug5 session with N4(a)/(b) only and treat exit-level/TP-stop calibration (N4c/d) as a follow-up once (a) or (b) lands.
+
+---
+
+## [K5 nightly] 2026-08-09
+
+FREEZE GATE (K5): clean_n=7276 (target 2500, MET)  |  path_stats INSUFFICIENT cells=32 (still blocking)  |  NOT READY
+
+7. PROGRESS_AT_SIGNAL BUCKETS  [RC1: clean era only]  (pp_vsol / 115)
+======================================================================
+  Rows with pp_vsol data: 145 total  (145 clean / 0 preRF1 excluded)
+
+  Bucket         n    med peak   >=+30%   >=+50%   p25/p50/p75 TTP (min)
+  ----------  -----  ----------  -------  -------  ----------------------
+  <50%            6      +305.9%        6        5                   1/3/5
+  50-70%          1      -100.0%        0        0                   -/1/-
+  70-85%         55       +65.1%       35       29                  1/3/10
+  85%+           83       +91.5%       71       59                  1/3/10
+
+======================================================================
+
+8. READINESS VERDICTS (clean-n + days-to-n≥300 for candidate V8 rules)
+======================================================================
+  Collection span:  49 days  (450 alerts/day)
+  Complete rows:    22041  (22041 non-partial)
+
+  ALL complete non-partial                 n=22041  med=   +0.8%  wr=   51%  [READY]
+  social_alert_bc only                     n=18127  med=  +23.2%  wr=   67%  [READY]
+  snapshot_ok=True (DexScreener data)      n= 3388  med=   +0.8%  wr=   51%  [READY]
+  pp_vsol available (BC real-time)         n=    2  med= +100.4%  wr=   50%  [1d to go]
+  progress_at_signal < 0.5 (early BC)      n=    7  med= +305.9%  wr=  100%  [1d to go]
+  progress_at_signal 0.5-0.70              n=    1  med= -100.0%  wr=    0%  [1d to go]
+  progress_at_signal 0.70-0.85             n=   69  med=  +65.1%  wr=   95%  [1d to go]
+  screener_passed (v7 filter)              n=  301  med=   +0.0%  wr=   40%  [READY]
+  smart_money_hit=True                     n=  130  med= +132.7%  wr=   76%  [0d to go]
+  top10_holder_pct available               n= 1104  med=  +16.0%  wr=   62%  [READY]
+  creator_holds_pct available              n=    0  med=     n/a  wr=   n/a  [1d to go]
+
+======================================================================
