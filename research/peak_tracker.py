@@ -45,6 +45,7 @@ from research.config import (
     SUPABASE_KEY,
     TICK_PEAK_WINDOW_S,
     PP_WS_URL,
+    PUMPPORTAL_API_KEY,
     RESEARCH_PATHS_DIR,
     PATH_DEADMAN_MIN_FILES,
     PATH_SUB_SAMPLE_INTERVAL,
@@ -388,7 +389,8 @@ class PeakTracker:
                     ping_timeout=10,
                     close_timeout=5,
                 ) as ws:
-                    log.info("PeakTracker: PP WebSocket connected")
+                    log.info("PeakTracker: PP WebSocket connected (%s)",
+                             "keyed" if PUMPPORTAL_API_KEY else "UNKEYED — subscribeTokenTrade will be rejected")
                     _reconnect_attempts = 0
 
                     # Mark all tracked tokens as ws_connected after reconnect

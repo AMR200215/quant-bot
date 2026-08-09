@@ -918,9 +918,10 @@ class PumpPortalMonitor:
                 gap = conn_start - self._drop_start_ts
                 self._daily_gap_sec += gap
                 self._drop_start_ts  = 0.0
-        log.info("PumpPortal WebSocket connected (conn_start=%s prewarm=%s)",
+        log.info("PumpPortal WebSocket connected (conn_start=%s prewarm=%s %s)",
                  time.strftime("%H:%M:%S", time.gmtime(conn_start)),
-                 prewarm is not None)
+                 prewarm is not None,
+                 "keyed" if _PP_API_KEY else "UNKEYED — subscribeTokenTrade will be rejected")
 
         # Re-subscribe to all mints on fresh connect (prewarm already subscribed)
         if prewarm is None:
