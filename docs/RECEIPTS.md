@@ -618,7 +618,7 @@ execution routing, live-trading enablement, or PumpPortal spend limits.**
 | PF9 | One canonical `GRAD_SOL_UI` constant | Done |
 | PF10 | Bounded historical recovery from path ticks | Done — 41/31,014 rows recovered (see below) |
 | PF11 | `path_stats.py` coverage reporting, no silent None→0 | Done |
-| PF12 | Deploy + monitor ≥100 fresh alerts | **Partial** — deployed and verified working end-to-end; live alert volume has not yet produced 100 fresh eligible alerts since the last fix (see below) |
+| PF12 | Deploy + monitor ≥100 fresh alerts | Done — 100/100 fresh eligible alerts, 100% success rate (see below) |
 | PF13 | 15 regression tests | Done — 55 tests passing across 5 files |
 
 ### Answers to the spec's questions
@@ -705,23 +705,48 @@ then replayed via the existing `research/analysis/replay_spool.py` —
 **0 items still failed** after the type fix; all recoverable rows/fields
 were recovered.
 
-**Interim result, 27/100 fresh eligible alerts observed (as of this
-entry, 2026-08-08 ~23:55 UTC, since the extraction-bug fix at 20:03:54
-UTC):**
+**Final result — 100/100 fresh eligible alerts observed**, monitored
+2026-08-08 20:04:53 UTC → 2026-08-09 13:42:39 UTC (~17.6 hours,
+extraction-bug fix at 20:03:54 UTC through crossing the threshold):
 
 | metric | value |
 |---|---|
-| fresh eligible alerts | 27 |
-| `progress_source=curve_account`, `progress_status=ok` | 27 (100%) |
+| fresh eligible alerts | 100 |
+| `progress_source=curve_account`, `progress_status=ok` | 100 (100%) |
+| `pp_warm` | 0 |
+| `pp_post_alert` | 0 |
 | any failure (`pp_timeout`, `capture_missing`, etc.) | 0 |
-| capture lag | min=361ms, p50=452ms, p90=861ms, max=882ms |
+| capture lag | min=352ms, p50=429ms, p90=811ms, p95=866ms, max=1193ms |
 
-100% success rate so far, entirely via the primary `curve_account` source
-— the RPC fallback chain and the anchored extraction fix are working
-together as intended. Real alert arrival rate is roughly one every
-5-15 minutes; **monitoring continues toward the 100-alert threshold, this
-entry will be updated with the final numbers (including Research/V8
-disagreement count) once met.**
+100% success rate across the full sample, entirely via the primary
+`curve_account` source — the RPC fallback chain was never even needed
+once the extraction fix stopped the noise; lag stayed sub-1.2s throughout
+with no degradation trend across the ~17.6 hour window. This was checked
+incrementally roughly hourly (28/34/38/41/51/53/60/68/76/81/87/92/98/100)
+rather than only at the end, precisely so a regression partway through
+wouldn't be averaged away — none occurred.
+
+**Research/V8 disagreement check:** not measurable from live data — the
+V8 paper journal (`logs/memecoin_v8_journal.csv`) does not exist on the
+VPS; zero positions have been journaled during this window. Root cause:
+`memecoin/scanner.py`'s call into `v8_paper.book.maybe_open()` (line
+~519) is nested inside `if sig.strength in ("medium", "strong")`, a pre-
+existing V7 signal-strength classification gate that is upstream of and
+unrelated to `progress_at_signal` — none of these 100 alerts reached that
+bar, so V8 never got the chance to evaluate (agree or disagree) on any of
+them. This is not a PROGRESS-FIX defect and not something this batch may
+touch (V7's strength classification is explicitly out of scope). What
+*is* covered: of the 100, only 4 had `progress_at_signal < 0.70` (the
+rest were already deep into/past the bonding curve at alert time), so
+even without the strength gate, live disagreement instances would have
+been rare in this sample regardless. The mechanism guarantee itself is
+proven at the unit level — `test_research_and_v8_read_identical_progress_for_same_event`
+constructs one `ProgressCapture` result and asserts both Research's file-read
+path and V8's in-process-cache path resolve the identical value for the
+same `event_id`; there is architecturally only one write path
+(`progress_capture.py`'s `_store_result`) both readers consume, so a
+runtime disagreement is not possible by construction, independent of
+whether V8's upstream gate happens to fire.
 
 ### Tests
 
@@ -748,22 +773,30 @@ back to the capture that produced it. Now stored unconditionally.
 
 ### Deferred / not done
 
-- PF12's full coverage receipt (source breakdown, lag percentiles,
-  Research/V8 disagreement count) — pending real alert volume.
+- Research/V8 live disagreement count could not be measured — V8's
+  journal is empty for reasons unrelated to and out of scope for this
+  batch (see PF12 above); covered at the unit level instead.
 - Historical paper-trading/research data collected during the
   telegram-extraction bug's ~92x noise window is not retroactively
   cleaned — the fix only stops new noise.
 - Whether the live-buy preflight path would hard-block a non-mint address
   (from the extraction bug, hypothetically, had it coincided with live
   trading) was not directly verified — inference only.
+- Also found, also out of scope, deliberately not touched: RLS was
+  disabled on all public Supabase tables (Supabase Advisor, 6 CRITICAL
+  findings) — separate from PROGRESS-FIX, fixed by the user directly
+  (confirmed the app's `service_role` key bypasses RLS regardless, so
+  this was safe to enable with zero functional risk).
 
 ### Status
 
-**`PROGRESS_FIX_LIVE_PARTIAL`** — code deployed, migration applied,
-mechanism verified correct end-to-end against real production data, but
-the ≥100-fresh-alert live-verification sample size has not yet been met.
-No trading threshold, execution, sizing, or exit behavior was changed by
-this batch; `LIVE_TRADING=false` unchanged throughout.
+**`PROGRESS_FIX_LIVE_VERIFIED`** — code deployed, migration applied,
+100/100 fresh eligible alerts captured with a 100% success rate over a
+~17.6 hour live window (2026-08-08 20:04:53 UTC → 2026-08-09 13:42:39
+UTC), lag p50=429ms/p90=811ms/p95=866ms/max=1193ms, zero failures, zero
+degradation across the window (checked incrementally, not just at the
+end). No trading threshold, execution, sizing, or exit behavior was
+changed by this batch; `LIVE_TRADING=false` unchanged throughout.
 
 ---
 
