@@ -633,7 +633,7 @@ execution routing, live-trading enablement, or PumpPortal spend limits.**
 - **Is `GRAD_SOL_UI` defined canonically once per service?** Yes — `research.config.GRAD_SOL_UI` and `memecoin.config.GRAD_SOL_UI`, both currently `115.0`, guarded by `test_grad_sol_ui_canonical.py` against a third copy appearing.
 - **Was the curve-oracle token-decimal price bug fixed?** Yes — `virtual_token_reserves` is now correctly divided by `10**6` before the price ratio; fixture-verified against the exact example in the spec (old formula ≈4.38e-13/token, correct ≈4.38e-7/token).
 - **Were existing curve_account outcome rows audited for that bug?** Yes — **0 affected rows**. Queried every `price_source_t*m` provenance column across all 31,014 `research_tokens` rows (26,169 of them `social_alert_bc`): only `dexscreener` (4,748) and `jupiter` (5) appear as sources; no row was ever actually populated via the `CURVE_ACTIVE`/curve_account path in production (curve accounts were almost always already missing/graduated by poll time — `curve_account_missing` was ~98% of curve attempts per the existing RF1 audit above — so DexScreener supplied the surviving prices in practice). The buggy formula existed in code but never wrote a corrupted value to a persisted row.
-- **What percentage of fresh eligible alerts now have trustworthy progress?** Not yet answerable at the required sample size — see PF12 below.
+- **What percentage of fresh eligible alerts now have trustworthy progress?** 100% (100/100 over ~17.6 hours) — see PF12 below.
 
 ### PF10 — historical recovery result
 
