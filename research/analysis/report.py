@@ -372,8 +372,7 @@ def main():
         print(f"  Tokens with tick data:  {len(tick_rows)}")
         print(f"  Tick peak  — med={median(tick_pcts):+.1f}%  max={max(tick_pcts):+.1f}%")
         if poll_pcts:
-            gains = [t - p for t, p in
-                     zip(tick_pcts, [r.get("pct_change_peak") or 0 for r in tick_rows])
+            gains = [r["pct_change_peak_3m"] - r["pct_change_peak"] for r in tick_rows
                      if r.get("pct_change_peak") is not None]
             print(f"  Poll peak  — med={median(poll_pcts):+.1f}%  max={max(poll_pcts):+.1f}%")
             print(f"  Avg tick uplift vs poll:  {mean(gains):+.1f}pp")
