@@ -233,6 +233,16 @@ class PumpPortalMonitor:
         # Updated alongside _price_cache; used by pre-graduation exit logic.
         self._vsol_cache: dict[str, float] = {}
         self._vsol_lock                    = threading.Lock()
+        # mint → subscribe() timestamp — K2a tick deadman: a position needs
+        # a grace period after subscribing before "0 ticks" is meaningful.
+        self._subscribed_at: dict[str, float] = {}
+
+        # ── K2a: tick deadman (unblock the dataset, kills the silent-
+        # fallback class forever) — per-mint 30min alert cooldown, plus a
+        # separate weekly reminder while suppressed (LIVE_TRADING=false),
+        # same pattern as health_monitor.py's F3 live-drought alarm.
+        self._deadman_last_alarm: dict[str, float] = {}
+        self._deadman_last_weekly: float = 0.0
 
         # ── Screening accumulator (LRU-ordered) ──────────────────────────
         self._screening: OrderedDict[str, ScreeningState] = OrderedDict()
@@ -361,6 +371,9 @@ class PumpPortalMonitor:
             if not new:
                 return
             self._subscribed |= new
+            now = time.time()
+            for m in new:
+                self._subscribed_at[m] = now
         self._send_subscribe(new)
         log.info("PumpPortal subscribed to %d token(s): %s",
                  len(new), ", ".join(m[:8] for m in new))
@@ -372,6 +385,8 @@ class PumpPortalMonitor:
             if not gone:
                 return
             self._subscribed -= gone
+            for m in gone:
+                self._subscribed_at.pop(m, None)
         # Only send WS unsubscribe if not also being screened
         with self._screening_lock:
             still_screening = gone & set(self._screening.keys())
@@ -384,6 +399,8 @@ class PumpPortalMonitor:
         with self._vsol_lock:
             for m in gone:
                 self._vsol_cache.pop(m, None)
+        for m in gone:
+            self._deadman_last_alarm.pop(m, None)
         log.info("PumpPortal unsubscribed from %d token(s)", len(gone))
 
     def get_prices(self, max_age: float = PRICE_STALE_SEC) -> dict[str, float]:
@@ -663,6 +680,72 @@ class PumpPortalMonitor:
             time.sleep(SOL_PRICE_REFRESH_SEC)
             self._refresh_sol_price()
 
+    # K2a: tick deadman (unblock the dataset) — 0 PP ticks for 5min on an
+    # open, subscribed position means we're silently falling back to a
+    # stale/degraded price source without anyone noticing (the same class
+    # of bug N4(c)'s Finding 2 root-caused for research's forward
+    # collection). Suppressed while LIVE_TRADING=false (weekly reminder
+    # instead), matching health_monitor.py's F3 live-drought pattern.
+    _DEADMAN_THRESHOLD_S = 300.0
+    _DEADMAN_COOLDOWN_S  = 1800.0
+    _DEADMAN_WEEKLY_S    = 7 * 24 * 3600
+
+    def _check_tick_deadman(self):
+        try:
+            from memecoin.config import LIVE_TRADING as _live_trading
+        except Exception:
+            _live_trading = False
+
+        now = time.time()
+        with self._sub_lock:
+            subs = dict(self._subscribed_at)
+        if not subs:
+            return
+
+        stale: list[str] = []
+        with self._cache_lock:
+            for mint, sub_ts in subs.items():
+                if now - sub_ts < self._DEADMAN_THRESHOLD_S:
+                    continue   # grace period — just subscribed
+                cached = self._price_cache.get(mint)
+                last_tick_ts = cached[1] if cached else sub_ts
+                if now - last_tick_ts >= self._DEADMAN_THRESHOLD_S:
+                    stale.append(mint)
+
+        if not stale:
+            return
+
+        if not _live_trading:
+            if now - self._deadman_last_weekly >= self._DEADMAN_WEEKLY_S:
+                self._deadman_last_weekly = now
+                log.info("PumpPortal tick deadman: %d position(s) silent >5min "
+                         "(alert suppressed, LIVE_TRADING=false)", len(stale))
+                self._send_deadman_alert(
+                    f"[weekly] PumpPortal silent on {len(stale)} position(s) "
+                    f">5min — suppressed while LIVE_TRADING=false, not a live issue."
+                )
+            return
+
+        for mint in stale:
+            last = self._deadman_last_alarm.get(mint, 0)
+            if now - last < self._DEADMAN_COOLDOWN_S:
+                continue
+            self._deadman_last_alarm[mint] = now
+            log.warning("PumpPortal tick deadman: %s open position silent >5min "
+                        "while subscribed — likely on stale fallback price", mint[:8])
+            self._send_deadman_alert(
+                f"PUMPPORTAL TICK DEADMAN: {mint[:8]} has had 0 real-time ticks "
+                f"for >5min while an open position is subscribed. Price monitoring "
+                f"is likely silently running on a stale/fallback source."
+            )
+
+    def _send_deadman_alert(self, msg: str):
+        try:
+            from app.alerts import _send
+            _send(msg)
+        except Exception as e:
+            log.debug("PumpPortal tick deadman: alert send failed: %s", e)
+
     def _heartbeat_thread(self):
         """
         Sends a WS ping every 20s to keep the connection alive.
@@ -671,6 +754,7 @@ class PumpPortalMonitor:
         """
         while True:
             time.sleep(HEARTBEAT_INTERVAL_SEC)
+            self._check_tick_deadman()
 
             # Send ping via ws_lock so it doesn't race with recv reconnect
             with self._ws_lock:

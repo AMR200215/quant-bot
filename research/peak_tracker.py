@@ -124,6 +124,11 @@ class PeakTracker:
         self._today_date: str    = ""
         self._tokens_scheduled_today: int = 0
         self._path_files_today: int  = 0
+        # K2b: real ticks written today (distinct from path_files_today --
+        # a file can exist header-only with zero real ticks, which is
+        # exactly the failure mode N4(c) Finding 2 root-caused and file
+        # count alone never caught).
+        self._ticks_today: int = 0
 
         # PumpPortal message budget (metered: 0.01 SOL / 10k messages as of 2026-08).
         # New subscriptions pause once hit; already-subscribed tokens finish their
@@ -299,10 +304,11 @@ class PeakTracker:
             p95 = int(quantiles(samples, n=100)[94]) if len(samples) >= 20 else max(samples)
             log.info(
                 "PeakTracker DAY REPORT %s | tokens_scheduled=%d path_files=%d "
-                "sub_p95=%d sub_peak=%d pp_messages=%d/%d",
+                "ticks=%d sub_p95=%d sub_peak=%d pp_messages=%d/%d",
                 day_str,
                 scheduled,
                 self._path_files_today,
+                self._ticks_today,
                 p95,
                 max(samples),
                 self._pp_messages_today,
@@ -329,6 +335,28 @@ class PeakTracker:
                 send_alert(msg)
             except Exception as al_err:
                 log.debug("PeakTracker deadman alert failed: %s", al_err)
+
+        # K2b: hard FAIL, distinct from the file-count deadman above. A file
+        # can be created (header written) with zero real ticks ever landing
+        # in it -- exactly the N4(c) Finding 2 failure mode (path_files
+        # matched tokens_scheduled every day, but every session had
+        # ticks=0, and file-count alone never caught it). tracked_tokens>50
+        # is a much higher bar than the >=20 deadman above -- this is meant
+        # to be unmissable, not a routine warning.
+        if scheduled > 50 and self._ticks_today == 0:
+            fail_msg = (
+                f"[PeakTracker FAIL] {day_str}: {scheduled} tokens tracked, "
+                f"{self._path_files_today} path files, but 0 real ticks written "
+                f"all day. Forward tick collection is completely dead -- check "
+                f"PUMPPORTAL_API_KEY / subscribeTokenTrade rejection, not just "
+                f"whether files exist."
+            )
+            log.critical(fail_msg)
+            try:
+                from app.alerts import send_alert
+                send_alert(fail_msg)
+            except Exception as al_err:
+                log.debug("PeakTracker FAIL alert failed: %s", al_err)
 
     def _update_path_file_in_db(self, addr: str, rel_path: str):
         """Write path_file to Supabase. Runs in thread-pool executor."""
@@ -482,6 +510,7 @@ class PeakTracker:
                                                 "ok",                 # data_status
                                                 trader_pk,            # trader_pk (N7a)
                                             ])
+                                            self._ticks_today += 1
                                         except Exception:
                                             pass
                             except Exception:
@@ -635,6 +664,7 @@ class PeakTracker:
                 self._sub_samples.clear()
                 self._tokens_scheduled_today = 0
                 self._path_files_today = 0
+                self._ticks_today = 0
                 self._pp_messages_today = 0
                 self._pp_budget_alerted = False
                 self._today_date = current_date
