@@ -60,11 +60,28 @@ _MAX_SIGS    = 1000   # getSignaturesForAddress limit
 _PARSE_BATCH = 100    # Helius enhanced-tx batch size
 _RATE_SLEEP      = 0.5   # seconds between tokens (both modes)
 _MAX_RETRIES     = 4     # retries on 429 before giving up on a token
-_STD_MAX_WORKERS = 10    # parallel getTransaction workers in std_rpc mode
+_STD_MAX_WORKERS = 5     # K3: was 10 -- reduced after diagnosis showed 10
+                          # parallel workers against a single free public
+                          # RPC endpoint drove sustained 429s (5 real winner
+                          # tokens took >14min instead of the expected
+                          # couple minutes)
 _STD_TX_CAP      = 300   # max transactions fetched per token in std_rpc mode
 _STD_TX_SLEEP    = 0.05  # seconds between individual getTransaction calls (per worker)
 
 _PUBLIC_RPC = "https://api.mainnet-beta.solana.com"
+# K3: fallback tier for std_rpc mode when the primary free endpoint 429s --
+# std_rpc mode's whole point is 0 Helius credits, so the fallback is
+# another free public RPC (same one research/curve_oracle.py already
+# falls back to), not Helius.
+_STD_RPC_FALLBACK = "https://rpc.ankr.com/solana"
+
+# K3 fix (2026-08-09): slot-time estimation constants, replacing blind
+# backward pagination for alert_ts-windowed signature fetches. See
+# _estimate_slot_for_time docstring for why.
+_SLOT_TIME_S                = 0.4
+_SLOT_ESTIMATE_TOLERANCE_S  = 30
+_SLOT_ESTIMATE_MAX_ITER     = 6
+_SLOT_ESTIMATE_BLOCK_SEARCH = 15   # skipped-slot search radius per iteration
 
 # Average tx count used for credit estimation in dry-run
 _DRY_RUN_AVG_TXS = 200
@@ -131,15 +148,23 @@ def _load_tokens(sb, winners: int, losers: int, win_thresh: float) -> tuple:
 
 
 def _fetch_sigs_page(mint: str, rpc_url: str, before: str | None) -> list | None:
-    """One getSignaturesForAddress page (DESC/newest-first). None = gave up after retries."""
+    """One getSignaturesForAddress page (DESC/newest-first). None = gave up after retries.
+
+    K3: switches to _STD_RPC_FALLBACK partway through retries instead of
+    hammering the same rate-limited endpoint for the full retry budget --
+    a fallback tier that costs 0 Helius credits (matching std_rpc mode's
+    whole point), same free-endpoint pattern research/curve_oracle.py uses.
+    """
     backoff = 2.0
+    switch_at = _MAX_RETRIES // 2
     for attempt in range(_MAX_RETRIES):
+        active_url = _STD_RPC_FALLBACK if attempt >= switch_at else rpc_url
         try:
             params = {"limit": _MAX_SIGS, "commitment": "confirmed"}
             if before:
                 params["before"] = before
             r = requests.post(
-                rpc_url,
+                active_url,
                 json={
                     "jsonrpc": "2.0", "id": 1,
                     "method":  "getSignaturesForAddress",
@@ -149,8 +174,8 @@ def _fetch_sigs_page(mint: str, rpc_url: str, before: str | None) -> list | None
             )
             if r.status_code == 429:
                 wait = backoff * (2 ** attempt)
-                log.warning("getSignaturesForAddress 429 for %s — sleeping %.1fs (attempt %d/%d)",
-                            mint[:8], wait, attempt + 1, _MAX_RETRIES)
+                log.warning("getSignaturesForAddress 429 for %s on %s — sleeping %.1fs (attempt %d/%d)",
+                            mint[:8], active_url, wait, attempt + 1, _MAX_RETRIES)
                 time.sleep(wait)
                 continue
             return r.json().get("result") or []
@@ -168,23 +193,98 @@ def _fetch_sigs_page(mint: str, rpc_url: str, before: str | None) -> list | None
     return None
 
 
+def _rpc_call(rpc_url: str, method: str, params: list):
+    """Minimal retried RPC call — used only by slot estimation below. K3:
+    same fallback-tier pattern as _fetch_sigs_page."""
+    backoff = 1.0
+    switch_at = _MAX_RETRIES // 2
+    for attempt in range(_MAX_RETRIES):
+        active_url = _STD_RPC_FALLBACK if attempt >= switch_at else rpc_url
+        try:
+            r = requests.post(
+                active_url,
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                timeout=15,
+            )
+            if r.status_code == 429:
+                time.sleep(backoff * (2 ** attempt))
+                continue
+            return r.json().get("result")
+        except Exception:
+            time.sleep(backoff * (2 ** attempt))
+    return None
+
+
+def _get_block_near(rpc_url: str, slot: int, search: int = _SLOT_ESTIMATE_BLOCK_SEARCH):
+    """Find a real, non-skipped block at or after `slot`. Returns (slot, block) or (None, None)."""
+    for offset in range(search):
+        blk = _rpc_call(rpc_url, "getBlock", [slot + offset, {
+            "maxSupportedTransactionVersion": 0,
+            "transactionDetails": "signatures",
+            "rewards": False,
+        }])
+        if blk and blk.get("blockTime") and blk.get("signatures"):
+            return slot + offset, blk
+    return None, None
+
+
+def _estimate_slot_for_time(rpc_url: str, target_ts: float):
+    """
+    K3 fix (2026-08-09): iteratively estimate the slot nearest `target_ts`
+    via Solana's ~0.4s/slot rate, refined by real getBlock lookups.
+
+    Replaces blind backward pagination via getSignaturesForAddress, which
+    was the actual root cause of the backfill's low yield -- diagnosed on
+    real data: a genuine +2148% winner token needed 35,000+ signatures
+    fetched via the old max_pages-bounded backward walk and STILL landed
+    6+ hours short of its own alert time, because high-activity tokens
+    accumulate more post-alert signatures than any reasonable page cap can
+    walk through. This converges to within _SLOT_ESTIMATE_TOLERANCE_S
+    seconds in ~4-6 getBlock calls regardless of how much trading happened
+    after the target time, verified against the same token above.
+
+    Returns (slot, signatures_in_that_block) or None if unreachable
+    (RPC failure, or too far in the past for skipped-slot search to land
+    on a real block within _SLOT_ESTIMATE_MAX_ITER tries).
+    """
+    cur_slot = _rpc_call(rpc_url, "getSlot", [{"commitment": "confirmed"}])
+    if cur_slot is None:
+        return None
+    now = time.time()
+    est_slot = cur_slot - int((now - target_ts) / _SLOT_TIME_S)
+    if est_slot < 0:
+        return None
+
+    actual_slot, blk = None, None
+    for _ in range(_SLOT_ESTIMATE_MAX_ITER):
+        actual_slot, blk = _get_block_near(rpc_url, est_slot)
+        if blk is None:
+            return None
+        delta = blk["blockTime"] - target_ts
+        if abs(delta) < _SLOT_ESTIMATE_TOLERANCE_S:
+            break
+        est_slot = actual_slot - int(delta / _SLOT_TIME_S)
+    if blk is None:
+        return None
+    return actual_slot, (blk.get("signatures") or [])
+
+
 def _fetch_sigs(mint: str, rpc_url: str, alert_ts: float | None = None,
-                 window_s: int = 900, max_pages: int = 8) -> list:
+                 window_s: int = 900, max_pages: int = 10) -> list:
     """
     getSignaturesForAddress → list of sig strings (oldest first, no errors).
 
     Without alert_ts: legacy single-page behavior (most-recent _MAX_SIGS).
 
-    With alert_ts: paginates backward via `before` (up to max_pages, i.e.
-    max_pages * _MAX_SIGS signatures) until blockTime <= alert_ts, then
-    filters to [alert_ts, alert_ts + window_s] — the token's actual trading
-    window — instead of blindly taking "whatever's most recent right now".
-    Root-caused 2026-08-06: for tokens with heavy activity after their alert
-    (or backfill runs some time after the alert), the real trading-window
-    signatures can fall entirely outside the most-recent _MAX_SIGS, causing
-    0 extracted rows despite the token having genuine trade history. Bounded
-    by max_pages since some tokens (bot wars, sniper competition) can have
-    10,000+ tx in minutes — not worth chasing those all the way back.
+    With alert_ts: anchors near alert_ts+window_s via slot-time estimation
+    (_estimate_slot_for_time) instead of paginating backward from "now" —
+    see that function's docstring for why the old approach was the real
+    root cause of low backfill yield (K3). Any real signature works as the
+    `before` anchor for getSignaturesForAddress regardless of which
+    address it touched (Solana RPC treats `before` as a pure chronological
+    cursor) — from there, only a SHORT bounded pagination is needed since
+    we're already within seconds of the target window, not chasing it
+    across potentially tens of thousands of newer signatures.
     """
     if alert_ts is None:
         result = _fetch_sigs_page(mint, rpc_url, before=None)
@@ -195,8 +295,16 @@ def _fetch_sigs(mint: str, rpc_url: str, alert_ts: float | None = None,
 
     window_start = alert_ts
     window_end   = alert_ts + window_s
+
+    anchor = _estimate_slot_for_time(rpc_url, window_end)
+    anchor_sig = None
+    if anchor is not None:
+        _, block_sigs = anchor
+        if block_sigs:
+            anchor_sig = block_sigs[0]
+
     all_sigs: list = []
-    before: str | None = None
+    before: str | None = anchor_sig
     for _page in range(max_pages):
         result = _fetch_sigs_page(mint, rpc_url, before)
         if not result:
@@ -341,49 +449,116 @@ def _check_helius_quota(rpc_url: str) -> bool:
 
 
 def _fetch_one_tx_std(sig: str, rpc_url: str) -> dict | None:
-    """Fetch a single transaction via standard getTransaction RPC. Returns None on error."""
+    """Fetch a single transaction via standard getTransaction RPC. Returns None on error.
+
+    K3 fix: previously gave up after a single 429 with only a fixed 2s
+    sleep and no actual retry -- under _STD_MAX_WORKERS-parallel load
+    against a public RPC, 429s are routine, not exceptional, so this was
+    silently dropping a meaningful fraction of real transactions rather
+    than retrying them. Now retries with backoff and a fallback tier,
+    matching _fetch_sigs_page's pattern.
+    """
+    backoff = 1.0
+    switch_at = _MAX_RETRIES // 2
+    for attempt in range(_MAX_RETRIES):
+        active_url = _STD_RPC_FALLBACK if attempt >= switch_at else rpc_url
+        try:
+            r = requests.post(
+                active_url,
+                json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getTransaction",
+                    "params": [sig, {"encoding": "json", "commitment": "confirmed",
+                                     "maxSupportedTransactionVersion": 0}],
+                },
+                timeout=15,
+            )
+            if r.status_code == 429:
+                time.sleep(backoff * (2 ** attempt))
+                continue
+            data = r.json()
+            return data.get("result")
+        except Exception:
+            time.sleep(backoff * (2 ** attempt))
+    return None
+
+
+_BATCH_FETCH_SIZE   = 100   # JSON-RPC batch request size for getTransaction
+_BATCH_FETCH_ROUNDS = 6     # retry rounds for sigs that failed (429) this token
+_BATCH_ROUND_SLEEP  = 1.5   # pause between retry rounds
+
+
+def _batch_get_transactions(sigs: list, rpc_url: str) -> dict:
+    """
+    One JSON-RPC batch request (all sigs in one HTTP call) for getTransaction.
+    Returns {sig: result_dict} for whichever sigs succeeded this round --
+    Solana public RPC rate-limits individual items WITHIN a batch response
+    (per-item {"error": {"code": 429, ...}}), not just the HTTP call itself,
+    so a batch is not "all or nothing" -- typically only a fraction succeed
+    per round, but discovering that takes ~2s instead of the many seconds
+    a single failed individual call+backoff used to cost.
+    """
+    payload = [
+        {"jsonrpc": "2.0", "id": i, "method": "getTransaction",
+         "params": [sig, {"encoding": "json", "commitment": "confirmed",
+                          "maxSupportedTransactionVersion": 0}]}
+        for i, sig in enumerate(sigs)
+    ]
     try:
-        r = requests.post(
-            rpc_url,
-            json={
-                "jsonrpc": "2.0", "id": 1,
-                "method": "getTransaction",
-                "params": [sig, {"encoding": "json", "commitment": "confirmed",
-                                 "maxSupportedTransactionVersion": 0}],
-            },
-            timeout=15,
-        )
-        if r.status_code == 429:
-            time.sleep(2.0)   # brief back-off; worker will move on
-            return None
-        data = r.json()
-        return data.get("result")
-    except Exception:
-        return None
+        r = requests.post(rpc_url, json=payload, timeout=30)
+        if r.status_code != 200:
+            return {}
+        results = r.json()
+        if not isinstance(results, list):
+            return {}
+        ok = {}
+        for x in results:
+            idx = x.get("id")
+            if idx is None or idx >= len(sigs):
+                continue
+            if x.get("result") is not None:
+                ok[sigs[idx]] = x["result"]
+        return ok
+    except Exception as e:
+        log.debug("batch getTransaction failed: %s", e)
+        return {}
 
 
 def _parse_txs_std(sigs: list, rpc_url: str) -> list:
     """
-    Fetch up to _STD_TX_CAP transactions in parallel via standard getTransaction.
-    Returns list of result dicts (some may be None; callers must filter).
+    Fetch up to _STD_TX_CAP transactions via batched getTransaction.
+    Returns list of result dicts.
+
+    K3 fix: previously used _STD_MAX_WORKERS individual parallel requests,
+    which under real rate-limit pressure (verified: mainnet-beta.solana.com
+    sustains roughly 0.5 successful getTransaction/sec regardless of
+    request pattern) meant most requests spent their time in per-request
+    exponential backoff, fetching as few as 10/300 in 220+ seconds. Batch
+    requests get the SAME per-item rate limit, but discover failures in
+    ~2s instead of a full backoff cycle, so retry rounds are dramatically
+    faster -- same ceiling throughput, much less wasted wall-clock time
+    finding out what failed.
     """
-    capped = sigs[:_STD_TX_CAP]
-    results = [None] * len(capped)
+    remaining = sigs[:_STD_TX_CAP]
+    all_ok: dict = {}
+    for round_i in range(_BATCH_FETCH_ROUNDS):
+        if not remaining:
+            break
+        new_ok = {}
+        for i in range(0, len(remaining), _BATCH_FETCH_SIZE):
+            chunk = remaining[i:i + _BATCH_FETCH_SIZE]
+            active_url = _STD_RPC_FALLBACK if round_i >= _BATCH_FETCH_ROUNDS // 2 else rpc_url
+            new_ok.update(_batch_get_transactions(chunk, active_url))
+        all_ok.update(new_ok)
+        remaining = [s for s in remaining if s not in all_ok]
+        if remaining:
+            time.sleep(_BATCH_ROUND_SLEEP)
 
-    def _worker(idx_sig):
-        idx, sig = idx_sig
-        time.sleep(_STD_TX_SLEEP * (idx % _STD_MAX_WORKERS))  # stagger start
-        return idx, _fetch_one_tx_std(sig, rpc_url)
-
-    with ThreadPoolExecutor(max_workers=_STD_MAX_WORKERS) as pool:
-        for idx, res in pool.map(_worker, enumerate(capped)):
-            results[idx] = res
-
-    return [r for r in results if r is not None]
+    return list(all_ok.values())
 
 
 def _extract_rows_std(tx_results: list, mint: str, sol_price: float,
-                      research_event_id: str = "") -> list:
+                      research_event_id: str = "", curve_pda: str | None = None) -> list:
     """
     Convert standard getTransaction result dicts → canonical RF5 row dicts.
 
@@ -392,7 +567,16 @@ def _extract_rows_std(tx_results: list, mint: str, sol_price: float,
       token_amount = |pre/post uiTokenAmount for the mint held by fee payer's ATA|
       price_usd = (sol_amount / token_amount) * sol_price
 
-    source = "backfill_std_rpc"; vsol = 0 (not available in history).
+    source = "backfill_std_rpc".
+
+    K3: vsol IS derivable here (unlike Helius Enhanced Transactions mode,
+    which only exposes balance deltas, not absolute balances) -- if the
+    bonding-curve PDA is among this tx's touched accounts (static
+    accountKeys or versioned-tx loadedAddresses), its postBalance in
+    preBalances/postBalances IS the vsol reading at that tick. Only
+    populated for pre-graduation trades that actually touch the curve
+    account; post-graduation (PumpSwap/DEX) trades correctly get vsol=0,
+    same "missing, never coerced" contract as everywhere else in this repo.
     """
     rows = []
     for result in tx_results:
@@ -437,6 +621,16 @@ def _extract_rows_std(tx_results: list, mint: str, sol_price: float,
         price_sol = round(price_usd / sol_price, 12) if sol_price > 0 else 0.0
         event_id  = hashlib.sha256(f"backfill:{mint}:{ts_ms}".encode()).hexdigest()[:32]
 
+        # K3: vsol from curve PDA's postBalance, where the tx touches it.
+        vsol = 0.0
+        if curve_pda:
+            loaded = meta.get("loadedAddresses") or {}
+            all_keys = account_keys + loaded.get("writable", []) + loaded.get("readonly", [])
+            if curve_pda in all_keys:
+                idx = all_keys.index(curve_pda)
+                if idx < len(post_bals):
+                    vsol = post_bals[idx] / _LAMPORTS
+
         rows.append({
             "schema_version":    str(_SCHEMA_VER),
             "research_event_id": research_event_id,
@@ -447,9 +641,9 @@ def _extract_rows_std(tx_results: list, mint: str, sol_price: float,
             "side":              "unknown",
             "token_amount":      round(token_amount, 0),
             "sol_amount":        round(sol_amount, 9),
-            "vsol":              0.0,
+            "vsol":              round(vsol, 9),
             "source":            "backfill_std_rpc",
-            "venue_state":       "UNKNOWN",
+            "venue_state":       "CURVE_ACTIVE" if vsol > 0 else "UNKNOWN",
             "backfilled":        "true",
             "data_status":       "ok",
             "trader_pk":         fee_payer,
@@ -551,8 +745,14 @@ def _process_token(tok: dict, rpc_url: str, parse_url: str, sol_price: float,
     # --- Standard RPC path (public mainnet) ---
     else:
         tx_results = _parse_txs_std(sigs, std_rpc_url)
+        try:
+            from research.curve_oracle import derive_curve_address
+            curve_pda = derive_curve_address(mint)
+        except Exception:
+            curve_pda = None
         all_rows = _extract_rows_std(tx_results, mint, sol_price,
-                                     research_event_id=tok.get("id", ""))
+                                     research_event_id=tok.get("id", ""),
+                                     curve_pda=curve_pda)
         credits_consumed = len(sigs[:_STD_TX_CAP])  # informational only
 
     if not all_rows:
