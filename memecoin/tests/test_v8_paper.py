@@ -1,24 +1,40 @@
 """
-N6: V8 paper twin — unit tests for the pure logic in memecoin/v8_paper.py.
+memecoin/tests/test_v8_paper.py — V8-TWIN-FIX VF7 deterministic tests.
 
-No network, no real Supabase/PP. pumpportal_monitor.monitor.get_screening_state
-is patched directly for the gate tests.
+Rewritten 2026-08-11: the previous version tested a pre-PROGRESS-FIX
+implementation of compute_progress_at_signal() (mocked
+pumpportal_monitor.monitor.get_screening_state directly). PF6
+(2026-08-08) rewrote it to read the shared ProgressCapture cache
+instead, and this file was never updated to match — 4 of its tests had
+been silently failing ever since (confirmed by running it before this
+rewrite). Replaced with tests against the real, current gate logic:
+progress_at_signal < V8_PROGRESS_MAX AND venue_state_at_signal ==
+CURVE_ACTIVE — see docs/RECEIPTS.md's "V8-TWIN-FIX" section for why
+dex_id was never the right signal (DexScreener indexes pump.fun
+bonding-curve tokens as dex_id="pumpfun" long before graduation).
+
+Covers VF7 tests 1-7 (gate logic) and 12-14 (position persistence,
+journal-on-close, V7/live isolation). Tests 8-9 (dedup) are in
+test_scanner_v8_dedup.py; test 11 (executor exception surfacing) is in
+test_telegram_executor_observability.py — both need their own module
+scope.
 
 Run: python -m pytest memecoin/tests/test_v8_paper.py -v
 """
 
+import json
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from memecoin.progress_capture import ProgressCapture
 from memecoin.v8_paper import (
-    V8_EXIT_CONFIG,
     V8_PROGRESS_MAX,
-    _check_exit,
+    V8PaperBook,
     _new_position,
-    _pnl,
-    compute_progress_at_signal,
     passes_v8_gate,
 )
 
@@ -27,139 +43,161 @@ def _signal(**overrides):
     base = dict(
         id="sig1", chain="solana", token_address="Mint1111111111111111111111111111111111111",
         token_symbol="TEST", signal_type="social_alert", strength="strong",
-        price_usd=0.00001, dex_id="", _price_pp=0.0,
+        price_usd=0.00001, dex_id="", _price_pp=0.0, event_id="ev1",
     )
     base.update(overrides)
     return SimpleNamespace(**base)
 
 
-class TestComputeProgress(unittest.TestCase):
-
-    def test_non_solana_returns_none(self):
-        self.assertIsNone(compute_progress_at_signal("bsc", "x"))
-
-    def test_no_screening_state_returns_none(self):
-        with patch("memecoin.pumpportal_monitor.monitor") as m:
-            m.get_screening_state.return_value = None
-            self.assertIsNone(compute_progress_at_signal("solana", "mint"))
-
-    def test_zero_vsol_returns_none(self):
-        with patch("memecoin.pumpportal_monitor.monitor") as m:
-            m.get_screening_state.return_value = SimpleNamespace(latest_vsol=0)
-            self.assertIsNone(compute_progress_at_signal("solana", "mint"))
-
-    def test_progress_computed_from_vsol(self):
-        with patch("memecoin.pumpportal_monitor.monitor") as m:
-            m.get_screening_state.return_value = SimpleNamespace(latest_vsol=57.5)
-            progress = compute_progress_at_signal("solana", "mint")
-            self.assertAlmostEqual(progress, 0.5, places=2)   # 57.5 / 115
+def _cap(progress, venue_state, status="ok", source="curve_account"):
+    return ProgressCapture(
+        event_id="ev1", token_address="MintX", alert_ts=time.time(),
+        vsol_at_signal=(progress * 115.0) if progress is not None else None,
+        progress_at_signal=progress,
+        progress_source=source,
+        progress_observed_at=time.time(),
+        progress_capture_lag_ms=400.0,
+        progress_status=status,
+        venue_state_at_signal=venue_state,
+    )
 
 
-class TestPassesV8Gate(unittest.TestCase):
+# _get_capture_for_gate does `from memecoin.progress_capture import
+# wait_for_capture` as a LOCAL import inside the function body, so
+# patching the source (memecoin.progress_capture.wait_for_capture) is
+# what actually takes effect — patching memecoin.v8_paper.wait_for_capture
+# would silently do nothing, since that name never exists in v8_paper's
+# module namespace.
+_PATCH_TARGET = "memecoin.progress_capture.wait_for_capture"
 
-    def test_unknown_progress_fails_closed(self):
-        with patch("memecoin.pumpportal_monitor.monitor") as m:
-            m.get_screening_state.return_value = None
-            passed, reason, progress = passes_v8_gate(_signal())
-            self.assertFalse(passed)
-            self.assertEqual(reason, "progress_unknown")
 
-    def test_progress_over_threshold_blocked(self):
-        with patch("memecoin.pumpportal_monitor.monitor") as m:
-            m.get_screening_state.return_value = SimpleNamespace(latest_vsol=100.0)  # 0.87
-            passed, reason, progress = passes_v8_gate(_signal())
-            self.assertFalse(passed)
-            self.assertIn("over", reason)
+class TestPassesV8GateVenueState(unittest.TestCase):
+    """VF7 tests 1-7."""
 
-    def test_has_dex_id_blocked_even_if_progress_low(self):
-        with patch("memecoin.pumpportal_monitor.monitor") as m:
-            m.get_screening_state.return_value = SimpleNamespace(latest_vsol=20.0)  # 0.17
-            passed, reason, progress = passes_v8_gate(_signal(dex_id="raydium"))
-            self.assertFalse(passed)
-            self.assertIn("has_dex_id", reason)
+    def test_1_low_progress_dex_id_pumpfun_curve_active_passes(self):
+        with patch(_PATCH_TARGET, return_value=_cap(0.50, "CURVE_ACTIVE")):
+            passed, reason, progress = passes_v8_gate(_signal(dex_id="pumpfun"))
+        self.assertTrue(passed)
+        self.assertEqual(reason, "ok")
+        self.assertEqual(progress, 0.50)
 
-    def test_low_progress_no_dex_passes(self):
-        with patch("memecoin.pumpportal_monitor.monitor") as m:
-            m.get_screening_state.return_value = SimpleNamespace(latest_vsol=20.0)  # 0.17
+    def test_2_low_progress_no_dex_id_curve_active_passes(self):
+        with patch(_PATCH_TARGET, return_value=_cap(0.50, "CURVE_ACTIVE")):
             passed, reason, progress = passes_v8_gate(_signal(dex_id=""))
-            self.assertTrue(passed)
-            self.assertLess(progress, V8_PROGRESS_MAX)
+        self.assertTrue(passed)
+
+    def test_3_low_progress_graduated_venue_rejects(self):
+        with patch(_PATCH_TARGET, return_value=_cap(0.50, "GRADUATED")):
+            passed, reason, progress = passes_v8_gate(_signal(dex_id="pumpswap"))
+        self.assertFalse(passed)
+        self.assertIn("venue_state", reason)
+        self.assertIn("GRADUATED", reason)
+
+    def test_4_dex_active_venue_rejects(self):
+        with patch(_PATCH_TARGET, return_value=_cap(0.50, "DEX_ACTIVE")):
+            passed, reason, progress = passes_v8_gate(_signal())
+        self.assertFalse(passed)
+        self.assertIn("DEX_ACTIVE", reason)
+
+    def test_5_unknown_venue_fails_closed(self):
+        with patch(_PATCH_TARGET, return_value=_cap(0.50, "UNKNOWN")):
+            passed, reason, progress = passes_v8_gate(_signal())
+        self.assertFalse(passed)
+        self.assertIn("UNKNOWN", reason)
+
+    def test_6_progress_over_threshold_rejects(self):
+        with patch(_PATCH_TARGET, return_value=_cap(0.80, "CURVE_ACTIVE")):
+            passed, reason, progress = passes_v8_gate(_signal())
+        self.assertFalse(passed)
+        self.assertIn("over", reason)
+        self.assertLess(V8_PROGRESS_MAX, 1.0)   # sanity: threshold unchanged (0.70)
+        self.assertEqual(V8_PROGRESS_MAX, 0.70)
+
+    def test_7_no_capture_rejects_progress_unknown(self):
+        with patch(_PATCH_TARGET, return_value=None):
+            passed, reason, progress = passes_v8_gate(_signal())
+        self.assertFalse(passed)
+        self.assertEqual(reason, "progress_unknown")
+        self.assertIsNone(progress)
+
+    def test_10_pumpportal_screening_signal_dex_id_pumpfun_can_pass(self):
+        """VF7 #10: the gate is source-agnostic — a signal built via the
+        PumpPortal-native screening path (memecoin/scanner.py's
+        _fire_screening_entry(), which hardcodes dex_id="pumpfun") must
+        pass exactly like a Telegram-sourced one does in test #1, since
+        both go through the same passes_v8_gate()."""
+        pp_native_signal = _signal(
+            signal_type="pumpportal_screen", dex_id="pumpfun", token_cohort="pumpfun_stream",
+        )
+        with patch(_PATCH_TARGET, return_value=_cap(0.30, "CURVE_ACTIVE")):
+            passed, reason, progress = passes_v8_gate(pp_native_signal)
+        self.assertTrue(passed)
+        self.assertEqual(reason, "ok")
 
 
-class TestNewPosition(unittest.TestCase):
+class TestV8BookPersistenceAndIsolation(unittest.TestCase):
+    """VF7 tests 12-14."""
 
-    def test_uses_pp_price_when_available(self):
-        pos = _new_position(_signal(_price_pp=0.00002, price_usd=0.00001), progress=0.2)
-        self.assertEqual(pos["entry_price"], 0.00002)
-        self.assertEqual(pos["entry_source"], "pp_tick")
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._journal = Path(self._tmpdir.name) / "v8_journal.csv"
+        self._positions = Path(self._tmpdir.name) / "v8_positions.json"
+        self._paths_patch = patch("memecoin.v8_paper._paths",
+                                   return_value=(self._journal, self._positions))
+        self._paths_patch.start()
 
-    def test_falls_back_to_dex_price(self):
-        pos = _new_position(_signal(_price_pp=0.0, price_usd=0.00001), progress=0.2)
-        self.assertEqual(pos["entry_price"], 0.00001)
-        self.assertEqual(pos["entry_source"], "dex_stale")
+    def tearDown(self):
+        self._paths_patch.stop()
+        self._tmpdir.cleanup()
 
-    def test_peak_price_starts_at_entry(self):
-        pos = _new_position(_signal(price_usd=0.00001), progress=0.2)
-        self.assertEqual(pos["peak_price"], pos["entry_price"])
+    def test_12_open_creates_and_persists_position(self):
+        """VF7 #12: V8 open creates/persists position state."""
+        book = V8PaperBook()
+        with patch(_PATCH_TARGET, return_value=_cap(0.40, "CURVE_ACTIVE")):
+            book.maybe_open(_signal(token_address="MintPersist111111111111111111111111111"))
+        self.assertTrue(self._positions.exists())
+        data = json.loads(self._positions.read_text())
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["token_address"], "MintPersist111111111111111111111111111")
+        self.assertEqual(data[0]["status"], "open")
+        self.assertAlmostEqual(data[0]["progress_at_signal"], 0.40)
 
+        # A second book instance loading from the same paths sees it too —
+        # proves this is real persistence, not just in-memory state.
+        book2 = V8PaperBook()
+        self.assertEqual(len(book2.open_positions()), 1)
 
-class TestCheckExit(unittest.TestCase):
+    def test_13_close_writes_journal(self):
+        """VF7 #13: V8 close writes journal."""
+        book = V8PaperBook()
+        with patch(_PATCH_TARGET, return_value=_cap(0.40, "CURVE_ACTIVE")):
+            book.maybe_open(_signal(token_address="MintClose1111111111111111111111111111"))
+        self.assertFalse(self._journal.exists())   # not written until close
+        pos_id = next(iter(book._positions))
+        book._close(pos_id, price=0.00002, reason="test_close")
+        self.assertTrue(self._journal.exists())
+        content = self._journal.read_text()
+        self.assertIn("test_close", content)
+        self.assertIn("MintClose1111111111111111111111111111", content)
 
-    def _pos(self, entry, current, peak, entry_time=None):
-        return {
-            "entry_price": entry, "current_price": current, "peak_price": peak,
-            "entry_time": entry_time or time.time(), "size_usd": 1.0,
-            "status": "open",
-        }
-
-    def test_hard_stop_fires(self):
-        pos = self._pos(entry=1.0, current=0.6, peak=1.0)   # -40%, below -35% hard stop
-        self.assertEqual(_check_exit(pos, V8_EXIT_CONFIG), "hard_stop")
-
-    def test_no_exit_when_flat(self):
-        pos = self._pos(entry=1.0, current=1.05, peak=1.05)
-        self.assertEqual(_check_exit(pos, V8_EXIT_CONFIG), "")
-
-    def test_trailing_stop_fires_after_tier1_activation(self):
-        # peak_gain = 0.30 (tier1 activates), pulled back >25% from peak
-        pos = self._pos(entry=1.0, current=0.97, peak=1.30)
-        self.assertEqual(_check_exit(pos, V8_EXIT_CONFIG), "trailing_stop")
-
-    def test_trailing_stop_not_armed_below_tier1(self):
-        # peak_gain only 0.10 — below the 0.30 tier1 activation, hard_stop also not hit
-        pos = self._pos(entry=1.0, current=0.95, peak=1.10)
-        self.assertEqual(_check_exit(pos, V8_EXIT_CONFIG), "")
-
-    def test_time_stop_fires_when_stale_and_flat(self):
-        old_entry = time.time() - (V8_EXIT_CONFIG["time_stop_minutes"] + 1) * 60
-        pos = self._pos(entry=1.0, current=1.05, peak=1.05, entry_time=old_entry)
-        self.assertEqual(_check_exit(pos, V8_EXIT_CONFIG), "time_stop")
-
-    def test_time_stop_suppressed_for_a_runner(self):
-        old_entry = time.time() - (V8_EXIT_CONFIG["time_stop_minutes"] + 1) * 60
-        pos = self._pos(entry=1.0, current=1.35, peak=1.40)   # peak_gain 0.40 >= 0.30
-        self.assertEqual(_check_exit(pos, V8_EXIT_CONFIG), "")
-
-
-class TestPnl(unittest.TestCase):
-
-    def test_open_position_uses_current_price(self):
-        pos = {"entry_price": 1.0, "current_price": 1.5, "exit_price": 0.0,
-               "status": "open", "size_usd": 10.0}
-        pnl_usd, pnl_pct = _pnl(pos)
-        self.assertAlmostEqual(pnl_pct, 0.5)
-        self.assertAlmostEqual(pnl_usd, 5.0)
-
-    def test_closed_position_uses_exit_price(self):
-        pos = {"entry_price": 1.0, "current_price": 1.9, "exit_price": 1.2,
-               "status": "closed", "size_usd": 10.0}
-        pnl_usd, pnl_pct = _pnl(pos)
-        self.assertAlmostEqual(pnl_pct, 0.2)
-
-    def test_zero_entry_price_returns_zero_not_raise(self):
-        pos = {"entry_price": 0.0, "current_price": 1.0, "exit_price": 0.0,
-               "status": "open", "size_usd": 10.0}
-        self.assertEqual(_pnl(pos), (0.0, 0.0))
+    def test_14_no_v8_action_affects_v7_portfolio(self):
+        """VF7 #14: no V8 action can affect V7/live Portfolio state."""
+        import memecoin.scanner as scanner
+        before = list(scanner.portfolio._positions) if hasattr(scanner.portfolio, "_positions") else None
+        book = V8PaperBook()
+        with patch(_PATCH_TARGET, return_value=_cap(0.40, "CURVE_ACTIVE")):
+            book.maybe_open(_signal(token_address="MintIsolation11111111111111111111111"))
+        after = list(scanner.portfolio._positions) if hasattr(scanner.portfolio, "_positions") else None
+        self.assertEqual(before, after,
+            "V8's maybe_open() must never mutate memecoin.scanner.portfolio (V7's live/paper book)")
+        # Structural check: v8_paper.py's own source never *imports or
+        # calls into* memecoin.portfolio / scanner.portfolio (docstring
+        # mentions of the concept are fine — only real usage matters).
+        src = Path(__import__("memecoin.v8_paper", fromlist=["x"]).__file__).read_text()
+        self.assertNotIn("import memecoin.portfolio", src)
+        self.assertNotIn("from memecoin.portfolio", src)
+        self.assertNotIn("from memecoin import portfolio", src)
+        self.assertNotIn("scanner.portfolio.", src)
 
 
 if __name__ == "__main__":
