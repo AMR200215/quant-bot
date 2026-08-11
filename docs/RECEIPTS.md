@@ -800,6 +800,156 @@ changed by this batch; `LIVE_TRADING=false` unchanged throughout.
 
 ---
 
+## K-BATCH — unblock the dataset (2026-08-10)
+
+Follow-up batch to PROGRESS-FIX, addressing the concrete gaps identified
+in `docs/V8_INPUTS.md`'s N4(c)/(d) status (funded PumpPortal key,
+silent-fallback monitoring, backfill yield, refresh cadence). Same
+constraints held: no V7/V8 trading logic touched, `LIVE_TRADING=false`
+unchanged.
+
+### K1 — PumpPortal API key
+
+Both `research/peak_tracker.py` and `memecoin/pumpportal_monitor.py`
+already wired `PUMPPORTAL_API_KEY` into their WS connect URLs correctly,
+and a funded key was already present in the VPS `.env` (confirmed
+non-empty, 206 chars) — the only real gap was startup visibility: neither
+logged whether the connection was actually keyed. Added to both.
+**Artifact:** real tick lines from both within 3 minutes of deploy —
+`peak_tracker.py` wrote a genuine `live_pp`/`CURVE_ACTIVE` tick to a
+fresh path file; `pumpportal_monitor.py`'s live capture path was already
+proven working throughout PROGRESS-FIX's PF12 verification (100/100
+successful captures on the same underlying connection).
+
+### K2 — Tick deadmans
+
+**K2a** (`memecoin/pumpportal_monitor.py`): alerts if an open, subscribed
+position has 0 real ticks for 5min. Suppressed while `LIVE_TRADING=false`
+(weekly reminder instead, same pattern as `health_monitor.py`'s F3
+live-drought alarm), 30min per-mint cooldown when live. Verified
+manually: grace period holds, weekly-suppressed path fires, live-alert
+path fires and respects cooldown.
+
+**K2b** (`research/peak_tracker.py`): new `_ticks_today` counter
+(distinct from `path_files_today` — a file can exist header-only with
+zero real ticks, exactly the N4(c) Finding 2 failure mode file-count
+alone never caught). Hard FAIL (`log.critical` + alert) when
+`tracked_tokens>50` and `ticks==0`, louder than the existing
+file-count deadman. Tick count now also surfaces in the routine daily
+report line.
+
+### K3 — Backfill parser: real root cause, real fix, real re-run
+
+**Diagnosis (not assumed — verified on real data):** the documented
+17% backfill yield was NOT primarily an extraction-heuristic bug.
+`_fetch_sigs`'s alert-time windowing paginated backward via
+`getSignaturesForAddress` from "now", capped at `max_pages=8` (8,000
+signatures). Tested directly on 5 real winner tokens (+1167% to
++3446% peak, alerted between 2026-06-23 and 2026-08-09): **all five
+returned 0 signatures in their alert-time window.** One token needed
+35,000+ signatures fetched and was *still* 6+ hours short of reaching
+its own alert time — high-activity ("winner") tokens accumulate more
+post-alert signatures than any reasonable page cap can walk through.
+This self-selects against exactly the tokens the backfill exists to
+calibrate exits for.
+
+**Fix:** `_estimate_slot_for_time` anchors near the target time via
+Solana's ~0.4s/slot rate, refined by real `getBlock` lookups — converges
+to within seconds in 4-6 RPC calls regardless of post-target trading
+volume (verified: same failing token, now finds its window in the same
+handful of calls). `_fetch_sigs` anchors there instead of blind backward
+pagination.
+
+**Secondary fixes found under load:** `_fetch_one_tx_std` had no real
+retry on 429 (single 2s sleep, then silently dropped the transaction);
+`_parse_txs_std` rewritten to JSON-RPC batch requests — same underlying
+per-item rate limit on free public RPC (~0.5 successful
+`getTransaction`/sec observed), but discovers failures in ~2s instead of
+a full backoff cycle, cutting per-token wall time from ~240s to ~50s.
+Both endpoints (`mainnet-beta.solana.com` primary, Ankr fallback) used,
+matching the resilience pattern already established in
+`research/curve_oracle.py`. vsol is now genuinely derived from the curve
+PDA's `postBalance` where std_rpc mode's raw pre/post balance data makes
+it possible (Helius Enhanced Transactions only exposes deltas, not
+absolute balances, so this is std_rpc-only) — correctly stays 0 for
+post-graduation trades that never touch the curve account.
+
+**Helius Enhanced Transactions mode tested and confirmed unusable right
+now** — `"max usage reached"` (quota genuinely exhausted, not just rate
+limited). std_rpc mode (this fix) was the only viable path.
+
+**Artifact — real 400-token re-run, 2026-08-10 22:26-23:32 UTC:**
+
+| metric | value |
+|---|---|
+| Candidates (200 winners + 200 losers) | 400 |
+| Already had a path file (`--skip-existing`) | 175 |
+| Newly processed under fixed code | 225 |
+| **Newly processed with real rows** | **165/225 = 73.3%** |
+| Baseline yield (2026-08-03, documented) | 67/400 = 16.75% |
+
+`path_stats.py --min-n 100` re-run afterward, real numbers (was 67
+paths / all INSUFFICIENT on 2026-08-03):
+
+| section | before (Aug 3) | after (Aug 10) |
+|---|---|---|
+| Total path files on disk | 67 | 2,956 |
+| Paths successfully loaded | 67 | 446 (2,510 skipped/empty — thin or corrupt, real residual gap) |
+| progress_at_signal coverage | 0/67 (0%) | 218/446 (48.9%) |
+| C — pre-dump order flow | n=19, INSUFFICIENT | **n=495+534, Cohen's d=-0.45, TRUE (sell pressure precedes dumps)** |
+| E — peak-mcap (overall) | n=67, INSUFFICIENT | **n=446** |
+| F — conditional continuation (overall / $250k+ band) | n=57, INSUFFICIENT | **n=340 qualifying / 155 in $250k+ band** |
+| G/H — buyer velocity, sniper density | n=67, INSUFFICIENT | **n=446** |
+| A/B — progress-bucketed shakeout/retention | n=0 | still INSUFFICIENT (max n=61 per bucket) — needs more days of PROGRESS-FIX's now-working capture, not more backfill |
+| D — graduation velocity | n=0 | still INSUFFICIENT (n=60) |
+
+Real, substantial progress on the non-progress-bucketed sections (target
+>70% yield: **met**, 73.3%). The progress-bucketed cells (A/B) remain the
+one honestly-unmet target — they need `progress_at_signal` on the *same*
+tokens as real path data, and that combination has only been reliably
+available since PROGRESS-FIX went live ~2.5 days before this batch; K5's
+nightly refresh will track this filling in over the coming days.
+
+### K4 — skipped
+
+Conflicted with completed PROGRESS-FIX work (would have reintroduced the
+PF1 subscribe-then-immediately-read race via tracker's at-alert
+`pp_vsol`). User confirmed: skip — the goal (progress-bucket tables with
+real n>0) is already met via the PF2-PF9 `ProgressCapture` mechanism.
+
+### K5 — nightly refresh cadence
+
+`research/scripts/v8_inputs_nightly.py` (new): runs `report.py` +
+`path_stats.py` as subprocesses (reuses existing, now-fixed analysis
+code rather than a second divergent implementation), appends the
+clean-era-relevant sections to `docs/V8_INPUTS.md` dated, prints (does
+not act on) the freeze gate: `clean_n>=2500` priced outcomes AND every
+path_stats cell clears `n>=100`.
+
+Also installed, found missing during setup: two previously-documented
+crons (`docs/RECEIPTS.md`'s own N3/N6 sections said "add this cron
+entry") had never actually been installed on the VPS — same
+documented-but-never-applied pattern as PROGRESS-FIX's PF8 migration.
+All three now live in `/etc/cron.d/`: `quantbot-epoch` (23:55 UTC),
+`quantbot-v8` (23:58 UTC), `quantbot-v8-inputs` (00:15 UTC). First real
+K5 entry already landed in `V8_INPUTS.md` (2026-08-09).
+
+### Modified/added files
+
+`memecoin/pumpportal_monitor.py`, `research/peak_tracker.py`,
+`research/backfill_paths.py`, `research/scripts/v8_inputs_nightly.py`
+(new), plus 3 new `/etc/cron.d/` entries (VPS-side, not repo files).
+
+### Status
+
+**Done**, K4 skipped by user decision. K3's yield target (>70%) met
+(73.3%). Freeze gate per K5 not yet met — progress-bucketed path_stats
+cells (A/B) still below n=100, clean_n status tracked nightly going
+forward. No trading logic touched; `LIVE_TRADING=false` unchanged
+throughout.
+
+---
+
 ## Epoch — Capital Decision (2026-07-30)
 
 Epoch deferred 2026-07-30 — capital decision. Prerequisite for any future live: V8 paper week net-positive after synthetic execution costs (N3' line). B7/E1 timing row deferred with it.
