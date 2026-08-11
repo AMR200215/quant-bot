@@ -181,6 +181,20 @@ def _send_alert(msg: str):
         log.debug("tg_monitor: alert send failed: %s", e)
 
 
+def _log_executor_failure(future, address: str) -> None:
+    """V8-TWIN-FIX VF4: done-callback for run_in_executor's Future so an
+    exception that somehow escapes _screen_and_signal's own try/except
+    (e.g. a BaseException subclass) can't disappear silently. Fired by
+    the event loop when the background thread finishes -- never blocks
+    the loop, never awaits the future."""
+    try:
+        exc = future.exception()
+    except Exception:
+        return   # cancelled or otherwise not retrievable — nothing to log
+    if exc is not None:
+        log.error("TG executor worker failed for %s: %r", address[:8], exc)
+
+
 def _check_auth_sync(api_id: int, api_hash: str, session_file: str) -> bool:
     """
     Synchronously check if the Telethon session is authorised.
@@ -426,9 +440,23 @@ class TelegramMonitor:
                     # Run screening in thread pool — event loop returns immediately
                     # so the next Telegram message isn't delayed by HTTP calls
                     loop = asyncio.get_event_loop()
-                    loop.run_in_executor(
+                    _fut = loop.run_in_executor(
                         self._executor,
                         self._screen_and_signal, chain, address, combined, 1
+                    )
+                    # V8-TWIN-FIX VF4: retrieve the Future's exception via a
+                    # done-callback instead of leaving it unretrieved.
+                    # _screen_and_signal already catches Exception internally
+                    # (confirmed not the cause of the 15-candidate mystery --
+                    # see docs/RECEIPTS.md's V8-TWIN-FIX section), so this
+                    # covers the narrower residual case: something that
+                    # escapes that catch (e.g. a BaseException subclass) or
+                    # a wrapper-level failure in run_in_executor itself. Does
+                    # not await the future -- purely a callback fired by the
+                    # event loop once the background thread finishes, so the
+                    # loop itself is never blocked.
+                    _fut.add_done_callback(
+                        lambda f, _addr=address: _log_executor_failure(f, _addr)
                     )
 
             await client.run_until_disconnected()

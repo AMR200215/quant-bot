@@ -64,6 +64,34 @@ VALID_SOURCES = frozenset({
     "curve_account", "pp_warm", "pp_post_alert", "pc_path_nearest_tick", "unknown",
 })
 
+# V8-TWIN-FIX VF2: canonical venue-state vocabulary. CURVE_ACTIVE and
+# GRADUATED are genuine, positive determinations; DEX_ACTIVE is reserved
+# for a confirmed post-graduation external-venue read (not currently
+# produced by any capture source -- no source here queries PumpSwap/
+# Jupiter pool state at alert time); UNKNOWN is the fail-closed default
+# for every case where venue could not be positively confirmed. Gates on
+# this must never treat UNKNOWN as passing.
+VALID_VENUE_STATES = frozenset({"CURVE_ACTIVE", "GRADUATED", "DEX_ACTIVE", "UNKNOWN"})
+
+# research.curve_oracle's richer venue_state vocabulary, normalized down
+# to the four canonical states above. CURVE_MISSING is deliberately NOT
+# mapped to GRADUATED -- a missing curve account is ambiguous (could be
+# graduated-and-closed, could be a non-pump.fun token, could be a
+# derivation edge case) and must fail closed to UNKNOWN, not be treated
+# as a confirmed graduation.
+_CURVE_ORACLE_VENUE_MAP = {
+    "CURVE_ACTIVE": "CURVE_ACTIVE",
+    "GRADUATED":    "GRADUATED",
+    "CURVE_MISSING": "UNKNOWN",
+    "PARSE_ERROR":  "UNKNOWN",
+    "RPC_ERROR":    "UNKNOWN",
+}
+
+
+def _normalize_venue_state(raw: Optional[str]) -> str:
+    return _CURVE_ORACLE_VENUE_MAP.get(raw or "", "UNKNOWN")
+
+
 # ── PF2: canonical result ────────────────────────────────────────────────
 
 
@@ -78,13 +106,15 @@ class ProgressCapture:
     progress_observed_at:       Optional[float]
     progress_capture_lag_ms:    Optional[float]
     progress_status:            str              # "ok" | explicit failure reason
+    venue_state_at_signal:       str = "UNKNOWN"  # one of VALID_VENUE_STATES (V8-TWIN-FIX VF2)
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "ProgressCapture":
-        return cls(**{f.name: d.get(f.name) for f in dataclasses.fields(cls)})
+        return cls(**{f.name: d.get(f.name, "UNKNOWN" if f.name == "venue_state_at_signal" else None)
+                       for f in dataclasses.fields(cls)})
 
     @classmethod
     def failure(cls, event_id: str, token_address: str, alert_ts: float,
@@ -94,12 +124,15 @@ class ProgressCapture:
             vsol_at_signal=None, progress_at_signal=None,
             progress_source="unknown", progress_observed_at=None,
             progress_capture_lag_ms=None, progress_status=reason,
+            venue_state_at_signal="UNKNOWN",
         )
 
     @classmethod
     def success(cls, event_id: str, token_address: str, alert_ts: float,
-                vsol_ui: float, source: str) -> "ProgressCapture":
+                vsol_ui: float, source: str,
+                venue_state: str = "UNKNOWN") -> "ProgressCapture":
         assert source in VALID_SOURCES, f"invalid progress_source: {source}"
+        assert venue_state in VALID_VENUE_STATES, f"invalid venue_state: {venue_state}"
         now = time.time()
         return cls(
             event_id=event_id, token_address=token_address, alert_ts=alert_ts,
@@ -109,6 +142,7 @@ class ProgressCapture:
             progress_observed_at=now,
             progress_capture_lag_ms=round((now - alert_ts) * 1000, 1),
             progress_status="ok",
+            venue_state_at_signal=venue_state,
         )
 
 
@@ -285,8 +319,16 @@ def _fallback_pp_post_alert(event_id: str, token_address: str, alert_ts: float,
         try:
             got = w["event"].wait(timeout=PP_POST_ALERT_TIMEOUT_S)
             if got and w["vsol"] is not None and w["vsol"] > 0:
+                # V8-TWIN-FIX VF2: a real vSolInBondingCurve tick from a live
+                # PumpPortal trade message can only occur while the token is
+                # actively trading on the bonding curve -- PumpPortal's
+                # subscribeTokenTrade fires on real swap events, and a swap
+                # event carrying this field asserts on-curve state at that
+                # moment. Not a guess: it's the same field this whole
+                # measurement is built on.
                 cap = ProgressCapture.success(
                     event_id, token_address, alert_ts, w["vsol"], "pp_post_alert",
+                    venue_state="CURVE_ACTIVE",
                 )
             else:
                 reason = "pp_timeout" if not got else prior_failure_reason
@@ -359,8 +401,12 @@ def _flush_curve_batch() -> None:
         )
         for event_id, alert_ts in waiters:
             if ok:
+                # V8-TWIN-FIX VF2: curve_oracle already determined venue
+                # state as part of this same read -- reuse it directly
+                # rather than adding a second independent measurement.
                 cap = ProgressCapture.success(
                     event_id, mint, alert_ts, r["vsol_ui"], "curve_account",
+                    venue_state=_normalize_venue_state(r.get("venue_state")),
                 )
                 _store_result(cap)
             else:
@@ -399,7 +445,12 @@ def capture_progress_async(event_id: str, token_address: str, alert_ts: float,
     # Source A: already-warm PP state — synchronous, just a dict lookup, no I/O.
     vsol = _try_pp_warm(token_address)
     if vsol is not None:
-        _store_result(ProgressCapture.success(event_id, token_address, alert_ts, vsol, "pp_warm"))
+        # V8-TWIN-FIX VF2: same on-curve reasoning as the pp_post_alert
+        # source above -- a real, fresh (PP_WARM_FRESHNESS_S-bounded)
+        # latest_vsol observation only exists because a live bonding-curve
+        # trade tick updated it.
+        _store_result(ProgressCapture.success(event_id, token_address, alert_ts, vsol, "pp_warm",
+                                               venue_state="CURVE_ACTIVE"))
         return
 
     # Source B (async, micro-batched) -> falls through to C on failure.

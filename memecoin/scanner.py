@@ -491,7 +491,21 @@ def _persist_signals():
 def _add_signal(sig: Optional[Signal]):
     if not sig:
         return
+    # V8-TWIN-FIX VF1/VF3: entry checkpoint + explicit dedup disposition.
+    # A TG PASS alone is not proof _add_signal (let alone V8's gate) ever
+    # ran -- this makes both stages directly observable.
+    try:
+        from memecoin import v8_telemetry as _v8_tel
+        _v8_tel.emit("add_signal_entered", event_id=getattr(sig, "event_id", ""),
+                     mint=sig.token_address, dex_id=getattr(sig, "dex_id", "") or "")
+    except Exception:
+        pass
     if _is_duplicate(sig.chain, sig.token_address, sig.signal_type):
+        try:
+            _v8_tel.emit("dedup_rejected", event_id=getattr(sig, "event_id", ""),
+                         mint=sig.token_address, result="rejected", reason="duplicate")
+        except Exception:
+            pass
         return
     with _lock:
         _signals.appendleft(sig)
@@ -962,6 +976,13 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
     import hashlib as _hashlib
     _event_id = _hashlib.sha256(f"{chain}:{address}:{_t0}".encode()).hexdigest()[:16]
 
+    # V8-TWIN-FIX VF1: first funnel-observability checkpoint.
+    try:
+        from memecoin import v8_telemetry as _v8_tel
+        _v8_tel.emit("telegram_received", event_id=_event_id, mint=address)
+    except Exception:
+        pass
+
     # ── Telemetry: start entry trace ──
     # P4' ACCEPTANCE CRITERIA:
     # "one real end-to-end jsonl trace from VPS (alert_received → trace_finished)"
@@ -1207,6 +1228,11 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                     _tel.finish_trace(_trace_id, final=False)
             except Exception:
                 pass
+            try:
+                _v8_tel.emit("screening_rejected", event_id=_event_id, mint=address,
+                              result="rejected", reason="no_dex_data")
+            except Exception:
+                pass
             with _sq_lock:
                 if address not in _screening_queue:
                     # Task 2: try to carry creator into the screening state so
@@ -1275,6 +1301,11 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
                     _tel.finish_trace(_trace_id, final=False)
             except Exception:
                 pass
+            try:
+                _v8_tel.emit("screening_rejected", event_id=_event_id, mint=address,
+                              result="rejected", reason=filter_name)
+            except Exception:
+                pass
             # Free the screening slot — filter-rejected tokens won't trade
             if chain == "solana":
                 try:
@@ -1303,10 +1334,21 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         _screen_latency = _t_screen_end - _t0
         log.info("TG PASS %s — bs=%.2f vol5m=%.0f vh1=%.0f pc5m=%.0f screen_took=%.1fs",
                  address[:8], bs, v5m, vh1, pc5m, _screen_latency)
+        try:
+            _v8_tel.emit("screening_passed", event_id=_event_id, mint=address,
+                          dex_id=screen.get("dex_id", ""), result="passed")
+        except Exception:
+            pass
 
         channel = "pumpdotfunalert"
         sig = make_social_alert_signal(chain, address, screen, source="telegram", channel=channel,
                                        event_id=_event_id)   # PROGRESS-FIX PF6
+        try:
+            _v8_tel.emit("signal_constructed", event_id=_event_id, mint=address,
+                          dex_id=screen.get("dex_id", ""),
+                          result="ok" if sig is not None else "sig_none")
+        except Exception:
+            pass
         # Attach timing for entry latency instrumentation (Step 2)
         sig._t_tg_receive  = _t0
         sig._t_screen_end  = _t_screen_end

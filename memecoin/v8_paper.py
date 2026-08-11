@@ -101,19 +101,22 @@ def _paths():
 _GATE_CAPTURE_WAIT_S = 0.5
 
 
-def compute_progress_at_signal(chain: str, token_address: str, event_id: str = "") -> float | None:
+def _get_capture_for_gate(chain: str, token_address: str, event_id: str = ""):
     """
-    PROGRESS-FIX PF6: no longer an independent measurement — reads the SAME
-    canonical ProgressCapture result (memecoin/progress_capture.py) that
-    research/tracker.py consumes for this event_id, so Research and V8
-    cannot disagree about the same signal (the old version called
-    get_screening_state() live, on its own timing, independently of what
-    research had already captured/stored).
+    PROGRESS-FIX PF6: reads the SAME canonical ProgressCapture result
+    (memecoin/progress_capture.py) that research/tracker.py consumes for
+    this event_id, so Research and V8 cannot disagree about the same
+    signal.
 
-    Returns None (fail-closed) on any failure — including the old race
-    where a freshly-created ScreeningState with vsol=0 falsely looked like
-    "no progress data" via a different code path; now that's just one of
-    several explicit progress_status failure reasons upstream.
+    V8-TWIN-FIX VF2: returns the full ProgressCapture (not just a float)
+    so the gate can check venue_state_at_signal, not just progress —
+    dex_id was never a reliable graduation signal (see RECEIPTS.md
+    V8-TWIN-FIX section; DexScreener indexes pump.fun bonding-curve
+    tokens as dex_id="pumpfun" long before graduation, so the old
+    `if dex_id: reject` check rejected every single indexed candidate
+    regardless of actual on-curve state).
+
+    Returns None (fail-closed) on any failure.
     """
     if chain != "solana":
         return None
@@ -127,25 +130,40 @@ def compute_progress_at_signal(chain: str, token_address: str, event_id: str = "
         cap = wait_for_capture(event_id, timeout_s=_GATE_CAPTURE_WAIT_S)
         if cap is None or cap.progress_status != "ok" or cap.progress_at_signal is None:
             return None
-        return cap.progress_at_signal
+        return cap
     except Exception as e:
-        log.debug("v8_paper: progress_at_signal lookup failed for %s (event %s): %s",
+        log.debug("v8_paper: capture lookup failed for %s (event %s): %s",
                   token_address[:8] if token_address else "?", event_id[:12], e)
         return None
 
 
+def compute_progress_at_signal(chain: str, token_address: str, event_id: str = "") -> float | None:
+    """Convenience wrapper kept for callers that only need the progress
+    value (see _get_capture_for_gate for the full-capture version used by
+    the gate itself, which also needs venue_state)."""
+    cap = _get_capture_for_gate(chain, token_address, event_id)
+    return cap.progress_at_signal if cap is not None else None
+
+
 def passes_v8_gate(signal) -> tuple[bool, str, float | None]:
-    """Returns (passed, reason, progress_at_signal)."""
-    progress = compute_progress_at_signal(
+    """Returns (passed, reason, progress_at_signal).
+
+    V8-TWIN-FIX VF2: gate is progress_at_signal < V8_PROGRESS_MAX AND
+    venue_state_at_signal == CURVE_ACTIVE. Never dex_id — see
+    _get_capture_for_gate's docstring for why that was wrong. UNKNOWN
+    venue state fails closed (rejected), same as unknown progress.
+    """
+    cap = _get_capture_for_gate(
         signal.chain, signal.token_address, getattr(signal, "event_id", ""),
     )
-    if progress is None:
+    if cap is None:
         return False, "progress_unknown", None
+    progress = cap.progress_at_signal
     if progress >= V8_PROGRESS_MAX:
         return False, f"progress_{progress:.2f}_over_{V8_PROGRESS_MAX:.2f}", progress
-    dex_id = (getattr(signal, "dex_id", "") or "").strip()
-    if dex_id:
-        return False, f"has_dex_id:{dex_id}", progress
+    venue = cap.venue_state_at_signal
+    if venue != "CURVE_ACTIVE":
+        return False, f"venue_state:{venue}", progress
     return True, "ok", progress
 
 
@@ -301,7 +319,21 @@ class V8PaperBook:
 
     def maybe_open(self, signal) -> None:
         """Called once per incoming signal (same funnel as v7's open_position).
-        Never raises — any failure here must not affect v7/live."""
+        Never raises — any failure here must not affect v7/live.
+
+        V8-TWIN-FIX VF1: v8_gate_entered is emitted as the literal first
+        statement, before already_open or any other return -- this is the
+        one checkpoint that proves maybe_open() was ever reached at all,
+        independent of what it decides.
+        """
+        _event_id = getattr(signal, "event_id", "") or ""
+        try:
+            from memecoin import v8_telemetry as _v8_tel
+            _v8_tel.emit("v8_gate_entered", event_id=_event_id,
+                         mint=getattr(signal, "token_address", ""),
+                         dex_id=getattr(signal, "dex_id", "") or "")
+        except Exception:
+            _v8_tel = None
         try:
             with self._lock:
                 already_open = any(
@@ -309,11 +341,30 @@ class V8PaperBook:
                     for p in self._positions.values()
                 )
             if already_open:
+                if _v8_tel is not None:
+                    try:
+                        _v8_tel.emit("v8_gate_rejected", event_id=_event_id,
+                                     mint=signal.token_address, result="rejected",
+                                     reason="already_open")
+                    except Exception:
+                        pass
                 return
             passed, reason, progress = passes_v8_gate(signal)
+            cap = _get_capture_for_gate(signal.chain, signal.token_address, _event_id)
+            venue = cap.venue_state_at_signal if cap is not None else "UNKNOWN"
+            psrc  = cap.progress_source if cap is not None else ""
             if not passed:
                 log.info("v8_paper: gate reject %s (event=%s) — %s",
-                         signal.token_symbol, getattr(signal, "event_id", "")[:12], reason)
+                         signal.token_symbol, _event_id[:12], reason)
+                if _v8_tel is not None:
+                    try:
+                        _v8_tel.emit("v8_gate_rejected", event_id=_event_id,
+                                     mint=signal.token_address, progress=progress,
+                                     progress_source=psrc, venue_state=venue,
+                                     dex_id=getattr(signal, "dex_id", "") or "",
+                                     result="rejected", reason=reason)
+                    except Exception:
+                        pass
                 return
             pos = _new_position(signal, progress)
             with self._lock:
@@ -321,6 +372,15 @@ class V8PaperBook:
                 self._save()
             log.info("v8_paper OPEN %s  progress=%.2f  entry=$%.10f  id=%s",
                      signal.token_symbol, progress, pos["entry_price"], pos["id"])
+            if _v8_tel is not None:
+                try:
+                    _v8_tel.emit("v8_opened", event_id=_event_id,
+                                 mint=signal.token_address, progress=progress,
+                                 progress_source=psrc, venue_state=venue,
+                                 dex_id=getattr(signal, "dex_id", "") or "",
+                                 result="opened", reason=pos["id"])
+                except Exception:
+                    pass
         except Exception as e:
             log.warning("v8_paper: maybe_open failed (non-fatal): %s", e)
 
