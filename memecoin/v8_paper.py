@@ -312,7 +312,8 @@ class V8PaperBook:
                 return
             passed, reason, progress = passes_v8_gate(signal)
             if not passed:
-                log.debug("v8_paper: gate reject %s — %s", signal.token_symbol, reason)
+                log.info("v8_paper: gate reject %s (event=%s) — %s",
+                         signal.token_symbol, getattr(signal, "event_id", "")[:12], reason)
                 return
             pos = _new_position(signal, progress)
             with self._lock:
