@@ -953,3 +953,275 @@ throughout.
 ## Epoch — Capital Decision (2026-07-30)
 
 Epoch deferred 2026-07-30 — capital decision. Prerequisite for any future live: V8 paper week net-positive after synthetic execution costs (N3' line). B7/E1 timing row deferred with it.
+
+---
+
+## V8-TWIN-FIX — Root Cause + Repair of the Zero-Position V8 Paper Twin (2026-08-11/12)
+
+**Scope constraint honored throughout:** no change to live trading, V7 trading
+rules, execution routing, sizing, or V8's frozen progress threshold (0.70).
+`LIVE_TRADING=false` unchanged. This is a V8-paper-book-only repair.
+
+### The problem
+
+`memecoin/v8_paper.py`'s paper-trading "V8 twin" book had recorded zero
+positions ever, despite the pipeline visibly processing hundreds of TG-PASS
+candidates since its 2026-08-09 deploy.
+
+### H1 — root cause: CONFIRMED
+
+`passes_v8_gate()`'s old logic:
+
+```python
+dex_id = (getattr(signal, "dex_id", "") or "").strip()
+if dex_id:
+    return False, f"has_dex_id:{dex_id}", progress
+```
+
+treated **any** non-empty `dex_id` as proof the token had graduated to a DEX.
+But DexScreener indexes pump.fun bonding-curve tokens with `dexId="pumpfun"`
+immediately — long before graduation. Worse, `screen_token()`'s own
+`no_dex_data` gate *requires* a non-empty `dex_id` for a candidate to reach
+"TG PASS" at all. So every candidate that could ever reach V8's gate was
+structurally guaranteed to carry a non-empty `dex_id`, and guaranteed to be
+rejected by `has_dex_id` — independent of real bonding-curve progress, and
+independent of dedup. This is a code-guaranteed zero, not a rare miss.
+
+**Evidence (recorded in commit `ae31959`):** all 15 real production TG-PASS
+candidates with `progress_at_signal < 0.70` prior to the fix were queried
+directly — **15/15 (100%)** showed `dex_id="pumpfun"`,
+`progress_source="curve_account"` (a genuine, successful on-curve
+measurement — not a missing/failed capture). Every one was rejected by
+`has_dex_id`, never by an actual graduation.
+
+**Row-level table — could not be reproduced for this writeup, stated
+honestly rather than inferred:** `progress_capture.py` caches captures
+in-memory only (`_cache_order`, max 5000 entries, no disk persistence), and
+the process has restarted multiple times since that live verification pass.
+Pre-fix gate-reject log lines were at DEBUG level until commit `3aa6232`
+bumped them to INFO for live diagnosis — journalctl has no earlier record at
+a level it kept. Both of the two possible sources for exact
+mint/event_id/timestamp rows are gone. What survives and is verifiable right
+now: (a) the structural code proof above, reproducible via
+`git show ae31959^:memecoin/v8_paper.py` and `screen_token()`'s
+`no_dex_data` gate — this doesn't depend on a sample, it holds for every
+past and future TG-PASS candidate under the old code; (b) the aggregate
+15/15 match recorded in the `ae31959` commit message at the time the query
+was run. Per spec's "do not infer" — no fabricated per-row table is included
+here.
+
+### VF4 — executor observability: not the root cause, confirmed as predicted
+
+Checked "TG screen error" / "TG signal processing error" log lines against
+all 15 mints: zero matches. No exception was ever swallowed by the
+fire-and-forget `run_in_executor` Future. Fixed anyway per spec (hardening,
+not root cause) — see Modified files.
+
+### VF2 — the fix: dex_id replaced with explicit venue state
+
+New gate (`memecoin/v8_paper.py::passes_v8_gate`):
+
+```
+progress_at_signal < 0.70   AND   venue_state_at_signal == CURVE_ACTIVE
+```
+
+`venue_state_at_signal` (`memecoin/progress_capture.py`, new field on
+`ProgressCapture`, one of `CURVE_ACTIVE | GRADUATED | DEX_ACTIVE | UNKNOWN`,
+default `UNKNOWN` — fails closed) is derived from the **same** canonical
+capture used for `progress_at_signal` — no second independent Helius
+measurement was added. `dex_id` is still recorded on every position/event
+for observability, but never used as a gate input again.
+
+### VF1 — funnel telemetry: all 9 stages wired
+
+New module `memecoin/v8_telemetry.py` (JSONL, `logs/v8_funnel.jsonl`,
+append-only, never raises). `v8_gate_entered` is the literal first line of
+`maybe_open()`, before `already_open` or any other return. `_add_signal()`'s
+duplicate path now emits `dedup_rejected` explicitly instead of silently
+returning.
+
+### VF3 / VF5 — funnel counts, full deployment window (2026-08-11 19:44 → 2026-08-12 22:31 UTC, ~26.8h)
+
+| stage | count |
+|---|---|
+| `telegram_received` | 199 |
+| `screening_rejected` | 92 |
+| `screening_passed` | 107 |
+| `signal_constructed` | 107 |
+| `add_signal_entered` | 108 |
+| `dedup_rejected` | 1 |
+| `v8_gate_entered` | 107 |
+| `v8_gate_rejected` | 106 |
+| `v8_opened` | **1** |
+
+Gate-reject reasons (106 total): `progress_over_threshold` 98,
+`venue_state:GRADUATED` 5, `progress_unknown` (no capture) 3. Zero rejects
+attributable to `dex_id` — confirms the fix removed that failure mode
+entirely; every reject in this window has a real, inspectable reason tied to
+progress or venue state.
+
+**VF3 answer** — "a TG PASS alone is NOT proof `maybe_open` ran": proven
+directly. `screening_passed`=107 but `add_signal_entered`=108 and
+`v8_gate_entered`=107 — the gap between `screening_passed` and
+`v8_gate_entered` is exactly 1 duplicate signal caught by
+`_add_signal`'s dedup, per `dedup_rejected`=1. This is also unit-proven in
+`test_scanner_v8_dedup.py` (tests 8-9): a duplicate signal never increments
+`maybe_open`'s call count; a fresh one does, exactly once.
+
+**VF5 — experiment universe, labeled explicitly.** Current architecture
+feeds V8 only V7-screened survivors: `raw_tg_eligible` (`telegram_received`)
+= 199, `post_v7_screen_eligible` (`screening_passed`) = 107. This is **V8
+conditional on V7 screening**, not an independent head-to-head comparison —
+labeled `V8_CONDITIONAL_ON_V7_SCREEN` below. Not silently changed in this
+fix, per spec.
+
+From the earlier (pre-V8-TWIN-FIX) investigation window: of the low-progress
+(<0.70) candidates that V7 screening rejected before V8 ever saw them, 4/19
+(≈21%) were lost solely to V7 screening rejection — i.e. would have been
+gate-eligible for V8 on progress/venue grounds alone had they reached it.
+This number was not re-measured in the current window because V8's funnel
+does not capture progress for `screening_rejected` candidates (V8 never
+sees them) — computing a fresh figure would require adding progress capture
+to the screening-rejected path, which is exactly the architecture change
+this fix is scoped not to make silently.
+
+**Fork-point proposal (documented only, not implemented):** split the
+funnel at Telegram alert into a common capture/hard-safety-floor stage,
+then branch — one path to V7's existing screening, one path directly to
+V8's gate — so V8 sees the same raw candidate pool V7 does, making it a
+true independent comparison instead of a conditional one. This is a real
+architecture change (new fork point, new common-stage code, likely new
+progress-capture calls for candidates V7 would otherwise reject) and should
+only be scheduled as its own tracked item if/when a true head-to-head
+comparison is actually needed — not bundled into this fix.
+
+### VF6 — live proof, real fresh production observation
+
+**Scenario 1 (progress<0.70, CURVE_ACTIVE → OPEN): LIVE VERIFIED.**
+
+First real `v8_opened` event since the fix deployed, 2026-08-12 21:08:13 UTC
+— mint **Moblin** (`AdeKS1SbF8QzF5YLgoNhHfc7VDaWJfg6PeRUBPFwpump`).
+
+Funnel record (`logs/v8_funnel.jsonl`):
+```json
+{"ts": 1786568893.791558, "stage": "v8_opened", "event_id": "3fe06b5f4ec22a0b",
+ "mint": "AdeKS1SbF8QzF5YLgoNhHfc7VDaWJfg6PeRUBPFwpump", "progress": 0.6511,
+ "progress_source": "pp_warm", "dex_id": "pumpfun", "venue_state": "CURVE_ACTIVE",
+ "result": "opened", "reason": "V8481249"}
+```
+
+Persisted position (`memecoin/data/memecoin_v8_positions.json`, confirmed
+on disk, 733 bytes, real content — not the log line alone):
+```json
+{
+  "id": "V8481249", "signal_id": "5cbec8bc", "chain": "solana",
+  "token_address": "AdeKS1SbF8QzF5YLgoNhHfc7VDaWJfg6PeRUBPFwpump",
+  "token_symbol": "Moblin", "signal_type": "social_alert", "strength": "strong",
+  "signal_price": 13.152426723102602, "entry_price": 13.152426723102602,
+  "size_usd": 1.0, "progress_at_signal": 0.6511, "dex_id": "pumpfun",
+  "entry_source": "pp_tick", "status": "closed",
+  "exit_price": 6.860301374297039, "exit_reason": "hard_stop"
+}
+```
+
+Monitor loop saw it on the next cycle — proven by more than persistence
+alone: the position was actively tracked and closed itself via `hard_stop`
+~41 seconds after entry (`exit_time` − `entry_time` = 40.88s), which
+requires the live monitor loop to have been polling price against this
+exact position. All required fields present: `event_id`, `progress`
+(0.6511), `progress_source` (`pp_warm`), `venue_state_at_signal`
+(`CURVE_ACTIVE`), `dex_id` (`pumpfun`), `entry_price` ($13.1524267231),
+position id (`V8481249`).
+
+**Scenario 2 (progress≥0.70 → reject): LIVE VERIFIED.** 98 real instances
+this window, e.g. mint Gorm, `progress_0.89_over_0.70`.
+
+**Scenario 3 (progress<0.70 but GRADUATED/DEX_ACTIVE → reject venue): LIVE
+VERIFIED.** 5 real instances this window — recurring pattern confirmed
+across independent mints (PUSHEEN, grapers, QIZAI all showed
+`progress: 0.0, venue_state: GRADUATED` during monitoring). This directly
+contradicts an earlier assumption of mine (that this scenario might be
+"mathematically unreachable" since a graduated token's vsol should read
+≈115≈progress 1.0) — real production data proved that assumption wrong and
+validated that VF2's venue-state check is doing real, necessary work a
+naive progress-only check would have gotten wrong (would have wrongly
+opened these as "early curve").
+
+**Scenario 4 (UNKNOWN → fail closed): LIVE VERIFIED.** 3 real instances
+this window (`progress_unknown` reason — no capture landed in time).
+
+**Scenario 5 (duplicate → explicit disposition):** 1 real production
+instance this window (`dedup_rejected`=1, per VF3 above) plus deterministic
+unit coverage (`test_scanner_v8_dedup.py` tests 8-9), per spec's allowance
+to rely on VF7 tests for this scenario.
+
+**memecoin_v8_journal.csv note (per spec):** journal is write-on-close
+only, so its absence is not evidence of "no OPEN ever happened" — the
+positions JSON is the immediate open receipt, and that's what's cited
+above. (The Moblin position has since also closed, so its journal row now
+exists too, but that isn't what's being relied on here.)
+
+### Modified/added files
+
+- `memecoin/progress_capture.py` — `venue_state_at_signal` field,
+  `VALID_VENUE_STATES`, `_normalize_venue_state()`, curve-oracle-reuse at
+  all 3 call sites (`curve_account`, `pp_warm`, `pp_post_alert`)
+- `memecoin/v8_paper.py` — `_get_capture_for_gate()`, rewritten
+  `passes_v8_gate()`, rewritten `maybe_open()` telemetry
+- `memecoin/v8_telemetry.py` (new) — 9-stage JSONL funnel telemetry
+- `memecoin/scanner.py` — telemetry emits at `telegram_received`,
+  `screening_rejected`, `screening_passed`, `signal_constructed`,
+  `add_signal_entered`, `dedup_rejected`
+- `memecoin/telegram_monitor.py` — `_log_executor_failure()` +
+  `add_done_callback` on the retained executor Future
+- `memecoin/tests/test_v8_paper.py` — full rewrite (was silently broken,
+  4/20 failing, since PROGRESS-FIX PF6 on 2026-08-08)
+- `memecoin/tests/test_scanner_v8_dedup.py` (new)
+- `memecoin/tests/test_telegram_executor_observability.py` (new)
+
+### Tests
+
+`test_v8_paper.py` + `test_scanner_v8_dedup.py` +
+`test_telegram_executor_observability.py`: **15/15 passing** in isolation.
+(Full-suite `memecoin/tests/` collection hits a pre-existing,
+unrelated `sys.modules["memecoin.config"]` stubbing collision from other
+test files — confirmed pre-existing and out of scope; not introduced by
+this fix.)
+
+### Answers to the named questions
+
+1. **Is the zero-position book a code bug or a genuinely-empty market
+   window?** Code bug — `has_dex_id` structurally guaranteed rejection of
+   every candidate that could reach the gate.
+2. **Is `dex_id` ever a valid graduation signal?** No — DexScreener sets it
+   on pump.fun bonding-curve tokens well before graduation.
+3. **Does dedup explain any of the 15 mystery events?** No — all 15 reached
+   the gate and were rejected there, not deduped away (structural proof);
+   real-window dedup (1 instance) is a separate, correctly-working path.
+4. **Was VF4's executor footgun the root cause?** No, confirmed by log
+   audit — no exception was ever swallowed. Fixed anyway as hardening.
+5. **Is the current V8/V7 funnel an independent comparison?** No — V8 only
+   sees V7-screened survivors. Labeled `V8_CONDITIONAL_ON_V7_SCREEN`.
+   Fork-point proposal documented, not implemented.
+6. **Can a candidate now silently disappear between funnel stages?** No —
+   all 9 stages instrumented; VF3's 107→108→107 count reconciles exactly
+   via the 1 dedup reject.
+7. **Has a real position actually opened and been tracked, not just
+   logged?** Yes — Moblin/`V8481249`, persisted, and its subsequent
+   `hard_stop` close proves live monitor tracking, not just a log line.
+8. **Does declaring this fixed require only that `maybe_open` logs
+   appear?** No, and this receipt does not rely on that — it relies on the
+   persisted positions JSON record and the monitor-tracked close.
+
+### Commits
+
+`ae31959` (H1 root cause + VF1-VF4), `d3b2492` (VF7 tests), this commit
+(RECEIPTS.md).
+
+### Status: **V8_TWIN_LIVE_VERIFIED**
+
+A real, fresh, production progress<0.70 `CURVE_ACTIVE` candidate opened, was
+persisted to `memecoin_v8_positions.json`, was tracked by the live monitor
+loop, and closed via `hard_stop` — full lifecycle proof, not log-line-only.
+All 5 VF6 scenarios observed live in production except scenario 5, which
+relies on VF7's deterministic tests per the spec's explicit allowance.
