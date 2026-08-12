@@ -1225,3 +1225,215 @@ persisted to `memecoin_v8_positions.json`, was tracked by the live monitor
 loop, and closed via `hard_stop` — full lifecycle proof, not log-line-only.
 All 5 VF6 scenarios observed live in production except scenario 5, which
 relies on VF7's deterministic tests per the spec's explicit allowance.
+
+---
+
+## WATCHDOG-BATCH Phase 1 — Cron Liveness (2026-08-12/13)
+
+**Purpose.** Every incident this session (PP feed silently dead 24h,
+V8's gate rejecting 100% of candidates for days, and — found live during
+this exact investigation — the K5 nightly cron silently disabled since
+2026-08-09) shared one shape: the system's own record of itself said
+"working" while production had silently diverged, and nothing caught the
+gap until a manual forensic audit. This batch is a standing mechanism to
+catch that class of drift automatically instead of by hand.
+
+**Scope decision.** The full design (25 subsections: cron liveness, feed
+liveness, funnel stuck-stage detection, test-suite drift, claim-vs-artifact
+checks, and an externally-scheduled LLM audit agent) was reviewed and
+approved as an architecture, but built in explicit phases rather than one
+unverifiable batch — building all of it before proving any of it live
+would recreate the exact problem it exists to solve. **Phase 1 = the
+deterministic, no-LLM cron-liveness layer** (W1, W2, W5, W10 from the
+design spec): the piece that would have caught the actual incidents found
+this session, shipped and live-verified before anything heavier.
+
+### Two more dead crons found while instrumenting this
+
+`quantbot-epoch` and `quantbot-v8` had the *identical* backslash-continuation
+bug as `quantbot-v8-inputs` (fixed 2026-08-12 as part of V8-TWIN-FIX
+monitoring) — all three rejected by the cron daemon since 2026-08-09
+18:46 UTC ("`Error: bad minute`", "`this crontab file will be ignored`").
+`logs/epoch_daily.jsonl` had exactly one entry (from the original manual
+install-time test), dated 2026-08-09, and had not grown since — the daily
+epoch capital-decision tracking had been silently dark for 4 days. Fixed
+directly on the VPS (rewrote both files as single-line entries, `systemctl
+restart cron`, confirmed zero new parser errors), then properly fixed via
+the git-tracked `deploy/cron.d/` mechanism below so this can't recur the
+same way.
+
+### H1: two independent questions, checked separately
+
+A file can be valid syntax and never fire (wrong permissions, disabled
+service) — and it can be invalid syntax while an artifact still looks
+fresh from a past manual run (the actual K5 incident: a manual test at
+install time updated the artifact and made it look current for 4 days
+while the real `/etc/cron.d` entry was silently rejected). Neither
+question alone is sufficient.
+
+**W5A — is the `/etc/cron.d` definition syntactically valid?**
+(`watchdog/checks/cron_static.py`) Parses each managed file line by line,
+classifying blank / comment / env-assignment / cron-entry / malformed;
+validates the 5 schedule fields with `croniter`; cross-checks recent
+`journalctl -u cron` output for the daemon's own parser-error lines
+against each managed filename (trusting the daemon over the parser when
+they disagree). Explicitly flags `UNMANAGED_SCHEDULE` for any
+`quantbot*` file in `/etc/cron.d` not in the registry — such a file has
+no execution-liveness coverage and that fact is itself surfaced, not
+silently assumed away.
+
+**W5B — did the scheduled job actually run?** (`watchdog/checks/cron_execution.py`,
+fed by `watchdog/exec_wrapper.py`) This is the direct fix for the K5
+incident: `exec_wrapper` wraps each cron-invoked command and writes a
+durable execution receipt (`job_receipts` table: `job_id`, `trigger_type`,
+`started_at`, `finished_at`, `exit_code`, `git_sha`) *tagged with who
+triggered it* — `trigger_type="scheduler"` when cron itself invokes it,
+`trigger_type="manual"` when a human runs the same wrapper by hand for
+testing. Only a `scheduler`-trigger receipt satisfies liveness; a manual
+receipt is structurally incapable of masquerading as proof of a real
+scheduled fire, closing exactly the gap that hid the original bug. Liveness
+is computed against the schedule's own expected-previous-fire time
+(`croniter`) plus a configured grace window, with an explicit boot-time
+grace so a reboot that skipped one legitimately-unreachable fire doesn't
+false-alarm (grace expires normally once a *post-boot* fire is overdue).
+
+### Architecture
+
+**W1 — Layer 1 does not run from cron.** A cron-scheduled watchdog cannot
+detect cron itself being dead — it dies with the thing it watches. Layer 1
+runs from `systemd` timers instead (`deploy/systemd/quantbot-watchdog-fast.timer`,
+every 5 min; `-slow.timer`, hourly, reserved for future heavier checks —
+no jobs registered on it yet). Both invoke the same engine
+(`python -m watchdog.runner --profile fast|slow`) with a non-blocking
+`flock` singleton lock so overlapping runs can't occur.
+
+**W2 — the watchdog watches itself.** Every run writes a `watchdog_runs`
+receipt (run_id, host, boot_id, git_sha, checks_due/completed,
+final_runner_status) *regardless of whether findings were CRITICAL* — a
+CRITICAL finding is the system working correctly, not a runner failure.
+`--self-test` exercises the full check-engine/state/notifier pipeline with
+a synthetic, clearly-labeled `[WATCHDOG TEST]` fault sequence (fires,
+dedups, recovers) and sends one real Telegram round-trip, without touching
+any real registry job or trading state.
+
+**W10 — alerting.** Standalone Telegram sender (`watchdog/notifier.py`) —
+deliberately does not import `app.alerts`, since this runs as an
+independent process outside the gunicorn app and can't assume
+`app.alerts.init()` ran in it; reads the same `TELEGRAM_BOT_TOKEN`/
+`TELEGRAM_CHAT_ID` env vars directly. Incident lifecycle: (none) → SUSPECT
+→ FIRING → RECOVERED, persisted in SQLite (WAL mode, explicit
+`BEGIN IMMEDIATE`/`COMMIT` transactions). CRITICAL findings fire
+immediately (deterministic proof, no need to wait for repeats); WARN
+requires 2 consecutive occurrences before paging. Reminder cadence: 2h
+first, 6h thereafter for CRITICAL; 6h for WARN. Exactly one RECOVERED
+message on resolution. At most one daily digest.
+
+### Two real bugs the fault-injection tests caught during development — not found any other way
+
+1. **`STATUS_UNKNOWN` was incrementing `consecutive_failures` like a real
+   failure**, and could silently downgrade an already-`FIRING` incident
+   back to `SUSPECT` if evidence briefly went missing (e.g. a transient
+   `journalctl` hiccup) — which would have un-paged a real ongoing
+   incident for no reason. Fixed: `FIRING` incidents are left untouched by
+   `UNKNOWN` evidence (`state.touch_incident_seen`); non-firing `UNKNOWN`
+   results record a zero-streak marker instead of an escalating one.
+2. **`state.upsert_incident()` always stamped with the real wall clock**,
+   silently ignoring the caller's own `now_ts` — this broke reminder-
+   interval math the instant a test (or any future replay/backfill use)
+   supplied a non-realtime clock, and was a latent (if usually
+   sub-second-harmless) inconsistency even in real production. Fixed by
+   threading `now_ts` through explicitly end to end.
+
+Both were caught because the test suite asserted actual behavior (message
+counts, state values) rather than "doesn't crash" — exactly the standard
+this whole batch exists to hold the rest of the codebase to.
+
+### Tests
+
+37/37 passing (`watchdog/tests/`, deterministic, no live VPS access
+needed), covering design-spec fault-injection items 1-6, 20-25, 27, 29-30:
+backslash-continuation detection (the exact real bug), valid-file
+non-flagging, missing-file/unreadable-file handling, severity capping by
+job registry ceiling, journal-evidence-unavailable → UNKNOWN not OK,
+manual-vs-scheduler receipt non-substitutability, stale-past-grace
+detection, not-yet-due no-false-alarm, boot-grace (including grace
+expiring correctly once a post-boot fire is overdue), day-boundary
+schedule arithmetic, 12-consecutive-failures → 1 alert + correct reminder
+cadence (not 12 messages), exactly-one recovery message, notifier-failure-
+doesn't-erase-the-incident, singleton lock (including idempotent release),
+DB-missing → created-not-silently-green, corrupt-DB → fails loud
+(`sqlite3.DatabaseError`, not silent success), manual receipts never
+satisfying a scheduler-only query, one crashing check not blocking
+independent checks, and liveness evidence surviving simulated log
+rotation (SQLite state is independent of any log file's lifecycle).
+
+Item #6 (DST) is a documented scope limitation, not an untested claim: the
+VPS runs in UTC and all schedule math uses Unix epoch floats, which are
+timezone-unambiguous by construction — there is no wall-clock DST
+transition to get wrong under UTC. If ever deployed against a non-UTC
+scheduler, this would need `croniter`'s timezone-aware datetime mode
+instead of raw epoch floats.
+
+### Live deployment receipts
+
+- Dependencies (`croniter`, `PyYAML`) installed on the VPS venv; both
+  added to `requirements.txt`.
+- `bash deploy/systemd/install.sh` — symlinked (not copied) both timer
+  pairs into `/etc/systemd/system/`, `daemon-reload`, `enable --now` both.
+  `systemctl list-timers` confirms both armed.
+- `bash deploy/cron.d/install.sh` — symlinked the 3 wrapped cron entries
+  into `/etc/cron.d/`, `systemctl restart cron`, confirmed zero new parser
+  errors in syslog post-install.
+- `python -m watchdog.runner --self-test` run live on the VPS: `PASS`,
+  real Telegram round-trip (CRITICAL fire → RECOVERED) sent and received.
+- **First real systemd-triggered fire confirmed**, 2026-08-12 23:45:03
+  UTC (`watchdog_runs` row `f57d547f...`, `final_runner_status=ok`,
+  6/6 checks completed). Findings on that run were all correctly
+  explained by real, known-recent history — not false positives:
+  `cron_static` WARN on `epoch_daily`/`v8_vs_v7_daily` because the cron
+  daemon's parser-error lines from the 23:21:46 fix were still inside the
+   1h journal lookback window (self-resolves once they age out);
+  `cron_execution` WARN on all 3 jobs because tonight's first scheduled
+  fires through the new wrapper (23:55, 23:58, 00:15 UTC) hadn't happened
+  yet at check time — accurate "no receipt yet," not a false alarm.
+
+### Symlink-installed, not copied — closing the exact gap that caused this batch
+
+`deploy/systemd/` and `deploy/cron.d/` are git-tracked and installed via
+`ln -sf`, not copied — a future schedule edit lands live on the next
+`git pull` alone. This is the direct fix for the meta-failure, not just
+the failure: the pre-fix cron entries were "documented in `RECEIPTS.md`
+as an instruction to add this cron entry" and then never actually
+re-applied when anyone touched them again. A symlink can't silently drift
+from the repo the way a one-time heredoc install could.
+
+### Modified/added files
+
+`watchdog/` (new package: `state.py`, `exec_wrapper.py`, `notifier.py`,
+`runner.py`, `checks/__init__.py`, `checks/cron_static.py`,
+`checks/cron_execution.py`, `checks.yaml`, `tests/*`), `deploy/systemd/*`,
+`deploy/cron.d/*` (new), `requirements.txt` (+`croniter`, `+PyYAML`),
+`.gitignore` (+`logs/watchdog/`, runtime SQLite state never committed).
+No trading-path file touched.
+
+### Deferred to later phases, not silently dropped
+
+Feed liveness (W6: PumpPortal real-tick-vs-fallback, Telegram connection
+state, research-pipeline upstream/downstream-stall), funnel stuck-stage
+detection (W7: generalizing V8-TWIN-FIX's `v8_funnel.jsonl` telemetry),
+test-suite drift (W8), claim-vs-artifact checks (W9), and the externally-
+scheduled Layer 2 LLM audit agent (W12-W17) — each needs its own
+live-verification pass, not bundled into one unverifiable batch. Phase 2
+starts immediately after this receipt (V8 funnel stuck-stage detection +
+Telegram feed liveness, both reusing existing telemetry with zero
+trading-path changes).
+
+### Status: **WATCHDOG_LAYER1_LIVE**
+
+Deterministic layer running and proven with a real systemd-triggered fire
+and correct findings against known ground truth. Not yet
+`WATCHDOG_LIVE_VERIFIED` per the spec's own bar — that requires the full
+24h acceptance window (including tonight's first real scheduler receipts
+landing) and Layer 2 (external LLM audit) existing at all, neither of
+which is true yet. No trading logic touched; `LIVE_TRADING=false`
+unchanged throughout.
