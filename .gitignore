@@ -14,6 +14,9 @@ memecoin/data/tg_session.session
 # Large raw data file (re-fetchable)
 data/historical_raw.json
 
+# watchdog runtime state -- SQLite DB + lock file, never committed
+logs/watchdog/
+
 # Keep logs in repo so GitHub Actions can commit daily results
 !logs/market_journal.csv
 !logs/live_scan_results.csv

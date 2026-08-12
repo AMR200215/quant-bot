@@ -1,0 +1,48 @@
+# watchdog/checks.yaml — machine-readable check registry (W4).
+#
+# No thresholds live in Python. Add a new managed cron job by adding a row
+# here AND wrapping its cron.d command with watchdog.exec_wrapper — a job
+# not wrapped will show as UNMANAGED_SCHEDULE by the static check but
+# CANNOT be liveness-checked (no receipts to compare against).
+
+managed_cron_dir: /etc/cron.d
+
+jobs:
+  - id: k5_nightly
+    description: "V8 freeze-gate nightly refresh (report.py + path_stats.py)"
+    cron_file: quantbot-v8-inputs
+    schedule: "15 0 * * *"
+    grace_minutes: 45
+    output_artifact: docs/V8_INPUTS.md
+    severity: WARN
+    profile: fast
+    runbook: |
+      journalctl -u cron --since "-2h" | grep -i "quantbot-v8-inputs\|bad minute\|syntax"
+      cat /etc/cron.d/quantbot-v8-inputs
+      sqlite3 logs/watchdog/state.db "select * from job_receipts where job_id='k5_nightly' order by started_at desc limit 5;"
+
+  - id: epoch_daily
+    description: "Epoch capital-decision daily PnL/trade log"
+    cron_file: quantbot-epoch
+    schedule: "55 23 * * *"
+    grace_minutes: 45
+    output_artifact: logs/epoch_daily.jsonl
+    severity: WARN
+    profile: fast
+    runbook: |
+      journalctl -u cron --since "-2h" | grep -i "quantbot-epoch\|bad minute\|syntax"
+      cat /etc/cron.d/quantbot-epoch
+      sqlite3 logs/watchdog/state.db "select * from job_receipts where job_id='epoch_daily' order by started_at desc limit 5;"
+
+  - id: v8_vs_v7_daily
+    description: "V8 vs V7 daily comparison log"
+    cron_file: quantbot-v8
+    schedule: "58 23 * * *"
+    grace_minutes: 45
+    output_artifact: docs/RECEIPTS.md (N6/N7 table row)
+    severity: WARN
+    profile: fast
+    runbook: |
+      journalctl -u cron --since "-2h" | grep -i "quantbot-v8 \|bad minute\|syntax"
+      cat /etc/cron.d/quantbot-v8
+      sqlite3 logs/watchdog/state.db "select * from job_receipts where job_id='v8_vs_v7_daily' order by started_at desc limit 5;"

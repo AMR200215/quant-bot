@@ -1,0 +1,12 @@
+[Unit]
+Description=quant-bot watchdog (slow profile) — heavier hourly checks
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/quant-bot
+EnvironmentFile=/root/quant-bot/.env
+ExecStart=/root/quant-bot/.venv/bin/python -m watchdog.runner --profile slow
+TimeoutStartSec=600
+Nice=10
+IOSchedulingClass=idle

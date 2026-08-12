@@ -1,0 +1,14 @@
+[Unit]
+Description=Run quant-bot watchdog (slow profile) hourly
+# Phase 1 has no jobs registered on the slow profile yet (checks.yaml's
+# managed cron jobs are all cheap enough to run on the fast profile) --
+# this unit exists so the slow lane doesn't need a new systemd rollout
+# when heavier checks (test-suite drift, batch_verify, etc.) land later.
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

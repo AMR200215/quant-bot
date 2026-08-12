@@ -1,0 +1,1 @@
+15 0 * * * root cd /root/quant-bot && set -a && . .env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id k5_nightly --schedule "15 0 * * *" --output-artifact docs/V8_INPUTS.md -- .venv/bin/python -m research.scripts.v8_inputs_nightly >> logs/v8_inputs_nightly_cron.log 2>&1

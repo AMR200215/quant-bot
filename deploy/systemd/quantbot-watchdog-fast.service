@@ -1,0 +1,11 @@
+[Unit]
+Description=quant-bot watchdog (fast profile) — cheap deterministic checks
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/quant-bot
+EnvironmentFile=/root/quant-bot/.env
+ExecStart=/root/quant-bot/.venv/bin/python -m watchdog.runner --profile fast
+TimeoutStartSec=90
+Nice=5

@@ -1,3 +1,4 @@
+croniter>=2.0.0
 cryptography>=42.0.0
 py-clob-client==0.34.6
 websocket-client>=1.7.0
@@ -20,6 +21,7 @@ pandas==3.0.1
 pycparser==3.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
+PyYAML>=6.0
 requests==2.32.5
 scipy==1.17.1
 scs==3.2.11
