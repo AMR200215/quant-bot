@@ -31,7 +31,7 @@ import yaml
 from watchdog import notifier as wd_notifier
 from watchdog import state as wd_state
 from watchdog.checks import CheckResult, STATUS_CRITICAL, STATUS_OK, STATUS_UNKNOWN, STATUS_WARN
-from watchdog.checks import cron_execution, cron_static
+from watchdog.checks import cron_execution, cron_static, telegram_feed, v8_funnel
 
 log = logging.getLogger("watchdog.runner")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -59,18 +59,40 @@ def _safe_run(fn, check_id_prefix: str, *args, **kwargs) -> list[CheckResult]:
 
 
 def run_checks(registry: dict, profile: str, conn, db_path: Optional[Path] = None) -> list[CheckResult]:
-    jobs = [j for j in registry.get("jobs", []) if j.get("profile", "fast") == profile]
-    if not jobs:
-        return []
-
-    cron_dir = registry.get("managed_cron_dir", "/etc/cron.d")
     since_iso = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(wd_state.now() - 3600))
-    journal_lines = cron_static.fetch_journal_cron_errors(since_iso)
-
     results: list[CheckResult] = []
-    results += _safe_run(cron_static.check_cron_static, "cron_static", jobs, cron_dir,
-                          journal_lines=journal_lines, journal_fetch_failed=journal_lines is None)
-    results += _safe_run(cron_execution.check_cron_execution, "cron_execution", jobs, conn)
+
+    jobs = [j for j in registry.get("jobs", []) if j.get("profile", "fast") == profile]
+    if jobs:
+        cron_dir = registry.get("managed_cron_dir", "/etc/cron.d")
+        journal_lines = cron_static.fetch_journal_cron_errors(since_iso)
+        results += _safe_run(cron_static.check_cron_static, "cron_static", jobs, cron_dir,
+                              journal_lines=journal_lines, journal_fetch_failed=journal_lines is None)
+        results += _safe_run(cron_execution.check_cron_execution, "cron_execution", jobs, conn)
+
+    for f in registry.get("funnels", []):
+        if f.get("profile", "fast") != profile:
+            continue
+        results += _safe_run(
+            v8_funnel.check_v8_funnel, f"funnel.{f['id']}",
+            funnel_path=REPO_ROOT / f["funnel_path"], grace_seconds=f.get("grace_seconds", 120),
+            severity_ceiling=f.get("severity", "CRITICAL"), check_id=f"funnel.{f['id']}",
+        )
+
+    for feed in registry.get("feeds", []):
+        if feed.get("profile", "fast") != profile:
+            continue
+        if feed["id"] == "telegram":
+            journal_lines = telegram_feed.fetch_journal_quantbot_lines(since_iso)
+            results += _safe_run(
+                telegram_feed.check_telegram_feed,
+                f"feed.{feed['id']}", journal_lines=journal_lines,
+                journal_fetch_failed=journal_lines is None,
+                funnel_path=REPO_ROOT / feed["funnel_path"],
+                stale_threshold_s=feed.get("stale_threshold_minutes", 120) * 60,
+                severity_ceiling=feed.get("severity", "CRITICAL"), check_id=f"feed.{feed['id']}",
+            )
+
     return results
 
 

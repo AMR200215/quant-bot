@@ -39,10 +39,38 @@ jobs:
     cron_file: quantbot-v8
     schedule: "58 23 * * *"
     grace_minutes: 45
-    output_artifact: docs/RECEIPTS.md (N6/N7 table row)
+    output_artifact: "docs/RECEIPTS.md (N6/N7 table row)"
     severity: WARN
     profile: fast
     runbook: |
       journalctl -u cron --since "-2h" | grep -i "quantbot-v8 \|bad minute\|syntax"
       cat /etc/cron.d/quantbot-v8
       sqlite3 logs/watchdog/state.db "select * from job_receipts where job_id='v8_vs_v7_daily' order by started_at desc limit 5;"
+
+# W7 (Phase 2): funnel stuck-stage / silent-disappearance detection.
+# Reuses logs/v8_funnel.jsonl (built for V8-TWIN-FIX) -- no new
+# instrumentation, no trading-path change.
+funnels:
+  - id: v8
+    description: "V8 candidate funnel terminal-disposition completeness"
+    funnel_path: logs/v8_funnel.jsonl
+    grace_seconds: 120
+    severity: CRITICAL
+    profile: fast
+    runbook: |
+      tail -50 logs/v8_funnel.jsonl
+      journalctl -u quantbot --since "-1h" | grep -i "v8_paper\|v8_gate"
+
+# W6B (Phase 2): feed liveness. Zero app-code changes -- both evidence
+# sources (journalctl self-reported states, v8_funnel.jsonl's
+# telegram_received stage) already exist.
+feeds:
+  - id: telegram
+    description: "Telegram monitor liveness (sole signal source in SOCIAL_ALERT_ONLY mode)"
+    funnel_path: logs/v8_funnel.jsonl
+    stale_threshold_minutes: 120
+    severity: CRITICAL
+    profile: fast
+    runbook: |
+      journalctl -u quantbot --since "-2h" | grep -i "telegram\|tg-monitor\|tg-watchdog"
+      python3 -c "from memecoin.telegram_monitor import get_tg_state; print(get_tg_state())"
