@@ -1708,3 +1708,157 @@ drift), W9 (claim-vs-artifact/`batch_verify` semantics), and Layer 2 (the
 externally-scheduled LLM audit agent, W12-W17) — still needed to reach
 `WATCHDOG_LIVE_VERIFIED`. No trading logic touched; `LIVE_TRADING=false`
 unchanged throughout.
+
+---
+
+## WATCHDOG-BATCH Phase 4 — Test-Suite Drift + Claim-vs-Artifact (2026-08-13)
+
+**Scope.** W8 (test-suite drift) and W9 (claim-vs-artifact verification),
+the last two items before Layer 2 (the externally-scheduled LLM audit
+agent, the final piece needed for `WATCHDOG_LIVE_VERIFIED`).
+
+### W9 — claim-vs-artifact verification (`watchdog/checks/batch_claims.py`)
+
+`tools/batch_verify.py` already does the hard part: `verify_batch()`
+already returns a fully structured per-item `GREEN`/`PARTIAL`/`FAIL`
+verdict dict, and `_check_receipt()` already distinguishes "section
+missing" (`FAIL`) from "section exists but `receipt_complete=false` or
+commit hash absent" (`PARTIAL`) from "fully backed" (`OK`). No `--json`
+flag needed, no separate claims registry built — `batches/*.yaml` already
+*is* the claims registry the design spec calls for; building a parallel
+one would have been redundant infrastructure over something that already
+existed and already worked.
+
+**What was actually missing, and it's real:** `main()`'s CLI exits
+`1 if any_fail else 0` — `PARTIAL` items exit `0`, identically to a
+fully-`GREEN` batch. Confirmed live against this project's own
+`v8_readiness.yaml`, unmodified, right now: **4 of 7 items (N2, N4, N6,
+N7) are `PARTIAL`**, and `batch_verify`'s own exit code would report this
+as fine. This check makes that distinction a real, continuously-monitored
+`WARN` instead of something only visible to someone who happens to run
+`--verbose` and read the table by hand.
+
+### W8 — test-suite drift (`watchdog/checks/test_drift.py`)
+
+Two checks, both static/subprocess-bounded — no arbitrary production-module
+imports inside the watchdog process itself, per the design spec's explicit
+safety requirement:
+
+1. **`check_stale_mocks()`** — the exact class of bug that left
+   `test_v8_paper.py` silently broken for 3 days during PROGRESS-FIX (it
+   mocked a symbol a prior commit had already removed, undetected until a
+   full-suite run was done by hand). Pure AST parsing of both the test
+   file (extract `patch()`/`patch.object()` targets) and the target
+   module (does the symbol still exist there) — never imports either
+   file. Reports `WARN`, not `CRITICAL`: static analysis of dynamic
+   attributes can false-positive, so this needs a human glance, not an
+   auto-page.
+2. **`check_test_collection()`** — `pytest --collect-only` as a bounded
+   subprocess, per test directory, run **separately** (not combined — the
+   combined tree has a pre-existing, unrelated `sys.modules` stubbing
+   collision across some `memecoin/tests` files, confirmed during
+   V8-TWIN-FIX and out of scope here). Collection failure (import/syntax
+   error) is a distinct, worse problem than a test merely failing its
+   assertions.
+
+### Two real false positives found and fixed while verifying against the actual repo — not synthetic fixtures
+
+1. **`check_stale_mocks` flagged `memecoin/journal_reconciler.py`'s
+   `read_sol_delta` as stale.** It's a defensive
+   `try: from x import y / except ImportError: y = None` pattern — the
+   module's own code comment literally says *"Tests patch this name
+   directly."* My AST scan only checked top-level statements; a name
+   assigned inside `try`/`except`/`if` blocks is still module-scoped (no
+   new scope introduced, unlike `def`/`class` bodies) but was invisible to
+   the naive scan. Fixed by descending into `try`/`except`/`if`/`else`
+   bodies specifically, while still correctly excluding function/class
+   bodies (which *do* introduce a new scope).
+2. **`check_test_collection` hardcoded `"python3"` as the subprocess
+   interpreter.** On a dev machine this resolves to system Python (no
+   `croniter`/`PyYAML` installed there), which falsely flagged watchdog's
+   own test suite — which passes 71/71 through the real venv — as broken
+   via `ModuleNotFoundError`. Fixed to default to `sys.executable` (the
+   currently-running interpreter), which is also correct on the VPS since
+   systemd's `ExecStart` already invokes `.venv/bin/python` directly.
+
+After both fixes: the stale-mock scan is clean (121 real, resolvable
+patch targets checked across the whole test tree, zero false positives)
+and the collection check correctly shows `memecoin/tests` failing — the
+real, already-known, still-unfixed pre-existing pollution issue, not
+fixed here, but now carrying a durable automated signal instead of
+depending on someone remembering to check by hand — with
+`research/tests`, `watchdog/tests`, and the top-level `tests/` all
+collecting cleanly.
+
+### Tests
+
+23 new fault-injection tests (85/85 total across the whole watchdog
+package), including regression guards locking in both false-positive
+fixes above, plus standard coverage: genuinely-removed symbol → flagged,
+third-party targets skipped (not guessed at), missing test dirs → `OK`
+(nothing to check), import errors → `WARN` not silently passed,
+`GREEN`/`PARTIAL`/`FAIL` batch verdicts mapped correctly, `PARTIAL`
+capped at the configured severity ceiling by default (documentation gaps
+aren't automatically page-worthy) but reachable at `CRITICAL` when
+configured to allow it.
+
+### Live verification
+
+Wired on the `slow` (hourly) profile — heavier than the fast-profile
+checks (AST scan across the whole test tree + subprocess `pytest`
+invocations, ~2s combined), consistent with the design spec's "do not run
+pytest every 5 minutes" guidance. Also made the runner's soft
+timeout-marker profile-aware (30s fast / 120s slow, previously a single
+fast-tuned constant that no longer fit once slow-profile checks got
+heavier) — this is a run-receipt annotation only; systemd's own
+`TimeoutStartSec` (90s fast / 600s slow) is the real hard kill and was
+unaffected.
+
+Confirmed against real production data on the VPS, then confirmed present
+and correct inside an actual systemd-triggered run (`watchdog_runs` row
+`d8315c137f844443`, 2026-08-13 02:03:07 UTC, 7/7 checks completed,
+`final_runner_status=ok`):
+
+```
+test_drift.stale_mocks                | OK   | 121 targets checked, 0 findings
+test_drift.collection.tests_memecoin  | WARN | pre-existing collection failure (confirmed, not new)
+test_drift.collection.tests_research  | OK   | collects cleanly
+test_drift.collection.tests_watchdog  | OK   | collects cleanly
+test_drift.collection.tests_quant-bot | OK   | collects cleanly
+claims.batch.rc_closure               | OK   | 3/3 GREEN
+claims.batch.v8_readiness             | WARN | 4/7 PARTIAL (N2, N4, N6, N7)
+```
+
+One methodology note, in the interest of not overclaiming live proof: the
+first attempt to confirm this landed inside a *real* systemd-triggered
+slow-profile run instead matched a manual verification run I'd made
+moments earlier (same `profile='slow'` value in the database, no
+distinction between manual and timer-triggered runs for watchdog's own
+self-checks the way `job_receipts` already distinguishes `trigger_type`
+for cron jobs). Caught before writing this receipt, re-verified against
+a run with `started_at` strictly after a reference timestamp taken before
+any manual check — the `02:03:07 UTC` run cited above is the genuine
+timer fire. **Layer 1's own runs don't yet carry a `trigger_type`
+distinction the way W5B's cron `job_receipts` do** — worth adding in a
+later pass if self-verification like this needs to happen often; noted
+here rather than silently worked around.
+
+### Modified/added files
+
+`watchdog/checks/batch_claims.py`, `watchdog/checks/test_drift.py`,
+`watchdog/tests/test_batch_claims.py`, `watchdog/tests/test_test_drift.py`
+(all new), `watchdog/checks.yaml` (+`test_drift:`, +`claims:` sections),
+`watchdog/runner.py` (wired both in, profile-aware timeout marker).
+
+### Status: **WATCHDOG_LAYER1_LIVE** (extended further)
+
+All Phase 1-4 checks live, tested (85/85), and proven against real
+production data and a genuine systemd-triggered slow-profile run. Two
+real false positives found and fixed by testing against the actual repo
+instead of trusting synthetic fixtures alone — exactly the discipline
+this whole system exists to enforce, applied to itself. Layer 1 is now
+feature-complete per the original design's deferred-scope list (minus the
+deliberately-skipped W6C). Only Layer 2 (the externally-scheduled LLM
+audit agent, W12-W17) remains before `WATCHDOG_LIVE_VERIFIED` is
+reachable. No trading logic touched; `LIVE_TRADING=false` unchanged
+throughout.
