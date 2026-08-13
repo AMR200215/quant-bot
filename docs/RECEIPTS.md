@@ -1437,3 +1437,134 @@ and correct findings against known ground truth. Not yet
 landing) and Layer 2 (external LLM audit) existing at all, neither of
 which is true yet. No trading logic touched; `LIVE_TRADING=false`
 unchanged throughout.
+
+---
+
+## WATCHDOG-BATCH Phase 2 — Funnel + Feed Liveness (2026-08-13)
+
+**Scope.** W7 (V8 funnel stuck-stage detection) and W6B (Telegram feed
+liveness), both reusing existing telemetry with zero trading-path changes,
+per the deferral list at the end of Phase 1's receipt.
+
+### W7 — V8 funnel terminal-disposition completeness (`watchdog/checks/v8_funnel.py`)
+
+Reuses `logs/v8_funnel.jsonl`, the 9-stage JSONL telemetry built for
+V8-TWIN-FIX. Checks that every `add_signal_entered` reaches
+`dedup_rejected` or `v8_gate_entered` within grace, and every
+`v8_gate_entered` reaches `v8_gate_rejected` or `v8_opened` within grace —
+the exact invariant that would have caught V8-TWIN-FIX's root cause
+(candidates entering the gate and being rejected by construction) within
+hours of deploy instead of days.
+
+**Deliberately does not implement a reject-rate/conversion-percentage
+anomaly detector.** Real production data (Phase-1-era V8-TWIN-FIX numbers:
+1 open / 107 gate entries over ~27h, ≈1%) is a *legitimate* baseline — a
+naive "too many rejects" threshold would have false-positived against
+this exact known-good behavior on day one. Terminal-disposition
+completeness is the safe invariant instead: true regardless of what the
+real accept/reject ratio happens to be, per the design spec's explicit
+"hard invariants are primary, conversion-rate anomalies are secondary and
+risky" guidance.
+
+### W6B — Telegram feed liveness (`watchdog/checks/telegram_feed.py`)
+
+`telegram_monitor.py` is the sole signal source in the current
+`SOCIAL_ALERT_ONLY` deployment mode — if it silently died, nothing else in
+the pipeline would ever fire. Combines two already-existing evidence
+sources, zero app-code changes: `journalctl -u quantbot` for
+`telegram_monitor.py`'s own self-reported `TELEGRAM_AUTH_REQUIRED` /
+"tg-monitor thread is dead" states (unambiguous → CRITICAL), cross-checked
+against `v8_funnel.jsonl`'s `telegram_received` stage as independent
+message-flow evidence. A quiet channel with no error signal reports WARN
+("ambiguous — could be a legitimately quiet channel or a silently dead
+connection"), never CRITICAL and never silently OK — per the design
+spec's explicit requirement that silence alone is never proof of death.
+
+### Tests
+
+15 new fault-injection tests (52/52 total across the whole watchdog
+package), covering design-spec items 9-10 and 13-15: AUTH_REQUIRED/
+thread-dead → CRITICAL, a legitimately-quiet channel not mislabeled
+disconnected, missing-terminal-disposition detection, n=1-within-grace
+producing no false alarm, and the specific real-production shape (10
+candidates, 10 explicit rejects) correctly *not* flagged as a silent
+disappearance.
+
+### Live verification — and a real, unrelated bug found and fixed along the way
+
+Both checks confirmed `OK` against real production data in a manual run
+(872 real funnel events all accounted for; last real Telegram message 8
+minutes old), then confirmed present and correct inside an actual
+systemd-timer-triggered run (`watchdog_runs` row `97c4c3124ea64d33`,
+2026-08-13 00:00:00 UTC, 8/8 checks completed).
+
+**While confirming that run's cron-liveness findings, found the wrapped
+cron jobs were not actually landing scheduler receipts despite firing.**
+`quantbot-v8` fired via cron at 23:58:01 (confirmed in `journalctl`) but
+left zero trace anywhere — no output log file, no `job_receipts` row.
+
+**Root cause:** `. .env` (bare filename, no `/`) makes POSIX `sh`'s
+dot-builtin search `$PATH` rather than the current directory — under
+cron's minimal `PATH`, `.env` isn't found even though `cd /root/quant-bot`
+had already run moments earlier in the same command chain. The failed
+`. .env` short-circuits the `&&` chain before it ever reaches the actual
+command — and since the `>>` redirect is bound only to the *last* command
+in the chain, nothing gets written anywhere, at all, silently. **This
+predates today's work** — the same `. .env` pattern was in the original
+pre-fix cron lines — but was never observable before, because the
+backslash-continuation syntax bug (fixed earlier the same day) kept these
+jobs from running at all. Two independent bugs stacked on the same three
+files; fixing the first is what finally exposed the second.
+
+Fixed by sourcing `./.env` instead (commit `638bd8b`). Verified in three
+independent, increasingly strong ways before considering this closed:
+1. Reproduced the failure via `env -i PATH=/usr/bin:/bin sh -c "..."`
+   matching cron's real minimal environment, confirmed the fix resolves it.
+2. Installed a synthetic one-off cron.d entry firing ~3 minutes out;
+   confirmed a real `trigger_type=scheduler` receipt landed
+   (`exit_code=0`) from an actual cron fire, not a manual simulation.
+3. **Waited for `k5_nightly`'s real, unmodified, production 00:15 UTC
+   fire** (the actual nightly `report.py` + `path_stats.py` run, not a
+   synthetic stand-in) — landed with `trigger_type=scheduler`,
+   `exit_code=0`, ~122s real runtime, and a genuine new
+   `## [K5 nightly] 2026-08-13` section appended to `docs/V8_INPUTS.md`.
+   Re-ran the watchdog immediately after: all 8 checks now report `OK`,
+   including `cron_execution.k5_nightly`.
+
+**One anomaly found and honestly left open, not swept under the
+rug:** `quantbot-epoch` (`55 23 * * *`) produced **zero** `journalctl -u
+cron` invocation line at all at 23:55:01 — not a failure after invocation
+like `quantbot-v8`, but no invocation whatsoever, despite the file being
+byte-structurally identical to `quantbot-v8`'s (compared via `xxd`, same
+trailing newline, same line count, no hidden characters), parsing cleanly
+by both the daemon and `cron_static.py`, and correctly symlinked with the
+same permissions. Not reproduced despite investigation (hexdump
+comparison, journal search across the full day, schedule-collision check,
+`crontab -l` cross-check). Given `quantbot-epoch`'s next real fire isn't
+until tonight's 23:55 UTC, this is left as an open, explicitly-flagged
+item rather than a claimed root cause — and the watchdog itself (W5B) is
+now exactly the mechanism that will catch a recurrence automatically:
+if it misses again, `cron_execution.epoch_daily` will report CRITICAL
+once the 45-minute grace expires, without anyone needing to notice by
+hand. This is the intended design working as built, applied to itself.
+
+### Modified/added files
+
+`watchdog/checks/v8_funnel.py`, `watchdog/checks/telegram_feed.py`,
+`watchdog/tests/test_v8_funnel.py`, `watchdog/tests/test_telegram_feed.py`
+(all new), `watchdog/checks.yaml` (+`funnels:`/`feeds:` sections),
+`watchdog/runner.py` (wired both into `run_checks()`),
+`deploy/cron.d/quantbot-{epoch,v8,v8-inputs}` (`. .env` → `. ./.env`).
+
+### Status: **WATCHDOG_LAYER1_LIVE** (extended)
+
+Both Phase 2 checks live, tested, and proven against real production data
+and a real systemd-triggered run. The `.env` bug found in the process is
+fixed and proven via a real, unmodified production job's actual scheduled
+fire — not a simulation. One anomaly (`quantbot-epoch`'s single missed
+23:55 invocation) remains open and explicitly flagged, with the
+watchdog's own W5B check now positioned to catch a recurrence
+automatically at tonight's next fire. Still not `WATCHDOG_LIVE_VERIFIED`
+— that requires the full 24h acceptance window plus Layer 2, neither of
+which exists yet. No trading logic touched; `LIVE_TRADING=false`
+unchanged throughout.
