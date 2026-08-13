@@ -106,3 +106,37 @@ pipelines:
     profile: fast
     runbook: |
       tail -20 research/spool/failed_inserts.jsonl
+
+# W8 (Phase 4): test-suite drift. Heavier than the fast-profile checks
+# (AST scan across the whole test tree + subprocess pytest --collect-only
+# per directory, ~2s combined) -- slow/hourly profile, not fast/5-min.
+test_drift:
+  - id: stale_mocks
+    description: "patch()/patch.object() targets that no longer exist in their resolved module (static AST only)"
+    severity: WARN
+    profile: slow
+    runbook: |
+      python3 -m watchdog.checks.test_drift  # not a CLI yet -- see evidence.findings in check_results
+
+  - id: collection
+    description: "pytest --collect-only per test directory (memecoin/tests, research/tests, watchdog/tests, tests/), run separately -- the combined tree has a pre-existing, unrelated sys.modules stubbing collision across some files"
+    severity: WARN
+    profile: slow
+    runbook: |
+      .venv/bin/python -m pytest --collect-only -q memecoin/tests
+      .venv/bin/python -m pytest --collect-only -q research/tests
+      .venv/bin/python -m pytest --collect-only -q watchdog/tests
+      .venv/bin/python -m pytest --collect-only -q tests
+
+# W9 (Phase 4): claim-vs-artifact verification. batches/*.yaml (via
+# tools/batch_verify.py, already returns a structured verdict dict --
+# no new claims registry needed) already distinguishes GREEN/PARTIAL/FAIL;
+# this makes that distinction continuously monitored instead of only
+# visible to someone reading `--verbose` output by hand.
+claims:
+  - id: batch_verify
+    description: "batches/*.yaml claim-vs-RECEIPTS.md verification -- PARTIAL is not GREEN even though batch_verify's own CLI exits 0 for both"
+    severity: WARN
+    profile: slow
+    runbook: |
+      .venv/bin/python -m tools.batch_verify --all --verbose

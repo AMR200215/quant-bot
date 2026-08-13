@@ -31,14 +31,24 @@ import yaml
 from watchdog import notifier as wd_notifier
 from watchdog import state as wd_state
 from watchdog.checks import CheckResult, STATUS_CRITICAL, STATUS_OK, STATUS_UNKNOWN, STATUS_WARN
-from watchdog.checks import cron_execution, cron_static, pumpportal_feed, research_pipeline, telegram_feed, v8_funnel
+from watchdog.checks import (
+    batch_claims, cron_execution, cron_static, pumpportal_feed, research_pipeline,
+    telegram_feed, test_drift, v8_funnel,
+)
 
 log = logging.getLogger("watchdog.runner")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REGISTRY_PATH = REPO_ROOT / "watchdog" / "checks.yaml"
-RUN_TIMEOUT_SEC = 60  # hard cap; fast profile must stay cheap
+# Soft, after-the-fact marker on the run receipt only (checks have already
+# all completed by the time this is checked -- systemd's own
+# TimeoutStartSec, 90s for fast / 600s for slow, is the real hard kill).
+# Profile-aware since Phase 4 added subprocess-based slow-profile checks
+# (pytest --collect-only, AST scan across the whole test tree) that can
+# legitimately take longer than the fast profile's budget without that
+# being a real problem.
+RUN_TIMEOUT_SEC = {"fast": 30, "slow": 120}
 
 
 def load_registry(path: Optional[Path] = None) -> dict:
@@ -116,6 +126,28 @@ def run_checks(registry: dict, profile: str, conn, db_path: Optional[Path] = Non
                 failed_inserts_path=REPO_ROOT / pl["failed_inserts_path"],
                 lookback_seconds=pl.get("lookback_hours", 2) * 3600,
                 severity_ceiling=pl.get("severity", "WARN"), check_id=f"pipeline.{pl['id']}",
+            )
+
+    test_drift_jobs = [t for t in registry.get("test_drift", []) if t.get("profile", "fast") == profile]
+    for td in test_drift_jobs:
+        if td["id"] == "stale_mocks":
+            results += _safe_run(
+                test_drift.check_stale_mocks, "test_drift.stale_mocks",
+                severity_ceiling=td.get("severity", "WARN"),
+            )
+        elif td["id"] == "collection":
+            results += _safe_run(
+                test_drift.check_test_collection, "test_drift.collection",
+                severity_ceiling=td.get("severity", "WARN"),
+            )
+
+    for claim in registry.get("claims", []):
+        if claim.get("profile", "fast") != profile:
+            continue
+        if claim["id"] == "batch_verify":
+            results += _safe_run(
+                batch_claims.check_batch_verify, "claims.batch",
+                severity_ceiling=claim.get("severity", "WARN"),
             )
 
     return results
@@ -217,7 +249,7 @@ def main(argv=None) -> int:
 
         wd_notifier.maybe_send_daily_digest(conn, _digest_text, send=not args.no_send)
 
-        if time.monotonic() - t0 > RUN_TIMEOUT_SEC:
+        if time.monotonic() - t0 > RUN_TIMEOUT_SEC.get(args.profile, 60):
             final_status = "timeout_exceeded"
         wd_state.record_run_finish(conn, run_id, checks_completed, final_status)
         return 0
