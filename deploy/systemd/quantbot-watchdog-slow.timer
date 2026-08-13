@@ -6,9 +6,14 @@ Description=Run quant-bot watchdog (slow profile) hourly
 # when heavier checks (test-suite drift, batch_verify, etc.) land later.
 
 [Timer]
-OnCalendar=hourly
+# :03 past the hour, not :00 -- the fast timer's *:0/5 schedule also fires
+# at :00 every hour, so "hourly" (:00) guaranteed a singleton-lock
+# collision on every single run. The collision itself was handled
+# correctly (no overlapping runs), but it's needless lock contention this
+# avoids entirely rather than just tolerating.
+OnCalendar=*-*-* *:03:00
 Persistent=true
-AccuracySec=5min
+AccuracySec=1min
 
 [Install]
 WantedBy=timers.target

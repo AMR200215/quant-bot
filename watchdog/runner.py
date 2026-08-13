@@ -141,7 +141,15 @@ def main(argv=None) -> int:
     lock = wd_state.SingletonLock(Path(args.lock_path) if args.lock_path else None)
     if not lock.acquire():
         log.warning("watchdog: another instance holds the singleton lock, skipping this run")
-        return 75  # EX_TEMPFAIL-ish: expected/benign skip, not a runner failure
+        # Exit 0, not a Unix sysexits-style temp-fail code: systemd's default
+        # Type=oneshot semantics treat ANY non-zero exit as a service
+        # failure (no SuccessExitStatus= allowlist configured), which would
+        # mark this unit "failed" in `systemctl status` for a benign,
+        # expected outcome -- exactly the kind of misleading self-reported
+        # state this whole system exists to prevent. A lock-contention skip
+        # is this run correctly deferring to the one that's already
+        # running, not a runner malfunction.
+        return 0
 
     t0 = time.monotonic()
     run_id = wd_state.new_run_id()

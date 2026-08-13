@@ -68,6 +68,25 @@ class TestRunnerFaultInjection(unittest.TestCase):
         ok = wd_runner.run_self_test(self.conn)
         self.assertTrue(ok)
 
+    def test_singleton_lock_contention_exits_zero_not_a_failure_code(self):
+        """Regression: systemd's default Type=oneshot semantics treat ANY
+        non-zero exit as a service failure. A benign lock-contention skip
+        (found live: quantbot-watchdog-slow.service reported 'failed' every
+        hour because fast's *:0/5 and slow's hourly both fire at :00) must
+        exit 0 -- it's this run correctly deferring to one already in
+        progress, not a runner malfunction."""
+        lock_path = self.tmp_path / "runner.lock"
+        held_lock = wd_state.SingletonLock(lock_path)
+        self.assertTrue(held_lock.acquire())
+        try:
+            rc = wd_runner.main([
+                "--profile", "fast", "--db-path", str(self.tmp_path / "state.db"),
+                "--lock-path", str(lock_path), "--no-send",
+            ])
+            self.assertEqual(rc, 0)
+        finally:
+            held_lock.release()
+
 
 if __name__ == "__main__":
     unittest.main()
