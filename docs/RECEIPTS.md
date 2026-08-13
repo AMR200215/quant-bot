@@ -1568,3 +1568,143 @@ automatically at tonight's next fire. Still not `WATCHDOG_LIVE_VERIFIED`
 — that requires the full 24h acceptance window plus Layer 2, neither of
 which exists yet. No trading logic touched; `LIVE_TRADING=false`
 unchanged throughout.
+
+---
+
+## WATCHDOG-BATCH Phase 3 — PumpPortal Feed + Research Pipeline Liveness (2026-08-13)
+
+**Scope.** W6A (PumpPortal tick feed liveness) and W6D (research pipeline
+upstream-flowing/downstream-stalled detection), the two remaining
+higher-value items from the Phase 1 deferral list. **W6C (an active
+Solana/Helius RPC probe) was deliberately not built** — `SOCIAL_ALERT_ONLY`
+mode currently runs zero RPC-dependent code paths (whale wallet polling,
+market scanner, pumpfun listener, near-miss poller are all off), and
+`CLAUDE.md` explicitly directs against adding anything that increases
+Helius RPC call volume on the downgraded free plan. Building an active
+probe now would violate that directive for a check with near-zero current
+value; revisit if/when those code paths come back online.
+
+### W6A — PumpPortal feed liveness (`watchdog/checks/pumpportal_feed.py`)
+
+The PP tick feed was silently dead for 24h earlier in this project's
+history — ~$36 of real losses before it was root-caused. K2 already added
+an in-process tick deadman (`_check_tick_deadman`), but it dies with the
+process it watches; this closes the same class of gap Layer 1 closes
+everywhere else — an independent, externally-scheduled check reading
+durable evidence (`journalctl`) instead of trusting the in-process check's
+own continued existence. Reuses `telegram_monitor.py`'s pattern: journal
+lines already logged by `pumpportal_monitor.py` (WS connect, WS error, K2's
+own tick-deadman warnings), zero new instrumentation.
+
+**Checked against real production logs before writing this, and glad it
+was:** PumpPortal reconnects roughly every 45-60 seconds by *deliberate
+design* (`"PumpPortal using pre-warmed rotation WS (gap <100ms)"` — a
+rotation strategy, not a failure loop). A naive "too many reconnects"
+threshold would have been a permanent false positive against completely
+normal behavior from day one. The check never evaluates reconnect
+frequency at all — only actual error/deadman evidence — with a regression
+test locking this in (30 reconnects, zero errors → `OK`, not flagged).
+
+### W6D — research pipeline stall detection (`watchdog/checks/research_pipeline.py`)
+
+Two independent signals, both reusing already-existing on-disk state with
+zero new instrumentation:
+
+1. **Queue consumption lag** — `research/data/signal_queue.jsonl` (written
+   by `scanner.py`) vs `research/data/.queue_offset` (persisted by
+   `research.tg_listener.FileQueueListener` after each processed line). A
+   large, sustained gap with the queue still growing is exactly
+   "upstream flowing, downstream stalled" — the same shape as the
+   historical `pp_vsol`-never-reached-Supabase bug, just at an earlier
+   pipeline stage.
+2. **Spool growth** — `research/spool/failed_inserts.jsonl` (written by
+   `research/spool/writer.py` whenever a Supabase insert fails) is direct,
+   durable evidence of active data loss. **Growth-based, not
+   total-count-based**: the real file already has 68 historical lines from
+   a genuine bug (`progress_capture_lag_ms` — a float — rejected by an
+   `integer`-typed Supabase column), confirmed dormant since 2026-08-08. A
+   naive "any lines exist" check would have alarmed on 5-day-old history;
+   this one correctly reports `OK` because nothing has been appended
+   recently, with a regression test locking that in.
+
+### Tests
+
+19 new fault-injection tests (71/71 total across the whole watchdog
+package), including the two regression guards above and standard
+coverage: deadman fire → `CRITICAL` (`PRIMARY_FEED_DEGRADED`), suppressed
+weekly deadman note ≠ critical, error-more-recent-than-connect → `WARN`,
+missing queue/offset files → `UNKNOWN` not `OK`, offset-ahead-of-file-size
+(rotation/truncation) → `UNKNOWN` not a guess, small gap within threshold
+→ no false alarm, minimum-sample floor on spool alerts (never fire on
+n=1-2), malformed spool lines skipped not fatal.
+
+### A real bug found and fixed along the way, unrelated to the new checks
+
+While checking whether `research.main` was even running (confirmed: yes,
+separate `quantbot-research.service`, distinct from the main trading app),
+`systemctl list-units` showed **`quantbot-watchdog-slow.service` as
+`failed`** — the watchdog's own infrastructure, one hour after Phase 1/2
+deployment.
+
+**Root cause, and it was mine:** `runner.py` returned exit code `75` for a
+benign, expected singleton-lock-contention skip (W1's own no-overlapping-
+runs guarantee working correctly). systemd's default `Type=oneshot`
+semantics treat *any* non-zero exit as a service failure (no
+`SuccessExitStatus=` configured) — the skip itself was correct, only the
+exit code was wrong, and the misreport was exactly the kind of "system
+claims broken when it's fine" (inverted from the usual "claims fine when
+broken," but the same root failure to trust primary evidence) this whole
+project exists to prevent. Compounding it: the fast timer (`*:0/5`) and
+slow timer (`hourly`) both fire at `:00`, guaranteeing lock contention —
+and therefore this misreport — every single hour.
+
+Fixed both: exit `0` on lock-contention skip, and slow now fires at
+`:03` past the hour instead of `:00`, removing the guaranteed collision
+rather than merely tolerating it. Regression test added. Verified live:
+`systemctl status quantbot-watchdog-slow.service` now shows
+`code=exited, status=0/SUCCESS`.
+
+### Live verification
+
+All 5 new checks (`feed.pumpportal`, `pipeline.research_queue_lag`,
+`pipeline.research_spool`, plus re-confirmation of Phase 2's checks)
+confirmed `OK` against real production data in a manual run, then
+confirmed present and correct inside an actual systemd-triggered run
+(`watchdog_runs` row `b33558022db04b4b`, 2026-08-13 01:13:00 UTC, 11/11
+checks completed, `final_runner_status=ok`):
+
+```
+funnel.v8                    | OK   | 888 events, all accounted for
+feed.telegram                | OK   | last message 504s ago
+feed.pumpportal               | OK   | most recent WS event: successful connect
+pipeline.research_queue_lag   | OK   | consumer caught up (gap=0 bytes)
+pipeline.research_spool       | OK   | 0 recent failures (68 historical, dormant)
+```
+
+`cron_execution.epoch_daily`/`v8_vs_v7_daily` still correctly show `WARN`
+("no scheduler execution receipt ever recorded") — expected and accurate,
+not a regression: their real next scheduled fires (which will prove the
+`.env` fix under their actual production schedule, not a synthetic
+stand-in) aren't until tonight's 23:55/23:58 UTC.
+
+### Modified/added files
+
+`watchdog/checks/pumpportal_feed.py`, `watchdog/checks/research_pipeline.py`,
+`watchdog/tests/test_pumpportal_feed.py`, `watchdog/tests/test_research_pipeline.py`
+(all new), `watchdog/checks.yaml` (+`pumpportal` feed, +`pipelines:`
+section), `watchdog/runner.py` (wired both in, reused the single
+`journalctl -u quantbot` fetch across telegram+pumpportal), `watchdog/runner.py`
++ `watchdog/tests/test_runner.py` + `deploy/systemd/quantbot-watchdog-slow.timer`
+(the lock-contention exit-code fix).
+
+### Status: **WATCHDOG_LAYER1_LIVE** (extended further)
+
+All Phase 1-3 checks live, tested (71/71), and proven against real
+production data and real systemd-triggered runs. The watchdog's own
+infrastructure bug (slow timer misreporting failure) found and fixed
+before it could erode trust in `systemctl status` as a signal. Remaining
+deferred scope: W6C (explicitly skipped, see above), W8 (test-suite
+drift), W9 (claim-vs-artifact/`batch_verify` semantics), and Layer 2 (the
+externally-scheduled LLM audit agent, W12-W17) — still needed to reach
+`WATCHDOG_LIVE_VERIFIED`. No trading logic touched; `LIVE_TRADING=false`
+unchanged throughout.
