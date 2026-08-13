@@ -31,7 +31,7 @@ import yaml
 from watchdog import notifier as wd_notifier
 from watchdog import state as wd_state
 from watchdog.checks import CheckResult, STATUS_CRITICAL, STATUS_OK, STATUS_UNKNOWN, STATUS_WARN
-from watchdog.checks import cron_execution, cron_static, telegram_feed, v8_funnel
+from watchdog.checks import cron_execution, cron_static, pumpportal_feed, research_pipeline, telegram_feed, v8_funnel
 
 log = logging.getLogger("watchdog.runner")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -79,18 +79,43 @@ def run_checks(registry: dict, profile: str, conn, db_path: Optional[Path] = Non
             severity_ceiling=f.get("severity", "CRITICAL"), check_id=f"funnel.{f['id']}",
         )
 
-    for feed in registry.get("feeds", []):
-        if feed.get("profile", "fast") != profile:
+    active_feeds = [f for f in registry.get("feeds", []) if f.get("profile", "fast") == profile]
+    if active_feeds:
+        # telegram and pumpportal both read journalctl -u quantbot -- fetch once, reuse.
+        quantbot_journal_lines = telegram_feed.fetch_journal_quantbot_lines(since_iso)
+        for feed in active_feeds:
+            if feed["id"] == "telegram":
+                results += _safe_run(
+                    telegram_feed.check_telegram_feed,
+                    f"feed.{feed['id']}", journal_lines=quantbot_journal_lines,
+                    journal_fetch_failed=quantbot_journal_lines is None,
+                    funnel_path=REPO_ROOT / feed["funnel_path"],
+                    stale_threshold_s=feed.get("stale_threshold_minutes", 120) * 60,
+                    severity_ceiling=feed.get("severity", "CRITICAL"), check_id=f"feed.{feed['id']}",
+                )
+            elif feed["id"] == "pumpportal":
+                results += _safe_run(
+                    pumpportal_feed.check_pumpportal_feed,
+                    f"feed.{feed['id']}", journal_lines=quantbot_journal_lines,
+                    journal_fetch_failed=quantbot_journal_lines is None,
+                    severity_ceiling=feed.get("severity", "CRITICAL"), check_id=f"feed.{feed['id']}",
+                )
+
+    for pl in registry.get("pipelines", []):
+        if pl.get("profile", "fast") != profile:
             continue
-        if feed["id"] == "telegram":
-            journal_lines = telegram_feed.fetch_journal_quantbot_lines(since_iso)
+        if pl["id"] == "research_queue_lag":
             results += _safe_run(
-                telegram_feed.check_telegram_feed,
-                f"feed.{feed['id']}", journal_lines=journal_lines,
-                journal_fetch_failed=journal_lines is None,
-                funnel_path=REPO_ROOT / feed["funnel_path"],
-                stale_threshold_s=feed.get("stale_threshold_minutes", 120) * 60,
-                severity_ceiling=feed.get("severity", "CRITICAL"), check_id=f"feed.{feed['id']}",
+                research_pipeline.check_queue_lag, f"pipeline.{pl['id']}",
+                queue_path=REPO_ROOT / pl["queue_path"], offset_path=REPO_ROOT / pl["offset_path"],
+                severity_ceiling=pl.get("severity", "WARN"), check_id=f"pipeline.{pl['id']}",
+            )
+        elif pl["id"] == "research_spool":
+            results += _safe_run(
+                research_pipeline.check_spool_growth, f"pipeline.{pl['id']}",
+                failed_inserts_path=REPO_ROOT / pl["failed_inserts_path"],
+                lookback_seconds=pl.get("lookback_hours", 2) * 3600,
+                severity_ceiling=pl.get("severity", "WARN"), check_id=f"pipeline.{pl['id']}",
             )
 
     return results

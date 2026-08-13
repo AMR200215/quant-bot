@@ -74,3 +74,35 @@ feeds:
     runbook: |
       journalctl -u quantbot --since "-2h" | grep -i "telegram\|tg-monitor\|tg-watchdog"
       python3 -c "from memecoin.telegram_monitor import get_tg_state; print(get_tg_state())"
+
+  - id: pumpportal
+    description: "PumpPortal real-time tick feed liveness (V8 progress capture + future live monitoring)"
+    severity: CRITICAL
+    profile: fast
+    runbook: |
+      journalctl -u quantbot --since "-1h" | grep -i "pumpportal websocket\|pumpportal ws error\|tick deadman"
+
+# W6D (Phase 3): research pipeline upstream-flowing/downstream-stalled
+# detection. Reuses existing on-disk queue/offset/spool files -- no new
+# instrumentation, separate systemd unit (quantbot-research.service) from
+# the main trading app.
+pipelines:
+  - id: research_queue_lag
+    description: "signal_queue.jsonl consumer lag (research.tg_listener.FileQueueListener)"
+    queue_path: research/data/signal_queue.jsonl
+    offset_path: research/data/.queue_offset
+    severity: WARN
+    profile: fast
+    runbook: |
+      echo "size:"; stat -c%s research/data/signal_queue.jsonl
+      echo "offset:"; cat research/data/.queue_offset
+      systemctl status quantbot-research.service --no-pager -l
+
+  - id: research_spool
+    description: "Supabase insert-failure spool growth (research/spool/failed_inserts.jsonl)"
+    failed_inserts_path: research/spool/failed_inserts.jsonl
+    lookback_hours: 2
+    severity: WARN
+    profile: fast
+    runbook: |
+      tail -20 research/spool/failed_inserts.jsonl
