@@ -1,1 +1,1 @@
-55 23 * * * root cd /root/quant-bot && set -a && . .env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id epoch_daily --schedule "55 23 * * *" --output-artifact logs/epoch_daily.jsonl -- .venv/bin/python research/scripts/epoch_daily_log.py >> logs/epoch_daily_cron.log 2>&1
+55 23 * * * root cd /root/quant-bot && set -a && . ./.env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id epoch_daily --schedule "55 23 * * *" --output-artifact logs/epoch_daily.jsonl -- .venv/bin/python research/scripts/epoch_daily_log.py >> logs/epoch_daily_cron.log 2>&1
