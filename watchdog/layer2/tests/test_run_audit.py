@@ -1,6 +1,7 @@
 """watchdog/layer2/tests/test_run_audit.py — full pipeline wiring test
 with fakes, no real SSH connection or Anthropic API key needed."""
 
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -8,6 +9,8 @@ from pathlib import Path
 
 from watchdog.layer2.findings_store import read_heartbeat
 from watchdog.layer2.run_audit import run_audit
+
+_HAS_ANTHROPIC = importlib.util.find_spec("anthropic") is not None
 
 
 class TestRunAuditPipeline(unittest.TestCase):
@@ -98,6 +101,11 @@ class TestRunAuditPipeline(unittest.TestCase):
         self.assertTrue((audit_dir / "findings.md").exists())
 
 
+@unittest.skipUnless(_HAS_ANTHROPIC,
+                      "anthropic package not installed -- expected on the VPS, which never "
+                      "runs Layer 2 (GitHub-Actions-only per watchdog/layer2/requirements.txt, "
+                      "deliberately not in the main requirements.txt); this is a legitimate "
+                      "environment-based skip, not a missing dependency that should be there")
 class TestAnthropicAdapterEmptyResponse(unittest.TestCase):
     """Regression for a real bug found on the first live GitHub Actions
     run: the ground-truth pass returned 0 chars of text, and the
