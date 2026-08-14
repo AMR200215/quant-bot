@@ -2079,3 +2079,115 @@ that requires the credential checkpoint above, an actual scheduled run,
 and inspecting real audit output before trusting the daily cadence, none
 of which happened in this batch. No trading logic touched;
 `LIVE_TRADING=false` unchanged throughout.
+
+---
+
+## WATCHDOG-BATCH Phase 5 Completion — Credential Checkpoint + First Real Audit (2026-08-14)
+
+The credential checkpoint closed and Layer 2 proven live, end to end,
+with a real finding that led to a real fix — not a synthetic
+demonstration.
+
+### Credential provisioning — a real bug, found by actually running it
+
+`deploy/layer2/install.sh`'s first run failed immediately: the
+`layer2audit` user got `--shell /usr/sbin/nologin`, which blocks SSH
+login entirely at the PAM level, before `authorized_keys`' forced-command
+directive is ever consulted — "This account is currently not available."
+`nologin` was never the security boundary here (the forced command is),
+so it only defeated the setup. Fixed to `/bin/bash`, documented inline
+so it doesn't get "fixed" back to `nologin` later by someone assuming
+that's the safer choice.
+
+**Verified the restriction actually holds before trusting it** — three
+live tests against the real credential: (1) a command attempting to
+create a marker file and `rm -rf` was silently ignored, no file created;
+(2) an arbitrary garbage command still returned the real evidence JSON
+regardless of what was requested; (3) even a targeted `sudo -n whoami`
+probe returned the same evidence JSON rather than an escalated shell.
+The credential is structurally incapable of anything but running
+`evidence_dump.py`, confirmed by trying to break it, not by reading the
+script and assuming it works.
+
+### First real GitHub Actions run — two more real bugs, in sequence
+
+**Run 1**: `Run audit` step succeeded (real evidence bundle, real
+Anthropic API calls, both returned `200 OK`, 6 findings parsed) but
+`Commit audit artifacts` failed outright: `.gitignore`'s `logs/watchdog/`
+rule — added in Phase 1 to keep the SQLite state DB out of git — was a
+blanket ignore that also caught the new `logs/watchdog/audits/` and
+`layer2_heartbeat.json` paths Layer 2 needs to commit. Narrowed to the
+specific files that should never be committed (`state.db` and its
+WAL/SHM siblings, `runner.lock`).
+
+**Also on Run 1**: the log showed `"ground truth pass complete (0
+chars)"` — Call 1 returned empty text, yet Call 2 still produced "6
+valid findings" grounded in nothing. Exactly the failure mode W15 exists
+to prevent, one level up: the audit *looked* like it worked (no crash,
+findings produced) while actually being broken. Added diagnostic logging
+(`stop_reason`, content block types) to the Anthropic response handler,
+and made it raise loudly on empty/whitespace-only text rather than
+silently propagate it — refusing to produce an audit's worth of findings
+grounded in nothing.
+
+**Run 2** (with the logging fix deployed): failed again, but *usefully*
+this time — the new logging revealed the real root cause instantly:
+`stop_reason=max_tokens, blocks=['ThinkingBlock'], thinking_tokens=4096`.
+Extended thinking was active by default for this model (never explicitly
+requested) and consumed the *entire* `max_tokens=4096` budget before
+producing a single character of visible text. Verified the fix's
+parameter shape (`thinking={"type": "disabled"}`) against the installed
+SDK's own type definitions before spending a third live round-trip
+guessing at it. Also raised `MAX_TOKENS` to 8192 as a backstop.
+
+**Run 3**: full success, every step green, including the commit.
+
+### The first real audit — and what it actually found
+
+Real, evidence-grounded output, not a demo. The ground-truth pass (Call
+1, evidence only) correctly flagged a genuine discrepancy — multiple
+different `git_sha` values recorded across watchdog run metadata vs the
+live HEAD — and explicitly refused to explain it away ("This is flagged
+as unresolved, not assumed benign"), exactly the anchoring-resistant
+behavior W15's two-call structure was designed to produce. It also
+correctly noted it could not see `RECEIPTS.md`'s actual content (only
+mtime/length) at this stage — direct confirmation the evidence/claims
+split (`_CLAIMS_FIELDS`) is working as designed.
+
+8 findings in the comparison pass (1 `WARN`, 7 `INFO`, 0 `CRITICAL`),
+every one citing specific evidence IDs. **Finding F4 caught something
+real**: `RECEIPTS.md` claimed "126/126 watchdog tests passing" while the
+evidence showed only 90 tests collected for the `watchdog` package.
+Verified directly: `watchdog/tests/` = 90, `watchdog/layer2/tests/` = 39,
+`watchdog/` combined = 129 — `test_drift.py`'s own `check_test_collection()`
+and `check_stale_mocks()` had never been updated to include
+`watchdog/layer2/tests/` after Phase 5 added it, so the watchdog's
+self-monitoring was blind to its own newest, most complex subpackage.
+Fixed immediately (`607f8f0`) — **the exact class of gap this whole
+system exists to catch, found inside the tool built to catch it, by the
+tool itself, on its first real run.**
+
+### Reciprocal supervision confirmed closed
+
+Re-ran Layer 1 after Run 3 landed: `layer2.staleness` now reports `OK`
+("last Layer 2 audit 0.0h ago, 8 finding(s))"), reading the real
+heartbeat Layer 2 committed, picked up via a normal `git pull` — the W17
+loop, confirmed working with real data, not a fabricated heartbeat file.
+
+### Status: **WATCHDOG_LIVE_VERIFIED** (with one honest caveat)
+
+Both layers independently running; the fault injection from the earlier
+Phase 2/3 addendum proved Layer 1's full alerting pipeline against a real
+production incident; this batch proves Layer 2's full pipeline (evidence
+collection → two-call ordering → findings → commit → Telegram-if-
+actionable) against real infrastructure, with a real finding that led to
+a real fix. Per the design spec's own bar, this satisfies every item
+except one: **the daily 03:30 UTC schedule has not yet been observed
+firing on its own** — every run so far was `workflow_dispatch` (manual
+trigger). The mechanism is identical either way (same workflow, same
+code path), so this isn't expected to behave differently, but it hasn't
+been *observed*, and per this whole project's own standard, an
+unobserved claim doesn't get the same status as an observed one. Revisit
+after the first automatic scheduled fire lands, log it here, and this
+caveat clears. No trading logic touched; `LIVE_TRADING=false` unchanged
+throughout.
