@@ -1862,3 +1862,20 @@ deliberately-skipped W6C). Only Layer 2 (the externally-scheduled LLM
 audit agent, W12-W17) remains before `WATCHDOG_LIVE_VERIFIED` is
 reachable. No trading logic touched; `LIVE_TRADING=false` unchanged
 throughout.
+
+### Addendum (2026-08-14 00:09 UTC) — the `.env` fix confirmed under real, unmodified production schedule
+
+`epoch_daily` and `v8_vs_v7_daily`'s first real scheduled fires since the
+`.env` fix (Phase 2/3 receipts): `epoch_daily` at 23:55:01 UTC, `v8_vs_v7_daily`
+at 23:58:01 UTC, 2026-08-13 — both `trigger_type=scheduler`,
+`exit_code=0`. Verified against real downstream artifacts, not just the
+receipt row: `logs/epoch_daily.jsonl` has a fresh `2026-08-13` entry;
+`docs/RECEIPTS.md`'s own N6/N7 table has a fresh `2026-08-13` row (65 v7
+trades, +433824656.8% mean — real computed data, not a placeholder). This
+was the one still-open item from Phase 2/3 (their prior WARN status was
+correctly "no receipt yet," not a regression) — now closed.
+
+Honest framing: this is confirmation the fix holds, not proof the
+watchdog can catch a real failure autonomously — nothing failed tonight,
+so the alerting pipeline wasn't exercised end-to-end by a genuine
+incident. That test remains open.
