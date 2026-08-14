@@ -98,5 +98,70 @@ class TestRunAuditPipeline(unittest.TestCase):
         self.assertTrue((audit_dir / "findings.md").exists())
 
 
+class TestAnthropicAdapterEmptyResponse(unittest.TestCase):
+    """Regression for a real bug found on the first live GitHub Actions
+    run: the ground-truth pass returned 0 chars of text, and the
+    comparison pass still produced "6 valid findings" grounded in
+    nothing. make_anthropic_call_model must refuse to silently return
+    empty text -- an empty ground truth means findings would be compared
+    against nothing, not that nothing is wrong."""
+
+    def _fake_response(self, content_blocks, stop_reason="end_turn"):
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.content = content_blocks
+        resp.stop_reason = stop_reason
+        resp.usage = MagicMock()
+        return resp
+
+    def test_empty_text_response_raises_not_silently_returns_empty(self):
+        from unittest.mock import MagicMock, patch
+        from watchdog.layer2.run_audit import make_anthropic_call_model
+
+        # Simulate a response with only a non-text block (e.g. the model
+        # stopped before producing any real text) -- the exact shape of
+        # the real failure is unknown (no raw response was captured on
+        # the live run), so this covers the general "no usable text"
+        # case regardless of which specific block type caused it.
+        empty_block = MagicMock(spec=[])  # no .text attribute at all
+        fake_response = self._fake_response([empty_block], stop_reason="max_tokens")
+
+        with patch("anthropic.Anthropic") as MockClient:
+            MockClient.return_value.messages.create.return_value = fake_response
+            call_model = make_anthropic_call_model("fake-api-key")
+            with self.assertRaises(RuntimeError) as ctx:
+                call_model("some prompt")
+            self.assertIn("empty", str(ctx.exception).lower())
+            self.assertIn("max_tokens", str(ctx.exception))
+
+    def test_whitespace_only_response_also_raises(self):
+        from unittest.mock import MagicMock, patch
+        from watchdog.layer2.run_audit import make_anthropic_call_model
+
+        text_block = MagicMock()
+        text_block.text = "   \n  "
+        fake_response = self._fake_response([text_block])
+
+        with patch("anthropic.Anthropic") as MockClient:
+            MockClient.return_value.messages.create.return_value = fake_response
+            call_model = make_anthropic_call_model("fake-api-key")
+            with self.assertRaises(RuntimeError):
+                call_model("some prompt")
+
+    def test_real_text_response_passes_through_normally(self):
+        from unittest.mock import MagicMock, patch
+        from watchdog.layer2.run_audit import make_anthropic_call_model
+
+        text_block = MagicMock()
+        text_block.text = "real ground truth content, EV001 shows X"
+        fake_response = self._fake_response([text_block])
+
+        with patch("anthropic.Anthropic") as MockClient:
+            MockClient.return_value.messages.create.return_value = fake_response
+            call_model = make_anthropic_call_model("fake-api-key")
+            result = call_model("some prompt")
+        self.assertEqual(result, "real ground truth content, EV001 shows X")
+
+
 if __name__ == "__main__":
     unittest.main()

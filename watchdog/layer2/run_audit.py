@@ -60,7 +60,25 @@ def make_anthropic_call_model(api_key: str):
             model=MODEL, max_tokens=MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
         )
-        return "".join(block.text for block in response.content if hasattr(block, "text"))
+        text = "".join(block.text for block in response.content if hasattr(block, "text"))
+        block_types = [type(b).__name__ for b in response.content]
+        log.info("model call: stop_reason=%s blocks=%s text_len=%d",
+                  response.stop_reason, block_types, len(text))
+        if not text.strip():
+            # Never silently hand an empty/near-empty response downstream --
+            # a "ground truth" pass with 0 chars means Call 2 would compare
+            # claims against nothing, producing findings grounded in
+            # nothing (exactly the failure mode W15 exists to prevent).
+            # Found live on the first real workflow run: stop_reason and
+            # block dump are what's needed to actually diagnose this,
+            # rather than silently propagating empty text into findings
+            # that look real but aren't grounded in anything.
+            raise RuntimeError(
+                f"model returned empty/whitespace-only text (stop_reason={response.stop_reason}, "
+                f"block_types={block_types}, usage={response.usage}) -- refusing to proceed with "
+                f"an ungrounded audit rather than silently continue on empty input"
+            )
+        return text
 
     return call_model
 

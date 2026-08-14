@@ -14,8 +14,15 @@ memecoin/data/tg_session.session
 # Large raw data file (re-fetchable)
 data/historical_raw.json
 
-# watchdog runtime state -- SQLite DB + lock file, never committed
-logs/watchdog/
+# watchdog runtime state -- SQLite DB + lock file, never committed.
+# NOT a blanket ignore of logs/watchdog/ -- that also caught
+# logs/watchdog/audits/ and layer2_heartbeat.json, which Layer 2's
+# GitHub Actions workflow explicitly needs to commit (found live: the
+# very first real workflow run's "Commit audit artifacts" step failed
+# outright with "paths are ignored by one of your .gitignore files").
+logs/watchdog/state.db
+logs/watchdog/state.db-*
+logs/watchdog/runner.lock
 
 # Keep logs in repo so GitHub Actions can commit daily results
 !logs/market_journal.csv
