@@ -1,0 +1,51 @@
+name: Layer 2 Watchdog Audit
+
+# Runs independently of the VPS by design (W12) -- a VPS-wide outage, or
+# Layer 1 itself going down, must not also disable the thing supervising
+# them. Daily schedule + manual dispatch, per the design spec.
+on:
+  schedule:
+    - cron: "30 3 * * *"  # 03:30 UTC daily -- after Layer 1's own nightly cadence settles
+  workflow_dispatch: {}
+
+permissions:
+  contents: write  # to commit audit artifacts + heartbeat back to the repo
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r watchdog/layer2/requirements.txt
+
+      - name: Configure read-only SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.LAYER2_SSH_KEY }}" > ~/.ssh/layer2_key
+          chmod 600 ~/.ssh/layer2_key
+
+      - name: Run audit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -m watchdog.layer2.run_audit \
+            --host "${{ secrets.VPS_HOST }}" \
+            --ssh-user layer2audit \
+            --ssh-key-path ~/.ssh/layer2_key
+
+      - name: Commit audit artifacts
+        run: |
+          git config user.name "layer2-audit-bot"
+          git config user.email "layer2-audit-bot@users.noreply.github.com"
+          git add logs/watchdog/audits/ logs/watchdog/layer2_heartbeat.json
+          git diff --staged --quiet || git commit -m "Layer 2 audit $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push

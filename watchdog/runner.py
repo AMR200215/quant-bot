@@ -32,8 +32,8 @@ from watchdog import notifier as wd_notifier
 from watchdog import state as wd_state
 from watchdog.checks import CheckResult, STATUS_CRITICAL, STATUS_OK, STATUS_UNKNOWN, STATUS_WARN
 from watchdog.checks import (
-    batch_claims, cron_execution, cron_static, pumpportal_feed, research_pipeline,
-    telegram_feed, test_drift, v8_funnel,
+    batch_claims, cron_execution, cron_static, layer2_staleness, pumpportal_feed,
+    research_pipeline, telegram_feed, test_drift, v8_funnel,
 )
 
 log = logging.getLogger("watchdog.runner")
@@ -148,6 +148,16 @@ def run_checks(registry: dict, profile: str, conn, db_path: Optional[Path] = Non
             results += _safe_run(
                 batch_claims.check_batch_verify, "claims.batch",
                 severity_ceiling=claim.get("severity", "WARN"),
+            )
+
+    for l2 in registry.get("layer2", []):
+        if l2.get("profile", "fast") != profile:
+            continue
+        if l2["id"] == "staleness":
+            results += _safe_run(
+                layer2_staleness.check_layer2_staleness, "layer2.staleness",
+                stale_threshold_s=l2.get("stale_threshold_hours", 30) * 3600,
+                severity_ceiling=l2.get("severity", "WARN"),
             )
 
     return results

@@ -140,3 +140,20 @@ claims:
     profile: slow
     runbook: |
       .venv/bin/python -m tools.batch_verify --all --verbose
+
+# W17 (Phase 5): reciprocal supervision -- Layer 1 watches whether Layer 2
+# (the externally-scheduled LLM audit agent, GitHub Actions) has gone
+# stale. Reads logs/watchdog/layer2_heartbeat.json, committed by Layer 2
+# and picked up locally via the VPS's existing git pull cron (9am/6pm) --
+# that cadence is the real visibility latency, documented not engineered
+# around. WARN not CRITICAL by default: Layer 2 going stale degrades
+# defense-in-depth, it doesn't itself mean anything in production broke.
+layer2:
+  - id: staleness
+    description: "Layer 2 (external LLM audit agent) last-successful-audit age"
+    stale_threshold_hours: 30
+    severity: WARN
+    profile: slow
+    runbook: |
+      cat logs/watchdog/layer2_heartbeat.json 2>/dev/null || echo "no heartbeat yet"
+      gh run list --workflow=layer2-audit.yml --limit 5  # once the workflow exists
