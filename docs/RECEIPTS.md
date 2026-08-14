@@ -2328,3 +2328,62 @@ identically on clean `main` — pre-existing, unrelated to this batch, not
 touched.
 
 ### Status: **V8_REWIRE_CODE_COMPLETE** (not yet deployed/verified — see addendum)
+
+### Addendum (2026-08-14 23:02 UTC) — deployed, and the real proof point observed live within minutes
+
+Pushed (`57e89a9`, rebased cleanly onto an unrelated automated `scan:
+2026-08-14` market-journal commit), deployed to the VPS
+(`git pull --rebase` + `systemctl restart quantbot`). Deploy hit the
+same "live process keeps rewriting a tracked runtime file mid-operation"
+class of issue as earlier this session: `memecoin/data/memecoin_positions.json`
+got re-dirtied by the running service between `git stash` and `git pull`.
+Handled without any data loss or reverting live state this time —
+confirmed the two stash entries' content for that file were either
+identical to the current working copy (dropped, no-op) or older than the
+live-rewritten version (deliberately left un-popped, current on-disk
+state kept as authoritative); the other 4 genuinely-stashed files
+(`docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`,
+`logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_signals.json`)
+were restored via `git checkout stash@{0} -- <paths>`, explicitly
+excluding the conflicting file, then the stash dropped. VPS stash count
+unchanged at 50 historical entries (still untouched, still pending its
+own deliberate audit).
+
+Service came up clean: `v8_paper: monitor thread started`, no tracebacks,
+no ImportErrors. First real `v8_fork_entered` observed 8 minutes after
+restart (event `b092d5a301553c47`) — timestamps show it fired **before**
+V7's own `screening_passed` completed for the same event
+(`v8_fork_entered` at `.0883`, `screening_passed` at `.1259`), direct
+timing proof V8 is evaluating independently and not waiting on V7 at all.
+
+**The load-bearing proof, observed live 39 minutes after deploy** — event
+`2382b8b1f987906c`:
+
+```
+telegram_received  -> v8_fork_entered  -> screening_rejected (no_dex_data)  -> v8_gate_rejected (progress_0.84_over_0.70)
+```
+
+V7 rejected this token outright (no DexScreener data yet). Pre-rewire,
+that would have been the end of the story for V8 too — zero disposition,
+invisible, exactly the bug this batch fixes. Instead V8 ran its own
+independent evaluation on the same raw alert and reached its own
+terminal state, for its own reason (too far along the curve), completely
+unrelated to why V7 rejected it. This is a real, unprompted, production
+instance of the exact VR19 acceptance criterion ("at least one real
+V7-FAIL/V8-EVALUATED receipt").
+
+`watchdog/checks/v8_funnel.py`'s new `(telegram_received ->
+v8_fork_entered)` invariant has real post-deploy data to check against
+now; no CRITICAL fired in the observation window (consistent with 100%
+of the handful of real fork attempts reaching a terminal disposition).
+
+**VR19 status: partially met.** The specific-instance requirement (a real
+V7-FAIL/V8-EVALUATED case) is satisfied, live, with real evidence above.
+The volume requirement (≥100 fresh raw events under the new architecture,
+100% terminal-disposition coverage) is not yet met — only a handful of
+events have passed through since the 23:02 UTC restart. Cannot be
+shortcut; revisit once enough real production time has passed and log
+the count here.
+
+No trading logic touched; `LIVE_TRADING=false` unchanged throughout;
+V8 remains 100% paper.
