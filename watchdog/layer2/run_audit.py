@@ -32,7 +32,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SSH_TIMEOUT_S = 30
 MODEL = "claude-sonnet-5"
-MAX_TOKENS = 4096
+# Found live on the first two real workflow runs: extended thinking was
+# active by default for this model even though it was never requested,
+# and consumed the entire max_tokens budget as thinking tokens before
+# producing a single character of visible text (stop_reason=max_tokens,
+# thinking_tokens=4096 == the whole budget). These audit prompts don't
+# need deliberation -- they need reliable structured output -- so
+# thinking is explicitly disabled below, and MAX_TOKENS raised well
+# past what a ground-truth summary or a findings JSON array actually
+# needs, as a backstop in case thinking re-enables itself some other way.
+MAX_TOKENS = 8192
 
 
 def fetch_raw_evidence(host: str, ssh_user: str, ssh_key_path: str) -> dict:
@@ -58,6 +67,7 @@ def make_anthropic_call_model(api_key: str):
     def call_model(prompt: str) -> str:
         response = client.messages.create(
             model=MODEL, max_tokens=MAX_TOKENS,
+            thinking={"type": "disabled"},
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(block.text for block in response.content if hasattr(block, "text"))
