@@ -1879,3 +1879,150 @@ Honest framing: this is confirmation the fix holds, not proof the
 watchdog can catch a real failure autonomously — nothing failed tonight,
 so the alerting pipeline wasn't exercised end-to-end by a genuine
 incident. That test remains open.
+
+### Addendum (2026-08-14) — the autonomous-catch test, closed
+
+Deliberately re-broke `quantbot-epoch` with the exact original bug
+(backslash continuation), on purpose, to get real proof rather than wait
+indefinitely for a natural incident. Full result, real production
+infrastructure throughout:
+
+- Cron rejected the file with the identical error as the original
+  incident ("`Error: bad minute`").
+- `cron_static.epoch_daily` caught it within one real 5-minute fast-
+  profile cycle, correct root cause in the reason text.
+- Correct debounce: did not page on the first `WARN` hit (2-consecutive
+  requirement); escalated to `FIRING` on the second and attempted a real
+  Telegram send.
+- **User confirmed real message received.**
+- Reverting the file cleared it on the next cycle; `RECOVERED` state
+  confirmed in the DB (no send-error logged for the recovery message
+  either, though delivery of that specific message wasn't separately
+  confirmed by the user).
+- Unprompted bonus: a real `WARN` reminder for the two pre-existing known
+  issues (`test_drift.collection.tests_memecoin`, `claims.batch.v8_readiness`)
+  arrived during the same window, correctly aggregated into one message —
+  proof the dedup/aggregation logic works on its own, not just in the
+  deliberate test.
+
+This is the first genuine, real-infrastructure, end-to-end proof of the
+full alerting pipeline — not a unit test, not `--self-test`'s synthetic
+fixture, a real fault injected into real production config, caught and
+paged for real.
+
+---
+
+## WATCHDOG-BATCH Phase 5 — Layer 2: External LLM Audit Agent (2026-08-14)
+
+**Scope.** W12-W17: the externally-scheduled LLM audit agent — the last
+piece needed to reach `WATCHDOG_LIVE_VERIFIED`. Runs from GitHub Actions,
+not the VPS, so a VPS-wide or Layer 1 outage can't also disable the thing
+supervising them.
+
+### Architecture
+
+`deploy/layer2/evidence_dump.py` — the **only** thing the new SSH
+credential can ever run, enforced by a forced-command `authorized_keys`
+entry (W13): whatever the client requests is ignored, this one read-only
+script always runs regardless. One JSON dump per invocation: host state,
+git HEAD/dirty-tree, systemd service/timer states, cron file
+contents+recent parser errors, Layer 1's own latest run + all check
+results + incidents + recent job_receipts (reusing Layer 1's own
+evidence rather than re-collecting it independently), research pipeline
+queue lag, and RECEIPTS.md's tail. Tested against real VPS data:
+~20KB output, all 7 sections correct, root-owned file access via a
+narrowly-scoped `sudoers` rule (exact absolute path, no argument
+substitution) rather than loosening any existing file permissions.
+
+`watchdog/layer2/evidence_bundle.py` — assigns EV-IDs (`EV001`, `EV002`,
+...), computes a SHA-256 hash of the raw dump, redacts known secret
+patterns (defense in depth — `evidence_dump.py` is designed not to touch
+`.env` at all, this is a second layer regardless). **A real design fix
+made while building this**: the original `receipts_tail` section
+captured RECEIPTS.md's prose content bundled with its `mtime`/`length` —
+but per W15, the prose (claims like "LIVE_VERIFIED") is exactly what must
+stay invisible during the ground-truth pass, while the mtime (a fact
+about the artifact) is legitimate evidence. Split into `_CLAIMS_FIELDS`
+so `to_prompt_text(hide_claims=True)` strips the prose but keeps the
+metadata, and `to_claims_text()` surfaces the prose separately, later,
+explicitly labeled.
+
+`watchdog/layer2/audit_prompt.py` — W15's ordering enforced
+**structurally**, not by asking nicely. Two separate model calls:
+- **Call 1** (ground truth): the model sees *only* the evidence bundle
+  with claims fields stripped — there is nothing to anchor on, because
+  the claims are not in its context at all, not merely "shown later."
+- **Call 2** (comparison): the model receives its *own* ground-truth
+  summary from Call 1, plus the claims text, explicitly labeled
+  `"ASSERTIONS, not evidence."` It compares against its own prior
+  analysis, not forming one from scratch with the claim already visible.
+
+Findings without a non-empty `evidence_ids` array are discarded at parse
+time — W14's citation requirement enforced in code, not just requested in
+the prompt.
+
+`watchdog/layer2/findings_store.py` + `watchdog/checks/layer2_staleness.py`
+— W16 storage (`logs/watchdog/audits/<audit_id>/`, append-only, a
+re-run of the *same* audit_id is idempotent but a *different* audit_id
+never overwrites history) and W17 reciprocal supervision: Layer 1 now
+checks whether Layer 2 has gone stale (`>30h` since last successful
+audit — default `WARN`, since Layer 2 going stale degrades defense in
+depth without itself meaning something broke in production). Layer 2
+commits its heartbeat back to the repo via GitHub Actions' own built-in
+token (no new credential needed for that part); Layer 1 sees it locally
+after the VPS's existing twice-daily `git pull` cron picks it up.
+**Documented limitation, not engineered around**: that's up to ~12h of
+visibility latency between Layer 2 going stale and Layer 1 noticing —
+acceptable for a v1, revisit if it matters in practice.
+
+### Tests
+
+24 new `watchdog/layer2/` tests + 5 `layer2_staleness` tests (126/126
+total watchdog tests passing), all using fakes — **no real SSH connection
+or Anthropic API key needed to verify any of this logic**, including a
+full pipeline wiring test (`test_run_audit.py`) proving: the two-call
+ordering (captured prompt text asserted to never contain claims content
+in Call 1), findings-without-evidence-IDs discarded, Telegram sent only
+for `WARN`/`CRITICAL` findings (not `INFO`), and the heartbeat file
+correctly reflects real run outcomes.
+
+### What's deliberately NOT done in this batch — the credential checkpoint
+
+Two things require the user's own action, not something committable:
+
+1. **Anthropic API key** — needs its own console.anthropic.com account
+   + billing, independent of whatever this session runs on.
+2. **Read-only SSH credential** — `deploy/layer2/install.sh` is written
+   and documented (`deploy/layer2/README.md`) but **not run**. It
+   provisions a dedicated unprivileged `layer2audit` system user, a
+   forced-command SSH key, and the narrow `sudoers` rule — all
+   structurally incapable of `systemctl restart`, `kill`, `rm`,
+   `git reset`/`checkout`, `sed -i`, any database write, or any trading
+   command, because those simply aren't in the forced command or the
+   sudoers rule, not because anything is trusted to refuse them.
+
+The GitHub Actions workflow (`.github/workflows/layer2-audit.yml`,
+daily 03:30 UTC + manual dispatch) is written and will run once
+`ANTHROPIC_API_KEY`, `LAYER2_SSH_KEY`, and `VPS_HOST` secrets are added —
+none of which this session can provision on its own.
+
+### Modified/added files
+
+`watchdog/layer2/` (new package: `__init__.py`, `evidence_bundle.py`,
+`audit_prompt.py`, `findings_store.py`, `run_audit.py`,
+`requirements.txt`, `tests/*`), `watchdog/checks/layer2_staleness.py`
+(new), `deploy/layer2/` (new: `evidence_dump.py`, `install.sh`,
+`README.md`), `.github/workflows/layer2-audit.yml` (new),
+`watchdog/checks.yaml` (+`layer2:` section), `watchdog/runner.py`
+(wired in).
+
+### Status: **WATCHDOG_CODE_READY**
+
+Per the design spec's own verdict enum: "implementation/tests complete,
+not live-proven." All logic built, tested (126/126), and deployed to the
+VPS where it can be (the evidence collector runs correctly at its real
+path against real production data). Not yet `WATCHDOG_LIVE_VERIFIED` —
+that requires the credential checkpoint above, an actual scheduled run,
+and inspecting real audit output before trusting the daily cadence, none
+of which happened in this batch. No trading logic touched;
+`LIVE_TRADING=false` unchanged throughout.
