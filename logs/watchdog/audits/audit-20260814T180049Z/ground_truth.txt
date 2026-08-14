@@ -1,0 +1,61 @@
+# Audit Summary — Evidence-Based Findings Only
+
+## Deployed git SHA / working tree
+- Repo HEAD is at `3c34b5c89bcfdfb96ac7fe83c07c9e71f8ac03a8` (EV002).
+- The working tree is **not clean**: 5 tracked files show modifications (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_signals.json`) and there are 22 untracked files/directories, mostly logs and research/spool artifacts (EV002).
+- Note: the watchdog's own recorded runs report different `git_sha` values than the HEAD in EV002 — e.g., fast run recorded `6def61955cf02b85b7ac6bce3d69eb0d29b63aea` (EV005 latest_fast_run), slow run recorded `f65d4257323bd83102d7db18e973a6b356a5a235` (EV005 latest_slow_run), and individual job receipts show yet other SHAs (`3c3c338631b6da714706af3bdece7225f0d9233b`, `05857203defaee5a22acfa620e1482ad5842d5d4`) (EV005). The evidence does not explain this discrepancy — I cannot determine from what's given whether these are stale watchdog metadata, a different checkout, or something else. This is flagged as unresolved, not assumed benign.
+
+## systemd services / timers
+- `quantbot.service`: active/running, last result success (EV003).
+- `quantbot-research.service`: active/running, last result success (EV003).
+- `quantbot-watchdog-fast.service`: inactive/dead, but last `ExecMainStatus=0`/`Result=success` — consistent with a oneshot service triggered by its timer rather than a crash (EV003).
+- `quantbot-watchdog-slow.service`: inactive/dead, last result success, same reasoning (EV003).
+- Both timers are active and scheduled going forward: `quantbot-watchdog-slow.timer` next fires 18:03 UTC (last fired 17:03:03 UTC, 57 min ago); `quantbot-watchdog-fast.timer` next fires 18:05 UTC (last fired 18:00:17 UTC, 30s ago) (EV003).
+
+## Cron file validity
+- Three cron files present (`quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`), all mode 0644, with content that parses as valid crontab syntax (EV004).
+- `recent_parser_error_lines` is an empty list — no recent parser errors recorded (EV004).
+- The watchdog's own static checks corroborate this: `cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily` all report `OK`/"parses cleanly, no recent journal parser errors" as of the latest fast run (EV005).
+- However, the incident history shows these same three static checks were previously in `WARN` state and only recovered at various points (e.g., `cron_static.epoch_daily` recovered at unix 1786704004, `cron_static.v8_vs_v7_daily` recovered at 1786578901) (EV005, all_incidents). Current state is recovered/OK, but there is a history of prior failures.
+
+## Watchdog's own most recent run status
+- Latest **fast** run (`run_id c77aaaf1e592403c`) started/finished at 1786730417.77/.78 (~9ms duration), `final_runner_status: "ok"`, 11/11 checks completed (EV005).
+- Latest **slow** run (`run_id 6117ec3157644302`) started/finished at 1786726990.37/.38 (~8ms duration), `final_runner_status: "ok"`, 8/8 checks completed (EV005).
+- Both runs report the same `boot_id` (`d0a4169b-96f4-4bb1-b365-92ca527627e6`) as the host's current boot (EV001, EV005), so they ran on the current boot.
+
+## Active incidents (as of latest slow run, EV005 `all_incidents`)
+Currently **FIRING** (not recovered):
+1. `test_drift.collection.tests_memecoin` — WARN, firing since 1786585581, 49 consecutive failures, last seen at latest slow run timestamp. Corroborated by the check detail: `pytest --collect-only` fails with exit 2 in `/root/quant-bot/memecoin/tests` due to `ImportError: cannot import name 'SIGNALS_FILE' from 'memecoin.config'` and separately `ImportError: cannot import name 'GRAD_SOL_UI' from 'memecoin.config'` (EV005). This is a real, currently-active test-collection breakage in the memecoin test suite.
+2. `claims.batch.v8_readiness` — WARN, firing since 1786585581, 49 consecutive failures. Detail: batch `v8_readiness` has 4/7 items in `PARTIAL` state (`N2`, `N4`, `N6`, `N7`), 3/7 `GREEN`, 0 `FAIL`. The evidence itself notes this batch's CLI exit code would report success (0) despite the PARTIAL items (EV005).
+
+Currently **SUSPECT** (not firing, not recovered — ambiguous state):
+3. `layer2.staleness` — SUSPECT since 1786707254, `consecutive_failures: 0`. Underlying check status is `UNKNOWN`, reason: "no Layer 2 heartbeat file found — either Layer 2 has never run successfully yet, or this VPS hasn't pulled a commit containing one" (EV005). The evidence does not disambiguate between these two explanations — I cannot state which is true.
+
+Recovered (historical, not currently active):
+- `watchdog.self_test:self_test_synthetic`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `feed.pumpportal` — all show `state: "RECOVERED"` (EV005).
+
+## Cron job execution (scheduler receipts)
+- All three scheduled jobs' most recent executions succeeded (`exit_code: 0`): `k5_nightly` at 1786666501, `v8_vs_v7_daily` at 1786665481, `epoch_daily` at 1786665301 (EV005 `cron_execution.*` checks and `recent_job_receipts`).
+- `cron_execution.*` checks all currently report `OK` (EV005).
+
+## Research pipeline queue lag
+- `pipeline.research_queue_lag` check: `OK`, "consumer caught up (gap=0 bytes)", `queue_size=5125`, `offset=5125` (EV005).
+- Corroborated independently by EV006: `queue_size: 5125`, `queue_offset: "5125"` — consistent with zero lag at time of report.
+- `pipeline.research_spool` check: `OK`, 0 failed inserts in the last 2.0h; note the check itself flags that 68 total historical lines exist on disk but explicitly states this total is "not itself evidence of an active problem" (EV005).
+
+## Feeds
+- `feed.telegram`: OK, last event 680s ago vs. 7200s threshold (EV005).
+- `feed.pumpportal`: OK, most recent event was a successful WebSocket connect at 17:59:35 UTC (EV005). Note this same check has a **recovered** incident entry (firing 1786649704–1786650004, roughly a 5-minute window) earlier in the historical record (EV005 all_incidents) — currently resolved.
+
+## Test collection (non-memecoin)
+- `research`, `watchdog`, and root `tests` packages all collect cleanly (164, 90, and 56 tests respectively) (EV005). Only the `memecoin` test package is currently broken at collection time.
+
+## Batch verification claims
+- `claims.batch.rc_closure`: 3/3 GREEN, commit `db32f53` (EV005).
+- `claims.batch.v8_readiness`: 3 GREEN / 4 PARTIAL / 0 FAIL, no commit hash recorded for this batch (empty string in evidence) (EV005) — currently firing as an incident (see above).
+
+## Gaps / ambiguities explicitly flagged
+- The relationship between the git-reported HEAD SHA (EV002: `3c34b5c8...`) and the multiple, differing SHAs recorded inside watchdog run metadata and job receipts (EV005) is not explained by the evidence provided; not resolved here.
+- `layer2.staleness` is `UNKNOWN`/`SUSPECT` with two possible explanations given directly in the evidence text, and no further evidence disambiguates them (EV005).
+- No host-level explanation is given for why the dirty working tree contains this specific mix of modified docs/logs and new spool/research directories — evidence shows only the file list, not cause (EV002).
+- EV007 (`receipts_tail`) provides only an mtime (1786730218.9) and byte length (111063) for `docs/RECEIPTS.md`; no content is included, so I cannot verify what the N6/N7 receipt rows actually say beyond what's referenced by `claims.batch.v8_readiness`.

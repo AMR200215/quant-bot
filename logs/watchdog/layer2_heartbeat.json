@@ -1,0 +1,9 @@
+{
+  "last_audit_id": "audit-20260814T180049Z",
+  "last_audit_completed_at": 1786730521.795523,
+  "status": "ok",
+  "findings_count": 8,
+  "critical_count": 0,
+  "warn_count": 1,
+  "evidence_sha256": "20086314cdc0e9b1c400e4ba7285ed2002896f21a4f03906ce2f8d4fd4bcf12f"
+}
