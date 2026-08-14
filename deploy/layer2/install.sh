@@ -38,7 +38,15 @@ AUDIT_USER="layer2audit"
 KEY_PATH="/tmp/layer2audit_key"
 
 if ! id "$AUDIT_USER" &>/dev/null; then
-    useradd --system --no-create-home --shell /usr/sbin/nologin "$AUDIT_USER"
+    # Shell must NOT be /usr/sbin/nologin (or /bin/false) -- that blocks
+    # SSH login entirely, at the PAM/shell level, before authorized_keys'
+    # forced-command directive is ever consulted. Found live: the first
+    # version of this script used nologin and broke its own setup ("This
+    # account is currently not available."). The actual restriction is,
+    # and must be, enforced entirely by the `command=` forced-command
+    # below -- a real shell here is required for that to work at all, not
+    # a security downgrade.
+    useradd --system -d "/home/$AUDIT_USER" --shell /bin/bash "$AUDIT_USER"
     echo "created user $AUDIT_USER"
 else
     echo "user $AUDIT_USER already exists, reusing"
