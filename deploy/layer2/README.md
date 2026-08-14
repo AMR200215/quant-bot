@@ -43,11 +43,33 @@ automatically:
 ### 1. Anthropic API key
 
 Create one at console.anthropic.com with billing enabled (separate from
-whatever this Claude Code session runs on — Claude Code usage doesn't
-carry over as API credits). Add it as the GitHub Actions secret
-`ANTHROPIC_API_KEY` on this repo. Estimated cost: ~$3-5/month at Sonnet,
-daily cadence (see the cost discussion in this project's session history
-if you want the token-count math).
+whatever Claude Code session/subscription is being used to work on this
+repo — Claude Code usage doesn't carry over as API credits). Add it as
+the GitHub Actions secret `ANTHROPIC_API_KEY` on this repo.
+
+**Cost estimate and model choice, worked out in full so this doesn't
+depend on any conversation history:**
+
+A daily audit run's two model calls (`watchdog/layer2/audit_prompt.py`)
+send roughly 15-30k input tokens (the evidence bundle — bounded by
+`evidence_dump.py`'s per-section caps — plus the RECEIPTS.md tail used as
+claims text) and produce 1-2k output tokens per call, ~30-60k input /
+2-4k output total per day.
+
+| Model | Cost/run | Cost/month (30 runs) | Notes |
+|---|---|---|---|
+| Haiku | ~$0.02-0.04 | under $1.50 | cheapest, but weaker at the multi-hop cross-referencing (timestamp + file state + doc claim -> one conclusion) this audit actually needs — risk is a missed finding, not a wrong one, and that failure is silent |
+| **Sonnet (default, `MODEL` in `run_audit.py`)** | ~$0.10-0.15 | **~$3-5** | recommended: good at exactly the anchoring-resistant, evidence-then-claims reasoning W15 requires, at a cost delta from Haiku too small to be the deciding factor |
+| Opus | ~$0.50-0.70 | ~$15-20 | only worth it if Sonnet's real audits turn out to miss things in practice |
+
+GitHub Actions cost is effectively zero at this volume (a few minutes/day,
+well inside the free tier).
+
+**If you want to reconsider the model choice**: the empirically honest way
+to do it is to run the same evidence bundle through two models on a few
+real audits and compare findings directly, not decide from pricing tables
+alone — swap `MODEL` in `watchdog/layer2/run_audit.py` for a side-by-side
+comparison once real audit history exists.
 
 ### 2. Read-only SSH credential
 

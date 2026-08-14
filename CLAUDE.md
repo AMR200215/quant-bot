@@ -35,6 +35,46 @@ A research bot with two independent modules:
 
 ---
 
+## Cross-Session Coordination
+
+Different Claude Code sessions working on this repo (desktop, mobile,
+others) **do not share memory or context with each other** — only `main`
+does. If a decision, spec, or piece of context only exists in one
+session's conversation and was never committed to this repo, every other
+session has zero visibility into it. Branches don't help either: a
+pushed-but-unmerged branch is invisible to other sessions until it lands
+on `main` — confirmed directly: a branch sat unmerged for 892 commits
+(~2 months) before anyone caught it. **If you're not merging a branch
+immediately, add a row to `docs/OPEN_BRANCHES.md` in the same push** —
+see that file for the current list and the format.
+
+**Sessions do not all have the same tool access.** Some (this repo has
+been worked on from a "desktop" Claude Code session with full shell
+access) can SSH to the VPS, deploy, read live logs, and query the
+running trading state directly. Others (e.g. a mobile/iOS Claude Code
+session) run in a sandbox with **no VPS access, no live telemetry, and
+restricted outbound network** — they can read/write code, run local
+tests, and read whatever's committed to the repo, but cannot deploy,
+cannot see `journalctl`/`systemctl` output, cannot check live trading
+state or Telegram alerts as they happen, and cannot verify a
+`RECEIPTS.md` claim against a real on-chain signature. That's a real,
+structural difference between sandboxes, not something fixable by
+merging more code — a session without VPS access will still not have it
+after any given piece of code lands on `main`.
+
+**Practical implication**: when deciding what to hand to a
+VPS-access-less session, favor pure code/logic/test work against what's
+already in the repo. Anything requiring live deployment, real production
+verification, or "did the message actually arrive" confirmation needs a
+session with VPS + Telegram access to close the loop — a session without
+it can write and unit-test the fix, but its receipt in `RECEIPTS.md`
+should say "code-complete, not deployed/verified" rather than claiming
+more than it can prove (see `docs/RECEIPTS.md`'s `WATCHDOG_CODE_READY`
+vs `WATCHDOG_LIVE_VERIFIED` distinction for the pattern this project
+already uses for exactly this).
+
+---
+
 ## Current Trading Mode (as of July 2026)
 
 - **`SOCIAL_ALERT_ONLY=True`** — wallet tracker, market scanner, pumpfun listener, near-miss poller are all OFF (zero Helius credits). Only the Telegram social alert feed (`pumpdotfunalert` channel) drives signals.
