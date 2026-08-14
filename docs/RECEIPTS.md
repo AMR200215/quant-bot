@@ -956,7 +956,7 @@ Epoch deferred 2026-07-30 — capital decision. Prerequisite for any future live
 
 ---
 
-## Price Sanity Guard (2026-08-04, commit: TBD — this session)
+## Price Sanity Guard (2026-08-04, commit `d644a2c`, merged to main `2313000` on 2026-08-14)
 
 **Incident**: SPOTTY (SOL) — Telegram TP-hit alerts showed
 `Current PnL: +146555675.7%` across all three TP levels, then
@@ -989,11 +989,23 @@ real move, only corruption.
 **Status**: code-complete, unit + integration tested
 (`tests/test_half2.py::TestPriceSanity`, including a test that reproduces
 the exact SPOTTY magnitude through `_on_pp_price_tick` and asserts
-`peak_price` does not move and no exit is queued). **Not yet proven
-live** — this session has no VPS access to deploy/observe it against a
-real signal. Needs: deploy, confirm no `PRICE SANITY REJECT` false
-positives on a real large pump, and confirm no further
-`Current PnL: +1...e+07%`-style alerts.
+`peak_price` does not move and no exit is queued).
+
+**Deployed 2026-08-14** (a separate session had no VPS access to do this
+— see `deploy/layer2/README.md`'s discussion of cross-session
+capability gaps for why). Merged into `main` after re-verifying against
+current `main` directly (the branch this shipped from was 60 commits
+behind by the time it landed — re-ran the full merge + diff review + a
+real merge-conflict resolution in `RECEIPTS.md` itself, not a blind
+merge). `systemctl restart quantbot` came back up clean, zero errors/
+tracebacks in the fresh startup log. Confirmed live in the running
+process: `_is_price_sane(1.505e-05, 22.056644)` (the exact SPOTTY
+magnitude) returns `False` when imported and called directly against the
+deployed code. **Still open**: no real large pump has occurred since
+deploy to confirm zero false-positive `PRICE SANITY REJECT` log lines on
+a legitimate move — that's an observational item, not a blocker, tracked
+the same way the watchdog's own live-fire proofs were in earlier
+batches.
 
 ---
 
