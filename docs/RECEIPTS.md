@@ -1007,6 +1007,21 @@ a legitimate move — that's an observational item, not a blocker, tracked
 the same way the watchdog's own live-fire proofs were in earlier
 batches.
 
+**Addendum (2026-08-14 18:09 UTC) — real corrupted tick, caught live,
+unprompted.** Found by accident while resolving an unrelated git stash
+conflict on `memecoin/data/memecoin_positions.json` (a real open paper
+position, `PVE`): `journalctl` showed a live sequence of
+`PRICE SANITY REJECT (PP) PVE — ref=$0.0000210600
+candidate=$19.5334672047 (927515x) — ignoring tick, peak_price NOT
+updated` — a genuinely corrupted PumpPortal tick (~927,515x the
+reference price, same order of magnitude as the original SPOTTY
+incident), rejected in real production, on a real open position, with
+zero prompting. Confirmed `peak_price` stayed at the real entry price
+(`2.251e-05`), not the corrupted value. This is a true positive, not the
+false-positive check the "still open" item above was watching for — the
+guard is doing exactly what it was built for, observed live rather than
+in a test.
+
 ---
 
 ## V8-TWIN-FIX — Root Cause + Repair of the Zero-Position V8 Paper Twin (2026-08-11/12)
