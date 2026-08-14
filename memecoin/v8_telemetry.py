@@ -24,10 +24,28 @@ outcome -- the requirement is that it's never invisible):
     screening_passed       -- cleared all V7 screening filters
     signal_constructed     -- Signal object built (make_social_alert_signal)
     add_signal_entered     -- _add_signal() reached with a non-None Signal
-    dedup_rejected          -- _is_duplicate() returned True
-    v8_gate_entered         -- v8_paper.book.maybe_open() reached
-    v8_gate_rejected        -- passes_v8_gate() returned False
-    v8_opened               -- V8 paper position created
+                               (V7's own funnel bookkeeping -- V8 no longer
+                               depends on this stage being reached; see
+                               v8_fork_entered below)
+    dedup_rejected          -- _is_duplicate() returned True (V7's own
+                               dedup -- never gates V8, see VR-REWIRE)
+
+    V8-REWIRE VR1/VR14: V8's branch forks directly off telegram_received,
+    independent of whether the V7 stages above ever fire. Every
+    telegram_received event must reach v8_fork_entered -- that pairing is
+    the structural proof V8 sees the raw stream, not V7's leftovers.
+    v8_fork_entered          -- v8_paper.book.maybe_open_from_alert() reached
+                                (the literal first statement, before any
+                                dedup/gate check -- proves the fork itself
+                                was reached, independent of its decision)
+    v8_transport_duplicate   -- V8's OWN dedup rejected this event_id
+                                (distinct from V7's dedup_rejected above --
+                                see VR5/VR6)
+    v8_gate_rejected         -- passes_v8_gate() returned False
+    v8_pass_unpriced         -- gate passed but no independent entry price
+                                was available within the wait budget --
+                                explicit terminal state, not a silent drop
+    v8_opened                -- V8 paper position created
 
 Run:
     tail -f logs/v8_funnel.jsonl | python3 -m json.tool
@@ -48,7 +66,8 @@ _LOCK = threading.Lock()
 VALID_STAGES = frozenset({
     "telegram_received", "screening_rejected", "screening_passed",
     "signal_constructed", "add_signal_entered", "dedup_rejected",
-    "v8_gate_entered", "v8_gate_rejected", "v8_opened",
+    "v8_fork_entered", "v8_transport_duplicate",
+    "v8_gate_rejected", "v8_pass_unpriced", "v8_opened",
 })
 
 

@@ -1,11 +1,27 @@
 """
-v8_paper.py — V8 paper-trading twin (N6, post-measurement batch, 2026-07-30).
+v8_paper.py — V8 paper-trading twin (N6, post-measurement batch,
+2026-07-30; re-architected V8-REWIRE, 2026-08-14).
 
-Runs the SAME signals the v7 paper/live pipeline sees through a separate
-V8 candidate rule, journaling to logs/memecoin_v8_journal.csv. Fully
-independent from v7: separate Position dict, separate journal, separate
-monitor thread, its own price polling. A bug here can never touch v7 paper
-or live trading — every public entry point is wrapped so it fails silent.
+V8-REWIRE: forks directly off the raw Telegram alert stream
+(memecoin.alert_event.TelegramAlertEvent), evaluated in
+maybe_open_from_alert() from memecoin.scanner._on_telegram_signal()
+BEFORE V7's screen_token() ever runs -- not "the same signals the v7
+pipeline sees" (that was the pre-rewire architecture: V8 only ever saw
+whatever survived V7's filters + V7's own dedup, making "V8 vs v7" a
+comparison against a self-selected subset, not the real population). See
+docs/RECEIPTS.md's V8-REWIRE section for the full investigation that led
+here.
+
+Journaling to logs/memecoin_v8_journal.csv. Fully independent from v7:
+separate Position dict, separate journal, separate monitor thread, its
+own price polling, its own dedup (v8_transport_duplicate, distinct from
+V7's _is_duplicate), its own entry-price provenance (PumpPortal screening
+state, resolved independently -- never signal._price_pp, which is a V7
+Signal attribute this module must never touch). A bug here can never
+touch v7 paper or live trading — every public entry point is wrapped so
+it fails silent, and maybe_open_from_alert() dispatches onto its own
+thread so a slow price wait can never add latency to V7's live-buy
+critical path.
 
 V8 candidate rule (entry gate)
 -------------------------------
@@ -54,6 +70,58 @@ V8_CONFIG_TAG      = "v8_candidate_2026-07-30"
 V8_PROGRESS_MAX    = 0.70          # gate: progress_at_signal must be below this
 _MONITOR_INTERVAL_S = 5.0
 
+# V8-REWIRE VR12/VR13: era tag written to every journal row. Anything
+# opened before this module's V8-REWIRE code actually ran in production
+# is PRE_REWIRE_V7_CONDITIONAL (V8 only ever saw V7-screened survivors);
+# anything after is V8_TELEGRAM_INDEPENDENT_V1 (V8 forks off the raw
+# alert). Any forward comparison / freeze-gate math MUST filter to the
+# new era only -- mixing eras silently understates V8's real opportunity
+# set with pre-rewire rows.
+#
+# The cutover timestamp is self-bootstrapping rather than a hand-set
+# constant: the first time this process ever runs the new code, it
+# stamps logs/watchdog/v8_rewire_deploy_ts.txt with the real wall-clock
+# time and every subsequent process (this one and future restarts) reads
+# that same stamp back. A hardcoded constant would require a human to
+# guess or manually update it in a follow-up commit after watching the
+# real deploy happen -- fragile and easy to get subtly wrong (see this
+# session's own V8_INPUTS.md / v8_funnel.jsonl data-loss incidents,
+# VR22 -- another case where a manual step silently drifted from
+# reality). Fails closed: if the stamp can't be read or written for any
+# reason, _current_era() returns PRE_REWIRE (conservative -- never
+# over-counts the new era).
+V8_ERA_PRE_REWIRE = "PRE_REWIRE_V7_CONDITIONAL"
+V8_ERA_INDEPENDENT = "V8_TELEGRAM_INDEPENDENT_V1"
+_DEPLOY_TS_LOCK = threading.Lock()
+
+
+def _deploy_stamp_path() -> "Path":
+    from memecoin.config import LOGS_DIR
+    return LOGS_DIR / "watchdog" / "v8_rewire_deploy_ts.txt"
+
+
+def _independent_validation_start() -> float:
+    """Returns the frozen V8-REWIRE cutover epoch ts, creating it on first
+    call if it doesn't exist yet. Cached in-process after the first read."""
+    cached = getattr(_independent_validation_start, "_cached", None)
+    if cached is not None:
+        return cached
+    try:
+        stamp_path = _deploy_stamp_path()
+        with _DEPLOY_TS_LOCK:
+            if stamp_path.exists():
+                ts = float(stamp_path.read_text().strip())
+            else:
+                ts = time.time()
+                stamp_path.parent.mkdir(parents=True, exist_ok=True)
+                stamp_path.write_text(str(ts))
+        _independent_validation_start._cached = ts
+        return ts
+    except Exception as e:
+        log.warning("v8_paper: could not read/create V8-REWIRE deploy stamp "
+                    "(era tagging fails closed to PRE_REWIRE): %s", e)
+        return float("inf")   # nothing is ever >= this -> always PRE_REWIRE
+
 # PLACEHOLDER — see module docstring. Mirrors v7 social_alert prod config
 # (memecoin/config.py SIGNAL_SETTINGS["social_alert"]) at the time this was
 # written. Not re-read live from config.py so a v7 config change doesn't
@@ -75,8 +143,12 @@ V8_JOURNAL_FIELDS = [
     "exit_price", "exit_time", "exit_reason", "pnl_usd", "pnl_pct",
     "peak_price", "hard_stop_pct",
     "progress_at_signal", "dex_id", "entry_source",
-    "notes", "config_tag",
+    "notes", "config_tag", "era",
 ]
+
+
+def _current_era() -> str:
+    return V8_ERA_INDEPENDENT if time.time() >= _independent_validation_start() else V8_ERA_PRE_REWIRE
 
 
 def _paths():
@@ -152,6 +224,14 @@ def passes_v8_gate(signal) -> tuple[bool, str, float | None]:
     venue_state_at_signal == CURVE_ACTIVE. Never dex_id — see
     _get_capture_for_gate's docstring for why that was wrong. UNKNOWN
     venue state fails closed (rejected), same as unknown progress.
+
+    V8-REWIRE VR3/VR4: pure with respect to strategy identity -- only
+    ever reads .chain/.token_address/.event_id off `signal`, so it works
+    identically whether called with a V7 Signal (legacy tests) or a
+    memecoin.alert_event.TelegramAlertEvent (the real V8-REWIRE call
+    path). This is deliberately duck-typed rather than given two
+    signatures: the point is that the candidate rule itself never changed
+    and never needed to know which object shape it was fed.
     """
     cap = _get_capture_for_gate(
         signal.chain, signal.token_address, getattr(signal, "event_id", ""),
@@ -168,37 +248,111 @@ def passes_v8_gate(signal) -> tuple[bool, str, float | None]:
 
 
 # ---------------------------------------------------------------------------
+# V8-native dedup (V8-REWIRE VR5/VR6) -- deliberately NOT memecoin.scanner's
+# _is_duplicate(): that function reads/mutates V7 strategy state (_seen
+# cooldown dict, portfolio.open_positions(), _traded_today blacklist) and
+# gating V8 on it is exactly the "V8 conditional on V7" bug this rewire
+# fixes. V8's own dedup only ever needs to answer one narrow question:
+# "did I already evaluate this exact alert event?" -- a transport-level
+# concern (guards against a literal double-invocation of
+# maybe_open_from_alert for the same event_id), not a strategy decision.
+# Same-token-different-event_id re-alerts are handled separately by the
+# already_open check inside maybe_open_from_alert, which is V8's own
+# position book, not shared with V7's.
+# ---------------------------------------------------------------------------
+
+_SEEN_EVENT_IDS_MAX = 5000
+_seen_event_ids: "dict[str, float]" = {}
+_seen_lock = threading.Lock()
+
+
+def _is_transport_duplicate(event_id: str) -> bool:
+    if not event_id:
+        return False
+    with _seen_lock:
+        if event_id in _seen_event_ids:
+            return True
+        _seen_event_ids[event_id] = time.time()
+        if len(_seen_event_ids) > _SEEN_EVENT_IDS_MAX:
+            # Drop the oldest ~10% -- bounded memory, no external dependency.
+            oldest = sorted(_seen_event_ids.items(), key=lambda kv: kv[1])
+            for k, _ in oldest[: _SEEN_EVENT_IDS_MAX // 10]:
+                _seen_event_ids.pop(k, None)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Entry price provenance (V8-REWIRE VR8) -- V8 forks before screen_token()
+# runs, so it can never read signal._price_pp / signal.price_usd (those are
+# populated by V7's own DexScreener/PP-wait code, well after the fork
+# point). V8 gets its own independent PumpPortal read instead -- the same
+# subscription memecoin.scanner._on_telegram_signal() already fires
+# unconditionally (before any V7 branching) via
+# pumpportal_monitor.subscribe_screening(), so ticks are already in flight
+# by the time this runs on V8's own thread.
+# ---------------------------------------------------------------------------
+
+_PRICE_WAIT_S = 2.0
+_PRICE_POLL_INTERVAL_S = 0.2
+
+
+def _resolve_entry_price(chain: str, token_address: str) -> tuple[float, str]:
+    """Returns (price, entry_source). price==0.0 means unpriced within
+    budget -- caller must treat that as an explicit terminal state
+    (v8_pass_unpriced), not silently substitute a stale/foreign price."""
+    if chain != "solana":
+        return 0.0, "unsupported_chain"
+    try:
+        from memecoin.pumpportal_monitor import monitor as _pp_monitor
+    except Exception:
+        return 0.0, "pp_import_failed"
+    deadline = time.time() + _PRICE_WAIT_S
+    while time.time() < deadline:
+        try:
+            price = _pp_monitor.get_prices().get(token_address, 0.0)
+        except Exception:
+            return 0.0, "pp_read_failed"
+        if price > 0:
+            return price, "pp_tick_v8_fork"
+        time.sleep(_PRICE_POLL_INTERVAL_S)
+    return 0.0, "pp_unpriced"
+
+
+# ---------------------------------------------------------------------------
 # Position (plain dict — deliberately not memecoin.portfolio.Position;
 # this book must never share state/serialization with the live engine)
 # ---------------------------------------------------------------------------
 
-def _new_position(signal, progress: float) -> dict:
-    sig_price_pp = getattr(signal, "_price_pp", 0) or 0
-    baseline = sig_price_pp if sig_price_pp > 0 else (signal.price_usd or 0)
+def _new_position_from_alert(event, progress: float, entry_price: float, entry_source: str) -> dict:
+    """V8-REWIRE VR8/VR9: builds a V8 position from a TelegramAlertEvent +
+    an independently-resolved entry price -- never from a V7 Signal.
+    entry_price==0.0 must never reach here (caller emits v8_pass_unpriced
+    and returns before constructing a position for that case)."""
     now = time.time()
     import uuid
     return {
         "id": "V8" + str(uuid.uuid4())[:6],
-        "signal_id": getattr(signal, "id", ""),
-        "chain": signal.chain,
-        "token_address": signal.token_address,
-        "token_symbol": signal.token_symbol,
-        "signal_type": signal.signal_type,
-        "strength": signal.strength,
-        "signal_price": baseline,
+        "signal_id": event.event_id,
+        "chain": event.chain,
+        "token_address": event.token_address,
+        "token_symbol": event.token_symbol,
+        "signal_type": "social_alert",
+        "strength": "v8_fork",   # V8-REWIRE: not a V7 strength classification -- V8 has no such concept
+        "signal_price": entry_price,
         "signal_time": now,
-        "entry_price": baseline,          # curve-baseline entry (N6 requirement)
+        "entry_price": entry_price,       # curve-baseline entry (N6 requirement)
         "entry_time": now,
         "size_usd": 1.0,                  # paper-only; size is irrelevant to pct outcomes
-        "current_price": baseline,
-        "peak_price": baseline,
+        "current_price": entry_price,
+        "peak_price": entry_price,
         "status": "open",
         "exit_price": 0.0,
         "exit_time": 0.0,
         "exit_reason": "",
         "progress_at_signal": progress,
-        "dex_id": getattr(signal, "dex_id", "") or "",
-        "entry_source": "pp_tick" if sig_price_pp > 0 else "dex_stale",
+        "dex_id": "",   # V8-REWIRE: never populated pre-fork -- V8 forks before V7's dex_id is even resolved
+        "entry_source": entry_source,
+        "era": _current_era(),
         "notes": "",
     }
 
@@ -269,6 +423,7 @@ def _append_journal(pos: dict) -> None:
         "entry_source": pos["entry_source"],
         "notes": pos["notes"],
         "config_tag": V8_CONFIG_TAG,
+        "era": pos.get("era", V8_ERA_PRE_REWIRE),   # old on-disk positions predate era tagging
     }
     write_header = not journal_file.exists() or journal_file.stat().st_size == 0
     with open(journal_file, "a", newline="") as f:
@@ -317,72 +472,113 @@ class V8PaperBook:
         with self._lock:
             return [p for p in self._positions.values() if p["status"] == "open"]
 
-    def maybe_open(self, signal) -> None:
-        """Called once per incoming signal (same funnel as v7's open_position).
-        Never raises — any failure here must not affect v7/live.
+    def maybe_open_from_alert(self, event) -> None:
+        """V8-REWIRE VR1/VR7: entry point called from
+        memecoin.scanner._on_telegram_signal() for EVERY raw Telegram
+        alert, before screen_token() runs -- `event` is a
+        memecoin.alert_event.TelegramAlertEvent, never a V7 Signal.
 
-        V8-TWIN-FIX VF1: v8_gate_entered is emitted as the literal first
-        statement, before already_open or any other return -- this is the
-        one checkpoint that proves maybe_open() was ever reached at all,
-        independent of what it decides.
+        Dispatches onto its own daemon thread immediately: the entry-price
+        wait (up to _PRICE_WAIT_S) must never add latency to the caller,
+        which is on V7's synchronous, latency-budgeted signal path. Never
+        raises back to the caller — the thread target self-guards.
         """
-        _event_id = getattr(signal, "event_id", "") or ""
+        threading.Thread(target=self._evaluate_alert, args=(event,),
+                         daemon=True, name="v8-fork-eval").start()
+
+    def _evaluate_alert(self, event) -> None:
+        """Runs on its own thread — see maybe_open_from_alert(). Never
+        raises — any failure here must not affect v7/live, and there is
+        no caller left to propagate to by the time this runs anyway.
+
+        V8-REWIRE VR1: v8_fork_entered is emitted as the literal first
+        statement, before transport-dedup/already_open/gate or any other
+        return -- this is the one checkpoint that proves V8 was handed
+        THIS raw alert at all, independent of what it decides. Paired
+        with telegram_received in watchdog/checks/v8_funnel.py's
+        _TRANSITIONS: every telegram_received event must reach this stage,
+        which is the structural, monitored proof V8 sees the raw stream.
+        """
         try:
             from memecoin import v8_telemetry as _v8_tel
-            _v8_tel.emit("v8_gate_entered", event_id=_event_id,
-                         mint=getattr(signal, "token_address", ""),
-                         dex_id=getattr(signal, "dex_id", "") or "")
+            _v8_tel.emit("v8_fork_entered", event_id=event.event_id,
+                         mint=event.token_address)
         except Exception:
             _v8_tel = None
         try:
+            if _is_transport_duplicate(event.event_id):
+                if _v8_tel is not None:
+                    try:
+                        _v8_tel.emit("v8_transport_duplicate", event_id=event.event_id,
+                                     mint=event.token_address, result="rejected",
+                                     reason="transport_duplicate")
+                    except Exception:
+                        pass
+                return
             with self._lock:
                 already_open = any(
-                    p["token_address"] == signal.token_address and p["status"] == "open"
+                    p["token_address"] == event.token_address and p["status"] == "open"
                     for p in self._positions.values()
                 )
             if already_open:
                 if _v8_tel is not None:
                     try:
-                        _v8_tel.emit("v8_gate_rejected", event_id=_event_id,
-                                     mint=signal.token_address, result="rejected",
+                        _v8_tel.emit("v8_gate_rejected", event_id=event.event_id,
+                                     mint=event.token_address, result="rejected",
                                      reason="already_open")
                     except Exception:
                         pass
                 return
-            passed, reason, progress = passes_v8_gate(signal)
-            cap = _get_capture_for_gate(signal.chain, signal.token_address, _event_id)
+            passed, reason, progress = passes_v8_gate(event)
+            cap = _get_capture_for_gate(event.chain, event.token_address, event.event_id)
             venue = cap.venue_state_at_signal if cap is not None else "UNKNOWN"
             psrc  = cap.progress_source if cap is not None else ""
             if not passed:
                 log.info("v8_paper: gate reject %s (event=%s) — %s",
-                         signal.token_symbol, _event_id[:12], reason)
+                         event.token_symbol or event.token_address[:8], event.event_id[:12], reason)
                 if _v8_tel is not None:
                     try:
-                        _v8_tel.emit("v8_gate_rejected", event_id=_event_id,
-                                     mint=signal.token_address, progress=progress,
+                        _v8_tel.emit("v8_gate_rejected", event_id=event.event_id,
+                                     mint=event.token_address, progress=progress,
                                      progress_source=psrc, venue_state=venue,
-                                     dex_id=getattr(signal, "dex_id", "") or "",
                                      result="rejected", reason=reason)
                     except Exception:
                         pass
                 return
-            pos = _new_position(signal, progress)
+
+            entry_price, entry_source = _resolve_entry_price(event.chain, event.token_address)
+            if entry_price <= 0:
+                # V8-REWIRE VR8: gate passed but no independent price arrived
+                # within budget -- an explicit terminal state, not a silent
+                # drop. Distinguishable from v8_gate_rejected in the funnel.
+                log.info("v8_paper: pass but unpriced %s (event=%s) — %s",
+                         event.token_symbol or event.token_address[:8], event.event_id[:12], entry_source)
+                if _v8_tel is not None:
+                    try:
+                        _v8_tel.emit("v8_pass_unpriced", event_id=event.event_id,
+                                     mint=event.token_address, progress=progress,
+                                     progress_source=psrc, venue_state=venue,
+                                     result="unpriced", reason=entry_source)
+                    except Exception:
+                        pass
+                return
+
+            pos = _new_position_from_alert(event, progress, entry_price, entry_source)
             with self._lock:
                 self._positions[pos["id"]] = pos
                 self._save()
             log.info("v8_paper OPEN %s  progress=%.2f  entry=$%.10f  id=%s",
-                     signal.token_symbol, progress, pos["entry_price"], pos["id"])
+                     event.token_symbol or event.token_address[:8], progress, pos["entry_price"], pos["id"])
             if _v8_tel is not None:
                 try:
-                    _v8_tel.emit("v8_opened", event_id=_event_id,
-                                 mint=signal.token_address, progress=progress,
+                    _v8_tel.emit("v8_opened", event_id=event.event_id,
+                                 mint=event.token_address, progress=progress,
                                  progress_source=psrc, venue_state=venue,
-                                 dex_id=getattr(signal, "dex_id", "") or "",
                                  result="opened", reason=pos["id"])
                 except Exception:
                     pass
         except Exception as e:
-            log.warning("v8_paper: maybe_open failed (non-fatal): %s", e)
+            log.warning("v8_paper: _evaluate_alert failed (non-fatal): %s", e)
 
     def _close(self, pos_id: str, price: float, reason: str) -> None:
         with self._lock:

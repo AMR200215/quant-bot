@@ -2206,3 +2206,125 @@ unobserved claim doesn't get the same status as an observed one. Revisit
 after the first automatic scheduled fire lands, log it here, and this
 caveat clears. No trading logic touched; `LIVE_TRADING=false` unchanged
 throughout.
+
+## V8-REWIRE — Two Independent Judges, One Telegram Stream (2026-08-15)
+
+### Why
+
+Post-watchdog investigation (same session, prior to this batch) found
+that V8 had opened exactly **one** paper position in its entire
+lifetime, despite `research.py` having collected 30,000+ tokens from the
+same Telegram feed specifically to give V8 a wider dataset than V7. Root
+cause, confirmed against real code (not inferred): V8 was wired into
+`memecoin/scanner.py`'s `_add_signal()`, which only ever runs *after*
+V7's `screen_token()` has already rejected most candidates and *after*
+V7's own dedup (`_is_duplicate()`) has run. V8's own candidate rule
+(`progress_at_signal < 0.70 AND venue_state == CURVE_ACTIVE`) was never
+the problem — it matched its own documented spec exactly. The problem
+was sourcing: V8 was conditional on V7's opinion, making "V8 vs v7" a
+comparison against V7's leftovers, not the real population. Traced via
+`git log`/`git show` to `d3c33bd` (2026-07-30, a different session),
+whose own commit message frames the shared funnel as a state-isolation
+shortcut, not a deliberate data-independence decision. Full writeup
+compiled into `v8_architecture_report.md` and used to drive this fix.
+
+### What changed
+
+- **`memecoin/alert_event.py`** (new) — `TelegramAlertEvent`: the one
+  object V7 and V8 are both allowed to see. Carries only event_id,
+  chain, token_address, alert_ts, message_text — never a V7 opinion
+  (screen result, strength, dex_id-as-filtered-by-V7, dedup state).
+- **`memecoin/scanner.py`** — `_on_telegram_signal()` now constructs a
+  `TelegramAlertEvent` and calls `v8_paper.book.maybe_open_from_alert()`
+  immediately after progress-capture kickoff, **before** `screen_token()`
+  runs and before every V7 branch (TG-cache-hit fast path, no_dex_data,
+  rug reject, per-filter rejects). V8 sees literally every raw alert now,
+  independent of what V7 decides. The old call site inside `_add_signal()`
+  (which only ran for V7-screened, V7-deduped survivors) is removed.
+- **`memecoin/v8_paper.py`**:
+  - `maybe_open_from_alert()` dispatches onto its own daemon thread
+    immediately — the price wait below can never add latency to V7's
+    synchronous, latency-budgeted live-buy path.
+  - `passes_v8_gate()` unchanged in logic; confirmed duck-typed (only
+    ever reads `.chain`/`.token_address`/`.event_id`) so it works
+    identically against `TelegramAlertEvent` or a legacy V7-Signal-shaped
+    object — the candidate rule itself was never the bug.
+  - New V8-native transport dedup (`_is_transport_duplicate`, bounded
+    in-memory event_id set) — completely independent of V7's
+    `_is_duplicate()` (`_seen` cooldown, `portfolio.open_positions()`,
+    `_traded_today` blacklist). V8's own `already_open`-by-token check
+    (pre-existing) still guards re-opening while a position is live.
+  - New independent entry-price provenance (`_resolve_entry_price`) —
+    reads PumpPortal's own live tick cache directly (already subscribed
+    unconditionally, before any V7 branching), never `signal._price_pp`
+    (a V7-computed field that doesn't exist pre-screen anymore). Pass-
+    but-unpriced is now an explicit terminal state (`v8_pass_unpriced`),
+    not a silent drop.
+  - Era tagging (`era` journal column): `PRE_REWIRE_V7_CONDITIONAL` vs
+    `V8_TELEGRAM_INDEPENDENT_V1`, self-bootstrapping — the cutover
+    timestamp is stamped to `logs/watchdog/v8_rewire_deploy_ts.txt` the
+    first time this code actually runs in production, not hand-set in a
+    commit (a hardcoded constant would need a human to correctly guess
+    or follow up with the real deploy time — exactly the kind of manual
+    step that drifted from reality earlier this session, see the
+    `git stash -u` data-loss entries above). Any forward V8-vs-V7
+    comparison must filter to the new era only.
+- **`memecoin/v8_telemetry.py`** — new stages `v8_fork_entered` (the
+  literal first statement in V8's evaluation, replacing `v8_gate_entered`
+  as the true "V8 received this" checkpoint — now fires for every raw
+  alert), `v8_transport_duplicate`, `v8_pass_unpriced`.
+- **`watchdog/checks/v8_funnel.py`** — new load-bearing invariant:
+  `(telegram_received -> v8_fork_entered)`. If V8 ever silently stops
+  forking off the raw stream again (e.g. someone re-wires it back onto
+  V7's funnel), this check goes CRITICAL instead of the regression
+  sitting unnoticed for weeks the way the original bug did.
+
+### What's deliberately NOT done in this batch
+
+- **VR10/VR11 (capacity-cap handling, feed-blind-state nuance for
+  monitoring)** — existing monitor loop / PumpPortal-feed watchdog check
+  already cover the base cases; no dedicated capacity-cap mechanism was
+  specified precisely enough to build without guessing. Deferred.
+- **VR14 (per-event V7/V8 head-to-head disposition matrix report)** —
+  the underlying data now exists (`v8_funnel.jsonl` has both V7's and
+  V8's terminal disposition per `event_id`, shared key), but no report
+  script joins them into the pass/pass, pass/fail, fail/pass, fail/fail
+  matrix yet. Deferred, not blocking.
+- **VR19 (live acceptance: ≥100 fresh raw events, 100% V8 terminal
+  coverage, a real V7-FAIL/V8-EVALUATED receipt)** — cannot be fabricated
+  or shortcut; requires real elapsed production time after deploy. Not
+  yet started as of this commit — see follow-up addendum below.
+- **VR20-22 write-ups** (base-rate honesty note, freeze-gate rationale
+  documentation) — not written yet; VR22's actual code fix (protecting
+  runtime telemetry from `git stash -u`) also not yet done — flagged
+  here as still open, not silently dropped.
+
+### Tests
+
+35 new/updated tests (`memecoin/tests/test_v8_paper.py`,
+`memecoin/tests/test_scanner_v8_fork.py` [new, replaces the now-
+architecturally-false `test_scanner_v8_dedup.py`], `watchdog/tests/
+test_v8_funnel.py`), all passing. Covers: gate logic unchanged (7
+original + 1 new against the real `TelegramAlertEvent`), book
+persistence/isolation against the new alert-based entry point, V8's
+transport dedup proven independent of V7's (`_is_duplicate`/
+`_traded_today`/`portfolio` never imported — checked via AST, not a
+substring scan, after two rounds of self-inflicted false positives from
+the module's own explanatory prose), unpriced-pass as a distinct
+non-crashing outcome, async dispatch proven non-blocking via a thread-
+timing test, era self-bootstrapping (creates-once, reuses, correct
+before/after cutover), and the watchdog's new
+`(telegram_received -> v8_fork_entered)` invariant including a fault-
+injection case for the exact old-architecture regression (V7-rejected
+event with no V8 terminal disposition at all).
+
+Full local suite run both combined and per-directory (matching
+`watchdog/checks/test_drift.py`'s own documented pattern, since the
+combined tree has a known pre-existing `sys.modules` collision unrelated
+to this change — reproduced on a clean, unmodified `main` via `git
+stash` before concluding it wasn't introduced here). The 7 failures in
+`tests/test_half2.py`/`tests/test_live_gate.py` also reproduce
+identically on clean `main` — pre-existing, unrelated to this batch, not
+touched.
+
+### Status: **V8_REWIRE_CODE_COMPLETE** (not yet deployed/verified — see addendum)

@@ -527,23 +527,14 @@ def _add_signal(sig: Optional[Signal]):
         except Exception as e:
             log.warning("open_position failed for %s: %s", sig.token_symbol, e)
 
-    # N6: V8 paper twin — same signal funnel (every signal that reaches this
-    # function, i.e. survives dedup), independent book/journal. Bug fixed
-    # 2026-08-09: this was previously nested inside the `sig.strength in
-    # (medium, strong)` block above, making V8 see only the subset of
-    # signals v7's OWN strength classifier already liked -- not an
-    # independent sample. V8 has its own gate (passes_v8_gate: progress <
-    # 0.70, no dex_id yet) and must apply it to the full funnel, not a
-    # v7-pre-filtered one, or "V8 vs v7" isn't actually measuring V8's
-    # approach against the real population. Confirmed safe to widen:
-    # maybe_open() self-guards (dedup by token_address, own gate, never
-    # raises) and writes to its own journal only -- zero shared state with
-    # v7's Portfolio or live trading.
-    try:
-        from memecoin.v8_paper import book as _v8_book
-        _v8_book.maybe_open(sig)
-    except Exception as e:
-        log.debug("v8_paper maybe_open failed (non-fatal): %s", e)
+    # V8-REWIRE (2026-08-14): V8 is no longer evaluated here. It forks
+    # directly off the raw Telegram alert in _on_telegram_signal(), before
+    # screen_token() runs and before _is_duplicate() above -- this
+    # function's dedup and every V7 filter that ran to produce `sig` are
+    # V7 strategy state, and gating V8 on them was exactly the "V8
+    # conditional on V7 screening" bug the rewire fixes. See
+    # memecoin/v8_paper.py's module docstring and
+    # docs/RECEIPTS.md's V8-REWIRE section.
     _persist_signals()
     log.info(
         "SIGNAL [%s] %s/%s  strength=%s  composite=%.2f  %s",
@@ -1045,6 +1036,26 @@ def _on_telegram_signal(chain: str, address: str, message_text: str):
         _cap_progress(_event_id, address, _t0, chain)
     except Exception as _cap_err:
         log.debug("progress_capture start failed %s: %s", address[:8], _cap_err)
+
+    # ── V8-REWIRE VR1: fork V8 off the raw alert, before any V7 opinion ──────
+    # Deliberately placed before screen_token(), before the TG-cache-hit
+    # fast path below, before every V7 filter/rug-check/dedup branch -- V8
+    # must see literally every telegram_received event, not whatever
+    # survives V7's funnel. TelegramAlertEvent carries only objective,
+    # source-neutral facts (event_id/chain/address/alert_ts); V8 never
+    # sees the V7 Signal object built later in this function. maybe_open_
+    # from_alert() dispatches onto its own thread immediately, so this
+    # call adds no latency to V7's synchronous, latency-budgeted path
+    # below (live-buy preflight timing depends on it).
+    try:
+        from memecoin.alert_event import TelegramAlertEvent as _TGEvent
+        from memecoin.v8_paper import book as _v8_book
+        _v8_book.maybe_open_from_alert(_TGEvent(
+            event_id=_event_id, chain=chain, token_address=address,
+            alert_ts=_t0, message_text=message_text or "",
+        ))
+    except Exception as _v8_fork_err:
+        log.debug("v8 fork dispatch failed (non-fatal) %s: %s", address[:8], _v8_fork_err)
 
     # ── Write PP snapshot to shared file for research pipeline ───────────────
     # Research tracker reads this to get entry data (price, vsol, buy pressure)

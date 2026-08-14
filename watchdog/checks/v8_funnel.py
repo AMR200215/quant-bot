@@ -1,11 +1,21 @@
 """watchdog/checks/v8_funnel.py — W7: stuck-stage / silent-disappearance
 detection for the V8 candidate funnel.
 
-Reuses logs/v8_funnel.jsonl, the 9-stage JSONL telemetry built during
-V8-TWIN-FIX (memecoin/v8_telemetry.py) to root-cause the exact same class
-of bug this check now guards against automatically: V8's gate rejected
-100% of candidates for days because dex_id was misread as a graduation
-signal, and nothing noticed until a manual audit.
+Reuses logs/v8_funnel.jsonl, the JSONL telemetry built during V8-TWIN-FIX
+(memecoin/v8_telemetry.py) to root-cause the exact same class of bug this
+check now guards against automatically: V8's gate rejected 100% of
+candidates for days because dex_id was misread as a graduation signal,
+and nothing noticed until a manual audit.
+
+V8-REWIRE (2026-08-14): added the (telegram_received -> v8_fork_entered)
+pairing below. This is the structural, monitored proof that V8 forks off
+every raw alert independent of V7's screening -- before the rewire, V8
+was only ever reachable via V7-screened survivors (add_signal_entered ->
+v8_gate_entered), which is exactly the architecture bug the rewire fixes.
+If that pairing ever regresses (e.g. someone re-wires V8 back onto V7's
+funnel, or the fork call site silently stops firing), this check goes
+CRITICAL rather than the regression sitting unnoticed the way the
+original bug did.
 
 Deliberately does NOT implement a reject-rate/conversion-percentage
 anomaly detector. Real production data (docs/RECEIPTS.md's V8-TWIN-FIX
@@ -31,8 +41,11 @@ DEFAULT_FUNNEL_PATH = REPO_ROOT / "logs" / "v8_funnel.jsonl"
 
 # (entry_stage, {terminal_stages}) pairs to check for completeness.
 _TRANSITIONS = [
-    ("add_signal_entered", {"dedup_rejected", "v8_gate_entered"}),
-    ("v8_gate_entered", {"v8_gate_rejected", "v8_opened"}),
+    # V8-REWIRE: the load-bearing invariant. Every raw alert must reach
+    # V8's fork, independent of whatever V7 does with the same alert.
+    ("telegram_received", {"v8_fork_entered"}),
+    ("v8_fork_entered", {"v8_transport_duplicate", "v8_gate_rejected",
+                          "v8_pass_unpriced", "v8_opened"}),
 ]
 
 _MAX_LINES_READ = 20_000  # bound cost against unbounded file growth
