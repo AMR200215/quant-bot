@@ -39,6 +39,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _KNOWN_PACKAGES = {"memecoin", "research", "watchdog", "app", "tools", "sniper", "wallet_db"}
 _COLLECT_TIMEOUT_S = 60
 
+# watchdog/layer2/tests is its own directory, separate from watchdog/tests
+# -- found live by Layer 2's own first real audit run (F4): this module's
+# default test_dirs never included it, so "watchdog test collection" was
+# silently blind to its own newest, most complex subpackage (39 tests,
+# 90 -> 129 once included). The exact class of gap this whole check
+# exists to catch, just inside the tool built to catch it.
+
 
 # ---------------------------------------------------------------------------
 # check_stale_mocks
@@ -156,7 +163,8 @@ def check_stale_mocks(test_dirs: Optional[list[Path]] = None,
                        check_id: str = "test_drift.stale_mocks") -> list[CheckResult]:
     dirs = test_dirs if test_dirs is not None else [
         REPO_ROOT / "memecoin" / "tests", REPO_ROOT / "research" / "tests",
-        REPO_ROOT / "watchdog" / "tests", REPO_ROOT / "tests",
+        REPO_ROOT / "watchdog" / "tests", REPO_ROOT / "watchdog" / "layer2" / "tests",
+        REPO_ROOT / "tests",
     ]
 
     findings = []
@@ -223,7 +231,8 @@ def check_test_collection(test_dirs: Optional[list[Path]] = None,
     python_bin = python_bin or sys.executable
     dirs = test_dirs if test_dirs is not None else [
         REPO_ROOT / "memecoin" / "tests", REPO_ROOT / "research" / "tests",
-        REPO_ROOT / "watchdog" / "tests", REPO_ROOT / "tests",
+        REPO_ROOT / "watchdog" / "tests", REPO_ROOT / "watchdog" / "layer2" / "tests",
+        REPO_ROOT / "tests",
     ]
 
     results = []
