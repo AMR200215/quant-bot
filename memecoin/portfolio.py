@@ -62,6 +62,31 @@ def effective_hard_stop_level(signal_price: float, entry_price: float, hard_stop
     return max(_sa, _fl)
 
 
+# Sanity bound for a single price update: reject if it implies a jump larger
+# than this multiple vs the last known-good price, in either direction. Real
+# memecoin moves accrue over many ticks — even the most extreme historical
+# pumps in this journal stay under ~20x over a token's ENTIRE life, let alone
+# a single tick. This exists purely as defense-in-depth against a corrupted
+# price computation (unit-conversion bugs, msg-parse errors, API glitches)
+# permanently poisoning pos.peak_price via max() before it's ever caught.
+# Incident: SPOTTY (2026-08) — Telegram TP alerts showed "Current PnL:
+# +146,555,675.7%", peak_price=$22.05 vs entry=$0.000015 (~1.46M x on a
+# single tick). Root cause was a _compute_price() unit bug (fixed separately,
+# commit cc472cd) — but nothing stopped that one bad tick from sticking
+# forever once accepted. This guard stops that regardless of root cause.
+_PRICE_SANITY_MAX_MULTIPLE = 100.0
+
+
+def _is_price_sane(reference_price: float, candidate_price: float) -> bool:
+    """True if candidate_price is within _PRICE_SANITY_MAX_MULTIPLE of
+    reference_price in either direction. Either price <=0 means there's
+    nothing to validate against (no reference yet, or a non-price) — allow."""
+    if reference_price <= 0 or candidate_price <= 0:
+        return True
+    ratio = candidate_price / reference_price
+    return (1.0 / _PRICE_SANITY_MAX_MULTIPLE) <= ratio <= _PRICE_SANITY_MAX_MULTIPLE
+
+
 JOURNAL_FIELDS = [
     # identity
     "id", "signal_id", "chain", "token_address", "token_symbol",
@@ -3088,15 +3113,23 @@ class Portfolio:
             # 1. PumpPortal real-time (sub-second, from bonding curve reserves)
             # 2. DexScreener poll (5-30s lag — fallback heartbeat)
             # 3. Jupiter quote (last resort when DexScreener is down)
+            _price_ref = pos.current_price if pos.current_price > 0 else pos.entry_price
             pp_price = price_overrides.get(pos.token_address)
             _used_dex_source = False
             if pp_price and pp_price > 0:
-                pos.current_price = pp_price
-                pos.peak_price = max(pos.peak_price, pp_price)
-                _used_dex_source = True
-                if pos.is_live:
-                    from memecoin.health_monitor import update_health_timestamp as _uht
-                    _uht("_last_pp_live_tick", time.time())
+                if not _is_price_sane(_price_ref, pp_price):
+                    log.warning(
+                        "PRICE SANITY REJECT (PP) %s — ref=$%.10f candidate=$%.10f "
+                        "(%.0fx) — ignoring tick, peak_price NOT updated",
+                        pos.token_symbol, _price_ref, pp_price, pp_price / _price_ref if _price_ref else 0,
+                    )
+                else:
+                    pos.current_price = pp_price
+                    pos.peak_price = max(pos.peak_price, pp_price)
+                    _used_dex_source = True
+                    if pos.is_live:
+                        from memecoin.health_monitor import update_health_timestamp as _uht
+                        _uht("_last_pp_live_tick", time.time())
             else:
                 # DexScreener fallback — used when PumpPortal has no fresh data
                 # (graduated tokens, or token not yet subscribed)
@@ -3104,9 +3137,16 @@ class Portfolio:
                 if pair:
                     price = float(pair.get("priceUsd") or 0)
                     if price > 0:
-                        pos.current_price = price
-                        pos.peak_price = max(pos.peak_price, price)
-                        _used_dex_source = True
+                        if not _is_price_sane(_price_ref, price):
+                            log.warning(
+                                "PRICE SANITY REJECT (dex) %s — ref=$%.10f candidate=$%.10f "
+                                "(%.0fx) — ignoring tick, peak_price NOT updated",
+                                pos.token_symbol, _price_ref, price, price / _price_ref if _price_ref else 0,
+                            )
+                        else:
+                            pos.current_price = price
+                            pos.peak_price = max(pos.peak_price, price)
+                            _used_dex_source = True
                 if (not pair or pos.current_price == 0) and pos.chain == "solana":
                     try:
                         from memecoin.executor import _jup_get_quote, _sol_price_usd, SOL_MINT, SOL_DECIMALS
@@ -3116,10 +3156,17 @@ class Portfolio:
                         _tokens   = int(_q["outAmount"]) / (10 ** _decimals)
                         _price    = pos.size_usd / _tokens if _tokens > 0 else 0
                         if _price > 0:
-                            pos.current_price = _price
-                            pos.peak_price = max(pos.peak_price, _price)
-                            log.warning("DexScreener unavailable — using Jupiter quote price for %s: $%.10f",
-                                        pos.token_symbol, _price)
+                            if not _is_price_sane(_price_ref, _price):
+                                log.warning(
+                                    "PRICE SANITY REJECT (jup) %s — ref=$%.10f candidate=$%.10f "
+                                    "(%.0fx) — ignoring tick, peak_price NOT updated",
+                                    pos.token_symbol, _price_ref, _price, _price / _price_ref if _price_ref else 0,
+                                )
+                            else:
+                                pos.current_price = _price
+                                pos.peak_price = max(pos.peak_price, _price)
+                                log.warning("DexScreener unavailable — using Jupiter quote price for %s: $%.10f",
+                                            pos.token_symbol, _price)
                     except Exception:
                         pass   # both sources failed — price stays stale, time stop will still fire
 

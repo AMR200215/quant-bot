@@ -447,5 +447,73 @@ class TestSellStuck(unittest.TestCase):
                          f"Expected status=sell_stuck, got {final_pos.status!r}")
 
 
+# ---------------------------------------------------------------------------
+# E. Price sanity guard (2026-08 SPOTTY incident)
+#
+# Telegram TP alerts showed "Current PnL: +146,555,675.7%" — traced to a
+# single corrupted PP tick that set peak_price=$22.05 on a token trading at
+# $0.000015 (entry). max() never lets peak_price come back down, so one bad
+# tick (from a unit-conversion bug, msg-parse error, or API glitch) wrecks
+# PnL%/trailing-stop math for the rest of the position's life. Fixed with a
+# shared _is_price_sane() guard applied at every peak_price update site.
+# ---------------------------------------------------------------------------
+
+class TestPriceSanity(unittest.TestCase):
+
+    def test_normal_tick_is_sane(self):
+        from memecoin.portfolio import _is_price_sane
+        self.assertTrue(_is_price_sane(1.0, 1.05))
+        self.assertTrue(_is_price_sane(1.0, 0.95))
+
+    def test_large_but_plausible_pump_is_sane(self):
+        from memecoin.portfolio import _is_price_sane
+        # 50x in one tick is implausible for a real trade but still under
+        # the 100x guard band — the guard is deliberately generous so it
+        # never blocks a legitimate (if extreme) pump.
+        self.assertTrue(_is_price_sane(1.0, 50.0))
+
+    def test_spotty_incident_magnitude_is_rejected(self):
+        from memecoin.portfolio import _is_price_sane
+        # entry=$1.505e-05, corrupted "peak"=$22.056644 → ~1.47M x
+        self.assertFalse(_is_price_sane(1.505e-05, 22.056644))
+
+    def test_million_x_jump_rejected_either_direction(self):
+        from memecoin.portfolio import _is_price_sane
+        self.assertFalse(_is_price_sane(1.0, 1_000_000.0))
+        self.assertFalse(_is_price_sane(1_000_000.0, 1.0))
+
+    def test_zero_or_negative_reference_allows(self):
+        # Nothing to validate against yet (first tick, or bad prior state) —
+        # fail-open rather than block price discovery on a brand-new position.
+        from memecoin.portfolio import _is_price_sane
+        self.assertTrue(_is_price_sane(0.0, 22.05))
+        self.assertTrue(_is_price_sane(-1.0, 22.05))
+
+    def test_zero_candidate_allowed_through_guard(self):
+        # The guard itself doesn't reject zero (callers already guard price>0
+        # before calling _is_price_sane) — verify it doesn't false-positive.
+        from memecoin.portfolio import _is_price_sane
+        self.assertTrue(_is_price_sane(1.0, 0.0))
+
+    def test_pp_tick_callback_rejects_corrupted_spike(self):
+        """Integration: _on_pp_price_tick must not let a SPOTTY-magnitude
+        tick become the new peak_price."""
+        import memecoin.scanner as scanner_mod
+        pos = _make_position(
+            id="spotty1", token_address="MintSpotty1111111111111111111111111111111",
+            entry_price=1.505e-05, current_price=1.9e-05, peak_price=1.9e-05,
+            hard_stop_pct=-0.35, trail_activates_pct=0.30, trailing_stop_pct=-0.25,
+        )
+        with (
+            patch.object(scanner_mod, "portfolio") as mock_portfolio,
+            patch.object(scanner_mod, "_exit_queue") as mock_queue,
+        ):
+            mock_portfolio.open_positions.return_value = [pos]
+            scanner_mod._on_pp_price_tick("MintSpotty1111111111111111111111111111111", 22.056644)
+        self.assertEqual(pos.peak_price, 1.9e-05,
+                         "Corrupted tick must not become the new peak_price")
+        mock_queue.put_nowait.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
