@@ -2468,7 +2468,65 @@ regardless of what's actually on disk); the two tests that specifically
 exercise the real-stamp behavior keep their own explicit inner patches.
 13/13 pass on both machines now. Deployed (`a71c831`), verified live.
 
-Not yet re-verified against a second live Layer 2 run — that's the
-actual close-the-loop confirmation for all three fixes together, still
-open. The next automatic run is tomorrow 03:30 UTC (or trigger manually
-via `workflow_dispatch` sooner).
+### Addendum (2026-08-15 16:05 UTC) — a fourth bug, and the watchdog caught it before anyone checked
+
+Checking the real VR19 volume count directly (user asked "where has it
+reached" on the 100-event target) surfaced a fourth real bug: 3 of the
+counted events had test-fixture mint addresses (`V7RejectMint...`,
+`NoDexMint...`, `V7PassMint...`) — `memecoin/tests/test_scanner_v8_fork.py`
+calls the real `_on_telegram_signal()` and, despite its own setUp
+comment claiming telemetry/research-snapshot writes were silenced, only
+mocked `_start_creator_fetch` — `memecoin.v8_telemetry.emit()`,
+`memecoin.telemetry`'s entry-trace system, and the inline research
+snapshot writes all executed for real. Running this suite on the VPS
+(done twice this session, to verify deploys) wrote 7 real rows of fake
+data straight into production `logs/v8_funnel.jsonl`.
+
+**Checked the watchdog's own incident table before doing anything else,
+per the obvious next question: wasn't this exactly what the watchdog is
+for?** Yes — and it had already caught it, correctly, without any
+prompting:
+
+```
+funnel.v8: state=FIRING, first_seen=2026-08-14 23:05:06 UTC,
+last_seen=2026-08-15 16:05 UTC (still firing), consecutive_failures=210,
+last_notified=2026-08-15 11:15:06 UTC
+```
+
+The incident started at the *original* era-bug deploy last night, got a
+real Telegram CRITICAL alert at 11:15 UTC, and never recovered even
+after that bug was fixed — because redeploying the fix and then
+immediately running the test suite (to verify the deploy) reintroduced
+a fresh cause for the same check within the same ~5-minute window,
+before a single clean cycle could land. The watchdog worked exactly as
+designed the whole time; the gap was process on this end — checking raw
+`v8_funnel.jsonl` by hand and Layer 2's once-daily audit, instead of
+querying `watchdog`'s own incident state directly, which is the actual
+built-for-this source of truth and would have surfaced this immediately.
+
+**Real, uncontaminated VR19 numbers** (excluding the 3 test-fixture
+events): **147 post-deploy `telegram_received` events, 147/147 (100%)
+with a V8 terminal disposition, 3 genuine real production V7-FAIL +
+V8-OPENED cases** (stronger than the spec's minimum bar of one
+V7-FAIL/V8-*evaluated*). VR19's volume and coverage requirements are
+satisfied by real data.
+
+**Fix**: `test_scanner_v8_fork.py` now patches `builtins.open` for the
+duration of each test, redirecting any write to a known production
+telemetry/research path (`v8_funnel.jsonl`, `trade_telemetry*`,
+`pp_snapshots.jsonl`, `signal_queue.jsonl`, `signal_candidates.csv`) to
+an in-memory discard, while passing every other `open()` call through
+untouched. Verified locally: contaminated row count in the local funnel
+file stayed flat across a re-run (was silently growing before).
+
+The 7 already-contaminated rows in the VPS's real `v8_funnel.jsonl` were
+left in place rather than edited (this session's standing rule against
+touching live telemetry files directly) — clearly identifiable by mint
+address pattern for anyone doing future analysis on that file.
+
+Not yet deployed/verified as of this line — see the next addendum for
+the real confirmation once the incident's next check cycle actually
+lands, rather than claiming it here in advance.
+
+Still not yet re-verified against a second live Layer 2 run — next
+automatic fire is tomorrow ~03:30 UTC.

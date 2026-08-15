@@ -18,10 +18,39 @@ disabled, so no real HTTP calls happen.
 Run: python -m pytest memecoin/tests/test_scanner_v8_fork.py -v
 """
 
+import builtins
+import io
 import unittest
 from unittest.mock import MagicMock, patch
 
 import memecoin.scanner as scanner
+
+# V8-REWIRE (2026-08-15): real bug found live -- this test calls the real
+# _on_telegram_signal(), which has several best-effort file-write side
+# channels (memecoin.v8_telemetry.emit -> logs/v8_funnel.jsonl,
+# memecoin.telemetry's entry-trace system -> logs/trade_telemetry.jsonl /
+# trade_telemetry_summary.csv, and inline `open()` calls for the research
+# snapshot/signal_queue files) that were NOT mocked despite this file's
+# own comment claiming they were. Confirmed live: running this test suite
+# on the VPS (to verify a deploy) wrote 7 real rows of fake test data
+# (mint addresses "V7RejectMint...", "NoDexMint...", "V7PassMint...")
+# into the REAL production logs/v8_funnel.jsonl, corrupting a live
+# VR19 volume count. Fixed by intercepting `open()` for the specific
+# known-dangerous paths and redirecting to an in-memory discard, rather
+# than trying to track down and mock every individual write call site.
+_DANGEROUS_PATH_MARKERS = (
+    "v8_funnel.jsonl", "trade_telemetry.jsonl", "trade_telemetry_summary.csv",
+    "signal_candidates.csv", "pp_snapshots.jsonl", "signal_queue.jsonl",
+)
+
+
+def _guarded_open(real_open):
+    def _open(file, *args, **kwargs):
+        path_str = str(file)
+        if any(marker in path_str for marker in _DANGEROUS_PATH_MARKERS):
+            return io.StringIO()
+        return real_open(file, *args, **kwargs)
+    return _open
 
 
 class TestV8ForkIndependentOfV7Screening(unittest.TestCase):
@@ -36,13 +65,16 @@ class TestV8ForkIndependentOfV7Screening(unittest.TestCase):
         self._prefetch_patch.start()
         self._v8_book_patch = patch("memecoin.v8_paper.book")
         self.mock_v8_book = self._v8_book_patch.start()
-        # Silence unrelated best-effort side channels (research snapshot
-        # writes, telemetry, creator fetch) so the test only exercises the
-        # V7-screen vs V8-fork independence question.
+        # Silence unrelated best-effort side channels (creator fetch).
         self._creator_patch = patch.object(scanner, "_start_creator_fetch", return_value=(None, [None]))
         self._creator_patch.start()
+        # No real file writes to production telemetry/research paths --
+        # see _DANGEROUS_PATH_MARKERS above for why this exists.
+        self._open_patch = patch.object(builtins, "open", _guarded_open(builtins.open))
+        self._open_patch.start()
 
     def tearDown(self):
+        self._open_patch.stop()
         self._creator_patch.stop()
         self._v8_book_patch.stop()
         self._prefetch_patch.stop()
