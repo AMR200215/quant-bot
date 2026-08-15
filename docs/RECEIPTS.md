@@ -2555,3 +2555,87 @@ earlier is fully closed.
 
 Still not yet re-verified against a second live Layer 2 run — next
 automatic fire is tomorrow ~03:30 UTC.
+
+## V8-REWIRE — VR14 head-to-head matrix, and final status
+
+### VR14 — real head-to-head data, run live against production
+
+`research/scripts/v8_head_to_head.py` (new) joins `logs/v8_funnel.jsonl`
+on `event_id`, era-filtered to the same deploy cutover as everything
+else, and classifies every resolved candidate into a V7 pass/fail x V8
+pass/fail matrix. Run live on the VPS:
+
+```
+               V8 pass   V8 fail
+V7 pass              1        40
+V7 fail              3        98
+
+total resolved: 142
+unresolved (in-flight or missing a side): 8
+```
+
+This is the direct, data-grounded answer to the question that started
+the whole investigation ("is V8 actually wider than V7, or just a
+stricter subset?"): **yes, demonstrably**. 3 real production tokens
+(`760223440d000394`/`2bf2b0f2f732b375`/`83e1d91aea735d72`) were rejected
+by V7 outright and still got a full, independent V8 evaluation that
+opened a position — structurally impossible before this rewire. The
+98 fail/fail cases are consistent with, not contradicted by, the
+earlier base-rate finding (94.5% of Telegram alerts are already past
+70% progress by alert time) — V8's candidate rule is *correctly*
+rejecting most of what V7 also rejects, for its own independent reason
+(too far along the curve), not because it's still secretly seeing only
+V7's leftovers.
+
+### Final status: **V8_REWIRE_LIVE_VERIFIED** (partial — see what's still open)
+
+What's done, live-verified, with real evidence, not inferred:
+- **VR1-9** (fork point, source-neutral objects, unchanged candidate
+  rule, separate dedup, entry-price provenance, book isolation) — code
+  complete, 35+ tests passing, confirmed live: `v8_fork_entered` fires
+  before V7's own `screening_passed` completes for the same event
+  (direct timing proof of independence).
+- **VR12-13** (era tagging) — self-bootstrapping deploy stamp, live on
+  the VPS since 2026-08-14 23:22:58 UTC.
+- **VR14** (head-to-head matrix) — real data above.
+- **VR17-18** (watchdog invariant + regression tests) — the new
+  `(telegram_received -> v8_fork_entered)` check is live, was tested by
+  three real incidents this batch (the era-unaware false positive, my
+  own test-pollution false positive, and a real recovery), and holds up
+  under all three.
+- **VR19** (live acceptance) — 147 post-deploy events, 100% V8 terminal
+  disposition coverage, 3 real V7-FAIL/V8-OPENED cases (stronger than
+  the spec's minimum bar of one V7-FAIL/V8-*evaluated*). Met by real
+  data, confirmed via the watchdog's own incident table transitioning to
+  `RECOVERED` on a real scheduled cycle, not an ad-hoc check.
+- **VR22** (protect runtime telemetry from `git stash -u`) — done
+  (`.gitignore` fix, scoped to confirmed-ephemeral files only after
+  checking what each file actually feeds).
+
+What's explicitly **not done**, not silently dropped:
+- **VR10-11** (capacity-cap handling, feed-blind-state monitoring
+  nuance) — deferred; no capacity-cap mechanism was specified precisely
+  enough to build without guessing, and existing monitor/feed-health
+  checks cover the base cases.
+- **VR15-16** (any remaining data-model/telemetry detail beyond what
+  VR14's matrix and the new funnel stages already cover) — not
+  separately itemized; if there's a specific remaining piece here it
+  wasn't identifiable from what shipped and would need to be named.
+- **VR20-21** (written base-rate honesty note, freeze-gate rationale
+  documentation) — the underlying facts are already established (this
+  document, the earlier `v8_architecture_report.md`) but not yet
+  written up as their own dedicated artifact.
+- **Second live Layer 2 audit** confirming all of this batch's fixes
+  hold up under independent, adversarial review a second time — next
+  automatic run is tomorrow ~03:30 UTC.
+
+Four real bugs were found and fixed in the course of this batch, three
+of them only because the watchdog and Layer 2 caught them in production,
+not because they were anticipated: the era-unaware funnel check, the
+`sys.modules` test-collision (pre-existing since V8-TWIN-FIX, never
+previously root-caused), a test-isolation gap in the regression tests
+for the first fix, and this session's own test suite polluting
+production telemetry. All four are fixed, tested, deployed, and the
+last one's damage was precisely identified and removed. No trading
+logic touched; `LIVE_TRADING=false` unchanged throughout; V8 remains
+100% paper.
