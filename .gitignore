@@ -33,3 +33,30 @@ logs/watchdog/runner.lock
 !logs/exit_route_attempts.csv
 !logs/gate_blocks.csv
 !logs/trade_telemetry_summary.csv
+
+# V8-REWIRE VR22: files confirmed to be pure operational/scratch state --
+# genuinely untracked and NOT previously gitignored, meaning `git stash
+# -u` (used during routine deploys when the live process has dirtied a
+# tracked file) could legitimately sweep them up as "untracked, not
+# ignored" content. logs/v8_funnel.jsonl is the confirmed case: lost
+# ~900 historical events this session via exactly this mechanism (see
+# docs/RECEIPTS.md's V8-TWIN-FIX section) -- accepted as fine at the time
+# because the real research data lives in Supabase, not this file, but it
+# should never be able to happen again by accident.
+#
+# Deliberately NOT included here despite also being untracked: logs/
+# price_paths/, logs/research_paths/, logs/signal_candidates.csv, logs/
+# winners_journal.csv, logs/t10_velocity.csv, research/data/, research/
+# spool/*.jsonl, memecoin/data/memecoin_v8_positions.json,
+# memecoin/data/screening_outcomes.csv, logs/memecoin_v8_journal.csv --
+# checked against the code that produces/consumes them
+# (research/analysis/path_stats.py, replay_exits.py, replay_spool.py,
+# tools/analyze_winners.py) and these are real research/backtesting/
+# retry-queue data, not scratch. Ignoring them would have been actively
+# harmful to the exact freeze-gate work this project depends on. Left
+# untracked-but-not-ignored for now -- whether any of these should be
+# git-tracked long-term (rather than living VPS-disk-only) is a separate,
+# bigger decision this batch doesn't make unilaterally.
+logs/v8_funnel.jsonl
+logs/watchdog/v8_rewire_deploy_ts.txt
+*.log
