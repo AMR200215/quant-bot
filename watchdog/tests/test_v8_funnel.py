@@ -22,8 +22,21 @@ class TestV8FunnelFaultInjection(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.path = Path(self._tmp.name) / "v8_funnel.jsonl"
+        # Deterministic by default: check_v8_funnel() reads the REAL
+        # repo-relative logs/watchdog/v8_rewire_deploy_ts.txt unless this
+        # is patched. Found live: on a machine where that file genuinely
+        # exists (e.g. the VPS, post-deploy) with a real 2026 epoch
+        # timestamp, tests using fabricated tiny now_ts=1_000_000.0
+        # values would have every telegram_received row wrongly exempted
+        # as "predates the invariant" and silently pass when they should
+        # fail. Tests that specifically want to exercise the real-stamp
+        # behavior override this with their own inner patch.
+        self._deploy_ts_patch = patch("watchdog.checks.v8_funnel._v8_rewire_deploy_ts",
+                                       return_value=None)
+        self._deploy_ts_patch.start()
 
     def tearDown(self):
+        self._deploy_ts_patch.stop()
         self._tmp.cleanup()
 
     def _write(self, events):
