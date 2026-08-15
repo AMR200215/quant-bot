@@ -1,0 +1,100 @@
+[
+  {
+    "finding_id": "F1",
+    "severity": "CRITICAL",
+    "component": "funnel.v8 / V8 rewire claims",
+    "claim": "watchdog/checks/v8_funnel.py has a new load-bearing invariant (telegram_received -> v8_fork_entered) that goes CRITICAL if V8 silently stops forking off the raw stream, preventing the regression from sitting unnoticed for weeks like the original bug.",
+    "observed_ground_truth": "funnel.v8 is currently CRITICAL and FIRING since 1786748706.89, still firing at last check (62 consecutive failures), with 101 candidates stuck at telegram_received with no terminal disposition -- described in evidence itself as 'the exact V8-TWIN-FIX failure class.'",
+    "expected_ground_truth": "The claim frames this new invariant as a safeguard against exactly this failure mode recurring; the ground truth shows the safeguard is presently tripped, i.e. the exact regression it was built to catch appears to be happening now, not merely hypothetically covered.",
+    "evidence_ids": [
+      "EV005",
+      "EV007"
+    ],
+    "operational_impact": "The V8 pipeline is actively failing to produce terminal dispositions for real candidates, meaning production V8 evaluation is currently broken, not just theoretically monitored.",
+    "suggested_next_step": "Inspect logs/v8_funnel.jsonl and memecoin/v8_telemetry.py for the 101 stalled event_ids to determine where between telegram_received and v8_fork_entered they are dropping.",
+    "confidence": "high",
+    "audit_id": "audit-20260815T040001Z",
+    "timestamp": 1786766473.8655043
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "Test suite claims vs tests_memecoin collection",
+    "claim": "35 new/updated tests including memecoin/tests/test_v8_paper.py, test_scanner_v8_fork.py, watchdog/tests/test_v8_funnel.py are all passing; full local suite run both combined and per-directory.",
+    "observed_ground_truth": "tests_memecoin fails to collect entirely (exit 2) due to ImportError: cannot import name 'SIGNALS_FILE' from 'memecoin.config' and cannot import name 'GRAD_SOL_UI' from 'memecoin.config', firing as a WARN incident since 1786585581.22 (61 consecutive failures).",
+    "expected_ground_truth": "If the claimed 35 new/updated tests in memecoin/tests are passing as asserted, memecoin test collection should succeed, not fail with ImportError at collection time.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The claimed test coverage for the V8 rewire cannot currently be verified or exercised at all, since the entire memecoin test package fails to even collect, undermining confidence in the 'all passing' assertion.",
+    "suggested_next_step": "Run `pytest --collect-only memecoin/tests` locally and grep memecoin/config.py for SIGNALS_FILE and GRAD_SOL_UI to see if they were renamed/removed after the claimed test batch was written.",
+    "confidence": "high",
+    "audit_id": "audit-20260815T040001Z",
+    "timestamp": 1786766473.8655167
+  },
+  {
+    "finding_id": "F3",
+    "severity": "INFO",
+    "component": "Status label vs deployment state",
+    "claim": "Status: V8_REWIRE_CODE_COMPLETE (not yet deployed/verified -- see addendum).",
+    "observed_ground_truth": "Deployed HEAD SHA (57e89a97...) matches the watchdog's latest fast/slow run SHAs, so whatever code is on HEAD is what's running; the funnel.v8 CRITICAL incident and test_drift WARN incident are actively firing against this same deployed SHA.",
+    "expected_ground_truth": "The claim's self-description as 'not yet deployed/verified' is at least partially consistent with ground truth in that VR19 (live acceptance) is stated as not yet started -- but the deployed code is running and producing exactly the failure symptoms (funnel stalls, broken test imports) the rewire was meant to fix or guard against, suggesting the rewire's guard code itself is live but the underlying data flow is not working.",
+    "evidence_ids": [
+      "EV002",
+      "EV005"
+    ],
+    "operational_impact": "Reconciling 'code complete, not deployed/verified' with an already-firing CRITICAL funnel incident on the deployed SHA is necessary to know whether the rewire is partially live in production right now.",
+    "suggested_next_step": "Diff the deployed commit's memecoin/v8_telemetry.py and watchdog/checks/v8_funnel.py against the claim's described new stages (v8_fork_entered, v8_transport_duplicate, v8_pass_unpriced) to confirm whether this code is actually present at HEAD.",
+    "confidence": "medium",
+    "audit_id": "audit-20260815T040001Z",
+    "timestamp": 1786766473.8655224
+  },
+  {
+    "finding_id": "F4",
+    "severity": "WARN",
+    "component": "Working tree cleanliness vs git stash -u data-loss references",
+    "claim": "The cutover timestamp is stamped to logs/watchdog/v8_rewire_deploy_ts.txt at first production run, referenced alongside 'the git stash -u data-loss entries above' as an example of manual-step drift; also VR22's fix for 'protecting runtime telemetry from git stash -u' is stated as not yet done.",
+    "observed_ground_truth": "EV002 shows the working tree is not clean, with modified tracked files and numerous untracked files including log directories, CSVs, JSON state files, and a research/spool/ directory -- consistent with a history of stash/drift issues, but the audit evidence does not confirm or link this dirtiness to the specific git stash -u incidents referenced in the claim.",
+    "expected_ground_truth": "If git stash -u has previously caused data loss on runtime telemetry as the claim states, current uncommitted runtime state files are at risk of being lost by a future stash operation, and this vulnerability is claimed as still open (VR22 not done).",
+    "evidence_ids": [
+      "EV002"
+    ],
+    "operational_impact": "Runtime telemetry and state files currently sitting as uncommitted/untracked changes are vulnerable to accidental loss via git stash -u until VR22 is actually implemented.",
+    "suggested_next_step": "Check whether logs/watchdog/v8_rewire_deploy_ts.txt and other untracked runtime files listed in `git status` are covered by .gitignore or any stash-protection mechanism before running any git stash -u.",
+    "confidence": "low",
+    "audit_id": "audit-20260815T040001Z",
+    "timestamp": 1786766473.8655264
+  },
+  {
+    "finding_id": "F5",
+    "severity": "INFO",
+    "component": "VR19 live acceptance vs funnel firing",
+    "claim": "VR19 (live acceptance: \u2265100 fresh raw events, 100% V8 terminal coverage, a real V7-FAIL/V8-EVALUATED receipt) cannot be fabricated or shortcut; requires real elapsed production time after deploy. Not yet started as of this commit.",
+    "observed_ground_truth": "funnel.v8 shows 101 candidates that entered telegram_received more than 120s ago with no terminal disposition recorded -- i.e. real production events exist in volume near the VR19 threshold (100), but they are failing to reach terminal disposition rather than succeeding.",
+    "expected_ground_truth": "VR19 requires 100% V8 terminal coverage on \u2265100 fresh events; the claim says this hasn't been attempted yet, but ground truth shows on the order of 100 real events have flowed through and are stuck, which is the opposite of the coverage VR19 requires.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The live-acceptance criterion the claim defers as 'not yet started' appears to already be running in production and failing, meaning VR19 may need re-scoping as 'attempted and currently failing' rather than 'not yet started.'",
+    "suggested_next_step": "Cross-reference the 101 stalled event_ids in the funnel check against v8_funnel.jsonl timestamps to determine if these are the same events that would count toward a VR19 attempt.",
+    "confidence": "medium",
+    "audit_id": "audit-20260815T040001Z",
+    "timestamp": 1786766473.8655303
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "Claims batch v8_readiness vs V8 rewire claim",
+    "claim": "V8 rewire code is complete with new telemetry stages and funnel invariant checks, implying the V8 readiness work is substantively finished pending live verification.",
+    "observed_ground_truth": "claims.batch.v8_readiness is WARN/FIRING with 4 of 7 items (N2, N4, N6, N7) in PARTIAL state, 3 GREEN, 0 FAIL, and no commit value recorded (commit: \"\") -- the check also notes the batch-verify CLI's own exit code would be 0 despite these PARTIALs.",
+    "expected_ground_truth": "If the V8 rewire were code-complete as claimed, one might expect the v8_readiness batch items to trend toward GREEN rather than remaining PARTIAL across 61 consecutive check failures with no commit attribution.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The readiness batch's PARTIAL items combined with a silently-zero exit code mean automated tooling could report success even though 4 of 7 readiness criteria are unresolved, risking false confidence in deployment readiness.",
+    "suggested_next_step": "Run the v8_readiness batch-verify CLI manually and inspect the N2, N4, N6, N7 item definitions to identify what specifically remains PARTIAL relative to the claimed code-complete state.",
+    "confidence": "medium",
+    "audit_id": "audit-20260815T040001Z",
+    "timestamp": 1786766473.8655343
+  }
+]

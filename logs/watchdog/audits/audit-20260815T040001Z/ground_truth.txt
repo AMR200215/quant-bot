@@ -1,0 +1,63 @@
+# Audit Summary — audit-20260815T040001Z
+
+## Deployed SHA / working tree
+- Deployed HEAD is `57e89a97db470f33a69d85d5cf9e5754f919e143` (EV002), and this same SHA is reported by the watchdog's latest fast run and latest slow run (EV005 `latest_fast_run.git_sha`, `latest_slow_run.git_sha`), so the running code matches HEAD.
+- The working tree is **not clean**. EV002 lists modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_positions.json`, `memecoin/data/memecoin_signals.json`) and a large number of untracked files (`??`), including multiple log directories, CSVs, JSON state files, and a `research/spool/` directory. I cannot tell from this evidence alone whether any of this is expected output-vs-source separation or accidental drift — EV002 only shows file status, not intent.
+
+## systemd services / timers
+- `quantbot.service`: active/running, last result success (EV003).
+- `quantbot-research.service`: active/running, last result success (EV003).
+- `quantbot-watchdog-fast.service`: inactive/dead, but last result recorded as success (EV003). Inactive/dead is expected for a service driven by a timer (it runs and exits), and this is consistent with the corresponding timer showing a recent LAST fire "4min 56s ago" and NEXT fire in 259ms (EV003).
+- `quantbot-watchdog-slow.service`: inactive/dead, last result success (EV003), with its timer showing LAST fire "56min ago" and NEXT in 3min (EV003) — consistent with a periodic on-timer job, not evidence of failure.
+- No systemd unit is in a `failed` state per EV003.
+
+## Cron
+- Three cron files exist: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs` (EV004), all mode `0o100644`, with content that parses as valid crontab syntax (each is a single well-formed line invoking `watchdog.exec_wrapper`).
+- `recent_parser_error_lines` is an empty list (EV004) — no recent cron parser errors recorded.
+- The watchdog's own static-parse checks corroborate this: `cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily` all report status `OK`, "parses cleanly, no recent journal parser errors" (EV005).
+- Historically, `cron_static.epoch_daily` and `cron_static.v8_vs_v7_daily` each had a WARN incident that is now in state `RECOVERED` (EV005 `all_incidents`), meaning there was a past parser issue for these two jobs that has since cleared. No detail on the original cause is present in this evidence.
+
+## Watchdog's own most recent run status
+- Latest **fast** run: `run_id 60fd7cafa3b7413e`, started/finished ~1786766105 (2026-08-15, per EV001 clock context), duration ~14ms, `final_runner_status: ok`, 11/11 checks completed (EV005).
+- Latest **slow** run: `run_id 39a596e7686f4716`, started/finished ~1786762991, duration ~12ms, `final_runner_status: ok`, 9/9 checks completed (EV005).
+- Both runs report `git_sha` matching the deployed HEAD (EV002, EV005) and the same `boot_id` as the host (EV001, EV005), so these are current, same-boot runs, not stale artifacts.
+
+## Active incidents (per EV005 `all_incidents`)
+Currently **FIRING**:
+1. `funnel.v8` — **CRITICAL**, firing since `first_seen 1786748706.89`, still firing at `last_seen 1786766105.54` (62 consecutive failures). The paired check detail (EV005 `latest_fast_check_results`) states 101 candidates entered `telegram_received` more than 120s ago with no terminal disposition recorded, described as "the exact V8-TWIN-FIX failure class." This is the only CRITICAL item in the evidence.
+2. `test_drift.collection.tests_memecoin` — WARN, firing since `1786585581.22`, still firing at `1786762991.14` (61 consecutive failures). Concrete cause shown in EV005: `pytest --collect-only` fails (exit 2) on `memecoin/tests` due to `ImportError: cannot import name 'SIGNALS_FILE' from 'memecoin.config'` and separately `cannot import name 'GRAD_SOL_UI' from 'memecoin.config'` — i.e., broken imports in the test/config modules, not merely failing assertions.
+3. `claims.batch.v8_readiness` — WARN, firing since `1786585581.22`, still firing at `1786762991.14` (61 consecutive failures). Detail: batch `v8_readiness` has 4 of 7 items (`N2, N4, N6, N7`) in `PARTIAL` state, 3 GREEN, 0 FAIL (EV005). The check text explicitly notes the batch-verify CLI's own exit code would be 0 despite these PARTIALs.
+
+Currently **RECOVERED** (not active, but present in the incident log): `watchdog.self_test:self_test_synthetic`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `feed.pumpportal`, `layer2.staleness` — all show `state: RECOVERED` with `recovered_at` timestamps (EV005). These are not currently active problems per this evidence.
+
+## Cron job execution (scheduler receipts)
+- All three scheduled jobs (`k5_nightly`, `epoch_daily`, `v8_vs_v7_daily`) show their most recent scheduler-triggered receipt with `exit_code: 0` (EV005 `latest_fast_check_results`, `recent_job_receipts`), and the fast-run checks for `cron_execution.*` all report `OK` with the corresponding run succeeding.
+- `recent_job_receipts` also shows earlier manual/test invocations (`synth_test`, `v8_vs_v7_repro2`, `v8_vs_v7_daily_TEST`) all with `exit_code 0` (EV005), but these are manual/test-triggered, not scheduled production runs.
+
+## Feed health
+- `feed.telegram`: OK, last event 473s ago against a 7200s threshold (EV005).
+- `feed.pumpportal`: OK currently; evidence cites a successful WebSocket connect log line at `2026-08-15 03:54:35` (EV005). Note there is a RECOVERED WARN incident for `feed.pumpportal` spanning `first_seen 1786649704.13` to `recovered_at 1786736405.40` (EV005) — i.e., there was a past problem window that has since cleared, per this evidence.
+
+## Research pipeline queue lag
+- Watchdog check `pipeline.research_queue_lag`: OK, "consumer caught up (gap=0 bytes)," with `queue_size 119301` and `offset 119301` at the time of that check (EV005).
+- EV006, timestamped as part of this same evidence bundle (no explicit timestamp field, but presented as current state), shows `queue_size: 119349`, `queue_offset: "119349"` — also gap 0, consistent with "caught up," but this is a slightly later/different snapshot than the number embedded in the EV005 check (119301 vs 119349). Both indicate zero lag at their respective sample times; I do not have evidence tying EV006's exact collection timestamp to EV005's, so I can't confirm they are simultaneous, only that both show no gap.
+- `pipeline.research_spool`: OK, 0 failed inserts in the trailing 2.0h window, with 68 total historical lines on disk noted explicitly as not itself indicative of an active problem (EV005).
+
+## Test-suite collection status (from slow run)
+- `tests_research`, `tests_watchdog`, `tests_layer2`, `tests_quant-bot` all collect cleanly per EV005 (164, 92, 39, and 56 tests respectively).
+- `tests_memecoin` fails to collect (exit 2), per the FIRING incident detail above (EV005).
+- `test_drift.stale_mocks`: OK, "no stale patch() targets found," with an explicit caveat that only 127 resolvable targets in own-package modules were checked and third-party/stdlib targets were skipped (EV005) — not a full guarantee of no stale mocks anywhere.
+
+## Layer 2 audit staleness
+- `layer2.staleness`: OK, last Layer 2 audit was `audit-20260814T180049Z`, 9.0h old at check time, with 8 findings and 0 critical findings reported (EV005). The content of those 8 findings is not in this evidence bundle.
+
+## Claims batch verification
+- `claims.batch.rc_closure`: OK, 3/3 items GREEN, tagged to commit `db32f53` (EV005) — note this commit is different from the deployed HEAD SHA `57e89a97...` (EV002); no evidence here explains the relationship between the two.
+- `claims.batch.v8_readiness`: WARN/FIRING as detailed above, no commit value recorded (`commit: ""`) (EV005).
+
+## Gaps / ambiguities explicitly not resolved by this evidence
+- No evidence here identifies what backs `SIGNALS_FILE` or `GRAD_SOL_UI` or why `memecoin/config` no longer exports them — only that the import fails.
+- No evidence explains why `funnel.v8` began firing at `1786748706` or what changed to cause 101 candidates to stall at `telegram_received`.
+- No evidence in this bundle shows the content of the 8 Layer 2 findings referenced by `layer2.staleness`.
+- The relationship between the dirty working-tree files (EV002) and the FIRING/RECOVERED incidents is not established by any evidence item — I note both facts but do not link them.
+- EV006's queue numbers are not explicitly timestamped, so its exact relationship to the EV005 pipeline check timing is unclear.

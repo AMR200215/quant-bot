@@ -1,0 +1,472 @@
+{
+  "audit_id": "audit-20260815T040001Z",
+  "generated_at": 1786766399.6463766,
+  "raw_bundle_sha256": "f51be113bdee622113b586b34231765d8b8c5292552e60973fb9099461b5b7f5",
+  "items": [
+    {
+      "ev_id": "EV001",
+      "section": "host",
+      "content": {
+        "host_time_utc": "2026-08-15T03:59:59Z",
+        "boot_id": "d0a4169b-96f4-4bb1-b365-92ca527627e6",
+        "uptime_s": 3382873.4
+      },
+      "collected_at": 1786766399.6463766
+    },
+    {
+      "ev_id": "EV002",
+      "section": "git",
+      "content": {
+        "head_sha": "57e89a97db470f33a69d85d5cf9e5754f919e143",
+        "dirty_tree_lines": [
+          "M docs/RECEIPTS.md",
+          "MM docs/V8_INPUTS.md",
+          "MM logs/memecoin_social_journal.csv",
+          "MM logs/trade_telemetry_summary.csv",
+          " M memecoin/data/memecoin_positions.json",
+          "MM memecoin/data/memecoin_signals.json",
+          "?? logs/epoch_daily.jsonl",
+          "?? logs/epoch_daily_cron.log",
+          "?? logs/gitpull.log",
+          "?? logs/journal_sync.log",
+          "?? logs/k3_backfill_rerun.log",
+          "?? logs/memecoin_v8_journal.csv",
+          "?? logs/price_paths/",
+          "?? logs/program_slots.json",
+          "?? logs/rejection_report.log",
+          "?? logs/research_paths/",
+          "?? logs/scan.log",
+          "?? logs/signal_candidates.csv",
+          "?? logs/signal_trajectory.csv",
+          "?? logs/t10_velocity.csv",
+          "?? logs/trade_telemetry.jsonl",
+          "?? logs/v8_funnel.jsonl",
+          "?? logs/v8_inputs_nightly_cron.log",
+          "?? logs/v8_vs_v7_cron.log",
+          "?? logs/watchdog/v8_rewire_deploy_ts.txt",
+          "?? logs/watchdog_sync.log",
+          "?? logs/winners_journal.csv",
+          "?? memecoin/data/memecoin_v8_positions.json",
+          "?? memecoin/data/screening_outcomes.csv",
+          "?? research/data/",
+          "?? research/spool/dropped_fields.jsonl",
+          "?? research/spool/failed_inserts.jsonl"
+        ]
+      },
+      "collected_at": 1786766399.6463766
+    },
+    {
+      "ev_id": "EV003",
+      "section": "systemd",
+      "content": {
+        "services": {
+          "quantbot.service": "Result=success\nExecMainStatus=0\nActiveState=active\nSubState=running",
+          "quantbot-research.service": "Result=success\nExecMainStatus=0\nActiveState=active\nSubState=running",
+          "quantbot-watchdog-fast.service": "Result=success\nExecMainStatus=0\nActiveState=inactive\nSubState=dead",
+          "quantbot-watchdog-slow.service": "Result=success\nExecMainStatus=0\nActiveState=inactive\nSubState=dead"
+        },
+        "timers": "NEXT                           LEFT LAST                              PASSED UNIT                         ACTIVATES\nSat 2026-08-15 04:00:00 UTC   259ms Sat 2026-08-15 03:55:03 UTC 4min 56s ago quantbot-watchdog-fast.timer quantbot-watchdog-fast.service\nSat 2026-08-15 04:03:00 UTC 3min 0s Sat 2026-08-15 03:03:03 UTC    56min ago quantbot-watchdog-slow.timer quantbot-watchdog-slow.service\n\n2 timers listed.\nPass --all to see loaded but inactive timers, too.\n"
+      },
+      "collected_at": 1786766399.6463766
+    },
+    {
+      "ev_id": "EV004",
+      "section": "cron",
+      "content": {
+        "files": {
+          "quantbot-epoch": {
+            "mode": "0o100644",
+            "mtime": 1786703985.3400774,
+            "content": "55 23 * * * root cd /root/quant-bot && set -a && . ./.env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id epoch_daily --schedule \"55 23 * * *\" --output-artifact logs/epoch_daily.jsonl -- .venv/bin/python research/scripts/epoch_daily_log.py >> logs/epoch_daily_cron.log 2>&1\n"
+          },
+          "quantbot-v8": {
+            "mode": "0o100644",
+            "mtime": 1786579568.1089442,
+            "content": "58 23 * * * root cd /root/quant-bot && set -a && . ./.env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id v8_vs_v7_daily --schedule \"58 23 * * *\" --output-artifact \"docs/RECEIPTS.md (N6/N7 table row)\" -- .venv/bin/python research/scripts/v8_vs_v7_daily.py >> logs/v8_vs_v7_cron.log 2>&1\n"
+          },
+          "quantbot-v8-inputs": {
+            "mode": "0o100644",
+            "mtime": 1786579568.1089442,
+            "content": "15 0 * * * root cd /root/quant-bot && set -a && . ./.env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id k5_nightly --schedule \"15 0 * * *\" --output-artifact docs/V8_INPUTS.md -- .venv/bin/python -m research.scripts.v8_inputs_nightly >> logs/v8_inputs_nightly_cron.log 2>&1\n"
+          }
+        },
+        "recent_parser_error_lines": []
+      },
+      "collected_at": 1786766399.6463766
+    },
+    {
+      "ev_id": "EV005",
+      "section": "watchdog",
+      "content": {
+        "latest_fast_run": {
+          "run_id": "60fd7cafa3b7413e",
+          "host": "Quant-bot",
+          "boot_id": "d0a4169b-96f4-4bb1-b365-92ca527627e6",
+          "profile": "fast",
+          "started_at": 1786766105.5243847,
+          "finished_at": 1786766105.5385091,
+          "duration_ms": 14.124393463134766,
+          "git_sha": "57e89a97db470f33a69d85d5cf9e5754f919e143",
+          "watchdog_version": "1.0.0-phase1",
+          "checks_due": 11,
+          "checks_completed": 11,
+          "final_runner_status": "ok"
+        },
+        "latest_fast_check_results": [
+          {
+            "check_id": "cron_static.k5_nightly",
+            "status": "OK",
+            "reason": "parses cleanly, no recent journal parser errors",
+            "evidence": "{}"
+          },
+          {
+            "check_id": "cron_static.epoch_daily",
+            "status": "OK",
+            "reason": "parses cleanly, no recent journal parser errors",
+            "evidence": "{}"
+          },
+          {
+            "check_id": "cron_static.v8_vs_v7_daily",
+            "status": "OK",
+            "reason": "parses cleanly, no recent journal parser errors",
+            "evidence": "{}"
+          },
+          {
+            "check_id": "cron_execution.k5_nightly",
+            "status": "OK",
+            "reason": "last scheduler run at 1786752901 succeeded",
+            "evidence": "{\"expected_prev_fire\": 1786752900.0, \"deadline\": 1786755600.0, \"now\": 1786766103.9678946, \"latest_receipt\": {\"id\": 10, \"job_id\": \"k5_nightly\", \"trigger_type\": \"scheduler\", \"scheduled_for\": null, \"started_at\": 1786752901.458778, \"finished_at\": 1786753056.89332, \"exit_code\": 0, \"duration_ms\": 155434.54217910767, \"git_sha\": \"57e89a97db470f33a69d85d5cf9e5754f919e143\", \"output_artifact\": \"docs/V8_INPUTS.md\", \"run_id\": \"\"}}"
+          },
+          {
+            "check_id": "cron_execution.epoch_daily",
+            "status": "OK",
+            "reason": "last scheduler run at 1786751702 succeeded",
+            "evidence": "{\"expected_prev_fire\": 1786751700.0, \"deadline\": 1786754400.0, \"now\": 1786766103.9678946, \"latest_receipt\": {\"id\": 8, \"job_id\": \"epoch_daily\", \"trigger_type\": \"scheduler\", \"scheduled_for\": null, \"started_at\": 1786751701.9395423, \"finished_at\": 1786751702.0075853, \"exit_code\": 0, \"duration_ms\": 68.04299354553223, \"git_sha\": \"57e89a97db470f33a69d85d5cf9e5754f919e143\", \"output_artifact\": \"logs/epoch_daily.jsonl\", \"run_id\": \"\"}}"
+          },
+          {
+            "check_id": "cron_execution.v8_vs_v7_daily",
+            "status": "OK",
+            "reason": "last scheduler run at 1786751881 succeeded",
+            "evidence": "{\"expected_prev_fire\": 1786751880.0, \"deadline\": 1786754580.0, \"now\": 1786766103.9678946, \"latest_receipt\": {\"id\": 9, \"job_id\": \"v8_vs_v7_daily\", \"trigger_type\": \"scheduler\", \"scheduled_for\": null, \"started_at\": 1786751881.1613512, \"finished_at\": 1786751881.2425098, \"exit_code\": 0, \"duration_ms\": 81.15863800048828, \"git_sha\": \"57e89a97db470f33a69d85d5cf9e5754f919e143\", \"output_artifact\": \"docs/RECEIPTS.md (N6/N7 table row)\", \"run_id\": \"\"}}"
+          },
+          {
+            "check_id": "funnel.v8",
+            "status": "CRITICAL",
+            "reason": "101 candidate(s) entered a funnel stage more than 120s ago with no terminal disposition recorded \u2014 possible silent-disappearance regression (this is the exact V8-TWIN-FIX failure class: a candidate enters the pipeline and is never accounted for again). Stages affected: ['telegram_received']",
+            "evidence": "{\"missing_by_stage\": {\"telegram_received\": 101}, \"examples\": [{\"stage\": \"telegram_received\", \"event_id\": \"09d5c5e2b1aa7037\", \"mint\": \"2wVen2hg1yMG4kmP87bbMJbHMYuHFZpvwgetHpf8tZhS\", \"ts\": 1786728716.2987702}, {\"stage\": \"telegram_received\", \"event_id\": \"a73ea1ca57907ab7\", \"mint\": \"DPxTMqAaLwf79HUAUBtcwadB1xYCWmybAdwhaG8Hpump\", \"ts\": 1786729023.3774343}, {\"stage\": \"telegram_received\", \"event_id\": \"3d56990f2819871a\", \"mint\": \"HYZCnjvz9rLZXSNnui62Ymvwb6jZ51KA8B9QrfE4pump\", \"ts\": 1786729324.7011614}, {\"stage\": \"telegram_received\", \"event_id\": \"097ecc8f9cef315d\", \"mint\": \"G3FpXtPMv9BbS7FG1of2i9FQRt5MJtg6CGpCad8hpump\", \"ts\": 1786729560.1072826}, {\"stage\": \"telegram_received\", \"event_id\": \"ca80930be2af723a\", \"mint\": \"2aZRPeVMHErwVYnwtLXKMxaBtAARbTvZaZoA4Zg6pump\", \"ts\": 1786729650.8920062}]}"
+          },
+          {
+            "check_id": "feed.telegram",
+            "status": "OK",
+            "reason": "last telegram_received event 473s ago (threshold 7200s)",
+            "evidence": "{\"last_received_ts\": 1786765631.8607266, \"age_s\": 473.4646348953247}"
+          },
+          {
+            "check_id": "feed.pumpportal",
+            "status": "OK",
+            "reason": "most recent PumpPortal WS event was a successful connect (reconnects every ~45-60s are expected rotation behavior, not evaluated here)",
+            "evidence": "{\"last_connect_line\": \"Aug 15 03:54:35 Quant-bot gunicorn[2225112]: 2026-08-15 03:54:35,987 INFO memecoin.pumpportal_monitor: PumpPortal WebSocket connected (conn_start=03:54:35 prewarm=True keyed)\"}"
+          },
+          {
+            "check_id": "pipeline.research_queue_lag",
+            "status": "OK",
+            "reason": "consumer caught up (gap=0 bytes)",
+            "evidence": "{\"queue_size\": 119301, \"offset\": 119301, \"gap_bytes\": 0}"
+          },
+          {
+            "check_id": "pipeline.research_spool",
+            "status": "OK",
+            "reason": "0 failed insert(s) in the last 2.0h \u2014 below the 5-sample floor for an alert (total historical lines on disk: 68, not itself evidence of an active problem)",
+            "evidence": "{\"recent_count\": 0, \"total_lines\": 68}"
+          }
+        ],
+        "latest_slow_run": {
+          "run_id": "39a596e7686f4716",
+          "host": "Quant-bot",
+          "boot_id": "d0a4169b-96f4-4bb1-b365-92ca527627e6",
+          "profile": "slow",
+          "started_at": 1786762991.1332638,
+          "finished_at": 1786762991.144922,
+          "duration_ms": 11.658191680908203,
+          "git_sha": "57e89a97db470f33a69d85d5cf9e5754f919e143",
+          "watchdog_version": "1.0.0-phase1",
+          "checks_due": 9,
+          "checks_completed": 9,
+          "final_runner_status": "ok"
+        },
+        "latest_slow_check_results": [
+          {
+            "check_id": "test_drift.stale_mocks",
+            "status": "OK",
+            "reason": "no stale patch() targets found (127 resolvable targets checked across own-package modules; targets in third-party/stdlib modules are skipped, not verified)",
+            "evidence": "{}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_memecoin",
+            "status": "WARN",
+            "reason": "pytest --collect-only failed (exit 2) for /root/quant-bot/memecoin/tests \u2014 import/syntax error, not just a failing assertion",
+            "evidence": "{\"stdout_tail\": \"es have valid Python names.\\nTraceback:\\n/usr/lib/python3.12/importlib/__init__.py:90: in import_module\\n    return _bootstrap._gcd_import(name[level:], package, level)\\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\\nmemecoin/tests/test_scanner_v8_fork.py:24: in <module>\\n    import memecoin.scanner as scanner\\nmemecoin/scanner.py:25: in <module>\\n    from memecoin.config import (\\nE   ImportError: cannot import name 'SIGNALS_FILE' from 'memecoin.config' (unknown location)\\n_______________ ERROR collecting memecoin/tests/test_v8_paper.py _______________\\nImportError while importing test module '/root/quant-bot/memecoin/tests/test_v8_paper.py'.\\nHint: make sure your test modules/packages have valid Python names.\\nTraceback:\\n/usr/lib/python3.12/importlib/__init__.py:90: in import_module\\n    return _bootstrap._gcd_import(name[level:], package, level)\\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\\nmemecoin/tests/test_v8_paper.py:28: in <module>\\n    from memecoin.progress_capture import ProgressCapture\\nmemecoin/progress_capture.py:53: in <module>\\n    from memecoin.config import GRAD_SOL_UI\\nE   ImportError: cannot import name 'GRAD_SOL_UI' from 'memecoin.config' (unknown location)\\n=========================== short test summary info ============================\\nERROR memecoin/tests/test_scanner_v8_fork.py\\nERROR memecoin/tests/test_v8_paper.py\\n!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!!\\n263 tests collected, 2 errors in 0.83s\\n\", \"stderr_tail\": \"\"}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_research",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/research/tests)",
+            "evidence": "{\"stdout_tail\": \"t_second_day_appends_without_disturbing_first\\ntests/test_v8_vs_v7_daily.py::TestDayStats::test_bad_pnl_value_does_not_raise\\ntests/test_v8_vs_v7_daily.py::TestDayStats::test_filters_by_day_prefix\\ntests/test_v8_vs_v7_daily.py::TestDayStats::test_missing_file_returns_zero\\n\\n164 tests collected in 0.25s\\n\"}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_watchdog",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/watchdog/tests)",
+            "evidence": "{\"stdout_tail\": \"independently\\nwatchdog/tests/test_v8_funnel.py::TestV8FunnelFaultInjection::test_v7_reject_does_not_excuse_v8_from_reaching_its_own_terminal\\nwatchdog/tests/test_v8_funnel.py::TestV8FunnelFaultInjection::test_v8_fork_entered_counts_as_valid_terminal_for_telegram_received\\n\\n92 tests collected in 0.28s\\n\"}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_layer2",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/watchdog/layer2/tests)",
+            "evidence": "{\"stdout_tail\": \"s_not_silently_returns_empty\\nwatchdog/layer2/tests/test_run_audit.py::TestAnthropicAdapterEmptyResponse::test_real_text_response_passes_through_normally\\nwatchdog/layer2/tests/test_run_audit.py::TestAnthropicAdapterEmptyResponse::test_whitespace_only_response_also_raises\\n\\n39 tests collected in 0.04s\\n\"}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_quant-bot",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/tests)",
+            "evidence": "{\"stdout_tail\": \"s/test_signal_anchored_stop.py::test_no_anchor_when_fill_equals_signal\\ntests/test_signal_anchored_stop.py::test_no_anchor_when_signal_price_zero\\ntests/test_signal_anchored_stop.py::test_size_normalisation\\ntests/test_signal_anchored_stop.py::test_size_normalisation_floor\\n\\n56 tests collected in 0.29s\\n\"}"
+          },
+          {
+            "check_id": "claims.batch.rc_closure",
+            "status": "OK",
+            "reason": "batch 'rc_closure': 3/3 item(s) GREEN",
+            "evidence": "{\"batch_id\": \"rc_closure\", \"commit\": \"db32f53\", \"green\": 3, \"partial\": 0, \"fail\": 0, \"total\": 3, \"partial_item_ids\": [], \"fail_item_ids\": []}"
+          },
+          {
+            "check_id": "claims.batch.v8_readiness",
+            "status": "WARN",
+            "reason": "batch 'v8_readiness': 4/7 item(s) PARTIAL (['N2', 'N4', 'N6', 'N7']) \u2014 batch_verify's own exit code would be 0 here (PARTIAL doesn't fail the CLI), so this is exactly the gap between 'exit code says fine' and 'actually complete'",
+            "evidence": "{\"batch_id\": \"v8_readiness\", \"commit\": \"\", \"green\": 3, \"partial\": 4, \"fail\": 0, \"total\": 7, \"partial_item_ids\": [\"N2\", \"N4\", \"N6\", \"N7\"], \"fail_item_ids\": []}"
+          },
+          {
+            "check_id": "layer2.staleness",
+            "status": "OK",
+            "reason": "last Layer 2 audit 9.0h ago (audit-20260814T180049Z, 8 finding(s))",
+            "evidence": "{\"last_audit_id\": \"audit-20260814T180049Z\", \"age_s\": 32469.33749771118, \"findings_count\": 8, \"critical_count\": 0}"
+          }
+        ],
+        "all_incidents": [
+          {
+            "fingerprint": "watchdog.self_test:self_test_synthetic",
+            "check_id": "watchdog.self_test",
+            "subject": "self_test_synthetic",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578139.85207,
+            "last_seen": 1786578139.9956956,
+            "consecutive_failures": 0,
+            "last_notified": 1786578139.85207,
+            "recovered_at": 1786578139.9956956
+          },
+          {
+            "fingerprint": "cron_static.epoch_daily:epoch_daily",
+            "check_id": "cron_static.epoch_daily",
+            "subject": "epoch_daily",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786704004.1123273,
+            "consecutive_failures": 0,
+            "last_notified": 1786689004.0932431,
+            "recovered_at": 1786704004.1123273
+          },
+          {
+            "fingerprint": "cron_static.v8_vs_v7_daily:v8_vs_v7_daily",
+            "check_id": "cron_static.v8_vs_v7_daily",
+            "subject": "v8_vs_v7_daily",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786578901.9522345,
+            "consecutive_failures": 0,
+            "last_notified": 1786578603.9649127,
+            "recovered_at": 1786578901.9522345
+          },
+          {
+            "fingerprint": "cron_execution.k5_nightly:k5_nightly",
+            "check_id": "cron_execution.k5_nightly",
+            "subject": "k5_nightly",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786580104.0062454,
+            "consecutive_failures": 0,
+            "last_notified": 1786578603.9649127,
+            "recovered_at": 1786580104.0062454
+          },
+          {
+            "fingerprint": "cron_execution.epoch_daily:epoch_daily",
+            "check_id": "cron_execution.epoch_daily",
+            "subject": "epoch_daily",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786665301.791861,
+            "consecutive_failures": 0,
+            "last_notified": 1786647301.9246278,
+            "recovered_at": 1786665301.791861
+          },
+          {
+            "fingerprint": "cron_execution.v8_vs_v7_daily:v8_vs_v7_daily",
+            "check_id": "cron_execution.v8_vs_v7_daily",
+            "subject": "v8_vs_v7_daily",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786665604.2020469,
+            "consecutive_failures": 0,
+            "last_notified": 1786647301.9246278,
+            "recovered_at": 1786665604.2020469
+          },
+          {
+            "fingerprint": "test_drift.collection.tests_memecoin",
+            "check_id": "test_drift.collection.tests_memecoin",
+            "subject": "",
+            "severity": "WARN",
+            "state": "FIRING",
+            "first_seen": 1786585581.2202768,
+            "last_seen": 1786762991.1438148,
+            "consecutive_failures": 61,
+            "last_notified": 1786744990.5140746,
+            "recovered_at": null
+          },
+          {
+            "fingerprint": "claims.batch.v8_readiness",
+            "check_id": "claims.batch.v8_readiness",
+            "subject": "",
+            "severity": "WARN",
+            "state": "FIRING",
+            "first_seen": 1786585581.2202768,
+            "last_seen": 1786762991.1438148,
+            "consecutive_failures": 61,
+            "last_notified": 1786744990.5140746,
+            "recovered_at": null
+          },
+          {
+            "fingerprint": "feed.pumpportal",
+            "check_id": "feed.pumpportal",
+            "subject": "",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786649704.13279,
+            "last_seen": 1786736405.3981783,
+            "consecutive_failures": 0,
+            "last_notified": null,
+            "recovered_at": 1786736405.3981783
+          },
+          {
+            "fingerprint": "layer2.staleness",
+            "check_id": "layer2.staleness",
+            "subject": "",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786707254.5743146,
+            "last_seen": 1786730701.702472,
+            "consecutive_failures": 0,
+            "last_notified": null,
+            "recovered_at": 1786730701.702472
+          },
+          {
+            "fingerprint": "funnel.v8",
+            "check_id": "funnel.v8",
+            "subject": "",
+            "severity": "CRITICAL",
+            "state": "FIRING",
+            "first_seen": 1786748706.8931785,
+            "last_seen": 1786766105.5368874,
+            "consecutive_failures": 62,
+            "last_notified": 1786763418.5359485,
+            "recovered_at": null
+          }
+        ],
+        "recent_job_receipts": [
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1786752901.458778,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1786751881.1613512,
+            "exit_code": 0
+          },
+          {
+            "job_id": "epoch_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1786751701.9395423,
+            "exit_code": 0
+          },
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1786666501.8361144,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1786665481.5228846,
+            "exit_code": 0
+          },
+          {
+            "job_id": "epoch_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1786665301.3125308,
+            "exit_code": 0
+          },
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1786580101.2355938,
+            "exit_code": 0
+          },
+          {
+            "job_id": "synth_test",
+            "trigger_type": "scheduler",
+            "started_at": 1786579742.0357933,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_repro2",
+            "trigger_type": "manual",
+            "started_at": 1786579364.325916,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily_TEST",
+            "trigger_type": "manual",
+            "started_at": 1786579257.0429332,
+            "exit_code": 0
+          }
+        ]
+      },
+      "collected_at": 1786766399.6463766
+    },
+    {
+      "ev_id": "EV006",
+      "section": "research_pipeline",
+      "content": {
+        "queue_size": 119349,
+        "queue_offset": "119349"
+      },
+      "collected_at": 1786766399.6463766
+    },
+    {
+      "ev_id": "EV007",
+      "section": "receipts_tail",
+      "content": {
+        "mtime": 1786751881.2337391,
+        "length": 125203,
+        "tail": " drop.\n  - Era tagging (`era` journal column): `PRE_REWIRE_V7_CONDITIONAL` vs\n    `V8_TELEGRAM_INDEPENDENT_V1`, self-bootstrapping \u2014 the cutover\n    timestamp is stamped to `logs/watchdog/v8_rewire_deploy_ts.txt` the\n    first time this code actually runs in production, not hand-set in a\n    commit (a hardcoded constant would need a human to correctly guess\n    or follow up with the real deploy time \u2014 exactly the kind of manual\n    step that drifted from reality earlier this session, see the\n    `git stash -u` data-loss entries above). Any forward V8-vs-V7\n    comparison must filter to the new era only.\n- **`memecoin/v8_telemetry.py`** \u2014 new stages `v8_fork_entered` (the\n  literal first statement in V8's evaluation, replacing `v8_gate_entered`\n  as the true \"V8 received this\" checkpoint \u2014 now fires for every raw\n  alert), `v8_transport_duplicate`, `v8_pass_unpriced`.\n- **`watchdog/checks/v8_funnel.py`** \u2014 new load-bearing invariant:\n  `(telegram_received -> v8_fork_entered)`. If V8 ever silently stops\n  forking off the raw stream again (e.g. someone re-wires it back onto\n  V7's funnel), this check goes CRITICAL instead of the regression\n  sitting unnoticed for weeks the way the original bug did.\n\n### What's deliberately NOT done in this batch\n\n- **VR10/VR11 (capacity-cap handling, feed-blind-state nuance for\n  monitoring)** \u2014 existing monitor loop / PumpPortal-feed watchdog check\n  already cover the base cases; no dedicated capacity-cap mechanism was\n  specified precisely enough to build without guessing. Deferred.\n- **VR14 (per-event V7/V8 head-to-head disposition matrix report)** \u2014\n  the underlying data now exists (`v8_funnel.jsonl` has both V7's and\n  V8's terminal disposition per `event_id`, shared key), but no report\n  script joins them into the pass/pass, pass/fail, fail/pass, fail/fail\n  matrix yet. Deferred, not blocking.\n- **VR19 (live acceptance: \u2265100 fresh raw events, 100% V8 terminal\n  coverage, a real V7-FAIL/V8-EVALUATED receipt)** \u2014 cannot be fabricated\n  or shortcut; requires real elapsed production time after deploy. Not\n  yet started as of this commit \u2014 see follow-up addendum below.\n- **VR20-22 write-ups** (base-rate honesty note, freeze-gate rationale\n  documentation) \u2014 not written yet; VR22's actual code fix (protecting\n  runtime telemetry from `git stash -u`) also not yet done \u2014 flagged\n  here as still open, not silently dropped.\n\n### Tests\n\n35 new/updated tests (`memecoin/tests/test_v8_paper.py`,\n`memecoin/tests/test_scanner_v8_fork.py` [new, replaces the now-\narchitecturally-false `test_scanner_v8_dedup.py`], `watchdog/tests/\ntest_v8_funnel.py`), all passing. Covers: gate logic unchanged (7\noriginal + 1 new against the real `TelegramAlertEvent`), book\npersistence/isolation against the new alert-based entry point, V8's\ntransport dedup proven independent of V7's (`_is_duplicate`/\n`_traded_today`/`portfolio` never imported \u2014 checked via AST, not a\nsubstring scan, after two rounds of self-inflicted false positives from\nthe module's own explanatory prose), unpriced-pass as a distinct\nnon-crashing outcome, async dispatch proven non-blocking via a thread-\ntiming test, era self-bootstrapping (creates-once, reuses, correct\nbefore/after cutover), and the watchdog's new\n`(telegram_received -> v8_fork_entered)` invariant including a fault-\ninjection case for the exact old-architecture regression (V7-rejected\nevent with no V8 terminal disposition at all).\n\nFull local suite run both combined and per-directory (matching\n`watchdog/checks/test_drift.py`'s own documented pattern, since the\ncombined tree has a known pre-existing `sys.modules` collision unrelated\nto this change \u2014 reproduced on a clean, unmodified `main` via `git\nstash` before concluding it wasn't introduced here). The 7 failures in\n`tests/test_half2.py`/`tests/test_live_gate.py` also reproduce\nidentically on clean `main` \u2014 pre-existing, unrelated to this batch, not\ntouched.\n\n### Status: **V8_REWIRE_CODE_COMPLETE** (not yet deployed/verified \u2014 see addendum)\n"
+      },
+      "collected_at": 1786766399.6463766
+    }
+  ]
+}
