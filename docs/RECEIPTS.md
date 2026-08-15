@@ -2639,3 +2639,224 @@ production telemetry. All four are fixed, tested, deployed, and the
 last one's damage was precisely identified and removed. No trading
 logic touched; `LIVE_TRADING=false` unchanged throughout; V8 remains
 100% paper.
+
+## V8-FILTER-DERIVATION — Phase 1: Data Truth + Leakage Audit
+
+### Why
+
+Fable 5's own retrospective on V8: the six-step framework (collect →
+research → **derive filters with a real EV table** → apply → paper
+validate → go live) was never actually followed — step 3 never
+happened. What's wired into `v8_paper.py` today is `progress<0.70 +
+smart-money/no-dex`, a plausible-looking rule that was never backed by
+a shown "at these settings, ~N trades/day, W% win, $Y/day" table. FD-
+BATCH (39 sections, amended with a valid "no edge found" terminal
+status and phased execution) exists to actually do step 3. This is
+Phase 1 only: establish what data can be honestly used before building
+any ranking engine. **No filter ranking, no threshold selection, no
+holdout evaluation, and no change to V8 happened in this phase** — FD0's
+scope lock, respected.
+
+### FD2 — production data inventory (live Supabase, not historical docs)
+
+Queried `research_tokens` directly (33,120 rows, git SHA `62253be`,
+cutoff `2026-08-15T19:00:16Z`, earliest row `2026-06-21T15:07:04Z`).
+100% solana (bsc=0). Category split: `social_alert_bc` 28,111 /
+`social_alert_grad` 1,594 / `unknown` 3,415.
+
+Field non-null coverage (of 33,120):
+
+| Field | Non-null | % |
+|---|---|---|
+| `tg_message_text` | 29,353 | 88.6% |
+| `channel_velocity_5m` | 13,239 | 40.0% |
+| `price_usd` / `mcap_usd` / `volume_5m` / `buys_5m` / `sells_5m` / `dex_id` | 4,784–4,786 | 14.4% |
+| `rugcheck_score` | 4,720 | 14.2% |
+| `buy_sell_ratio_5m` | 4,428 | 13.4% |
+| `top10_holder_pct` | 2,489 | 7.5% |
+| `event_id` | 2,090 | 6.3% |
+| `progress_at_signal` / `vsol_at_signal` / `progress_source` | 1,029–1,066 | 3.1–3.2% |
+| `pct_change_peak` | 3,419 | 10.3% |
+| `pct_change_peak_3m` | 494 | 1.5% |
+| `liquidity_usd` | 1,789 | 5.4% |
+| `creator_holds_pct` | **0** | **0.0%** |
+| `venue_state_at_signal` | — | **column does not exist in Supabase schema at all** |
+
+`outcome_complete=True` for 33,017/33,120 (99.7%) — but this does **not**
+mean a usable outcome exists; only 3,419 rows (10.3%) have a non-null
+`pct_change_peak`. "Complete" means the polling schedule finished, not
+that a price was ever observed. This distinction is load-bearing for
+FD4 below and was not previously documented anywhere in the repo.
+
+**Two concrete new findings, neither previously known:**
+1. `creator_holds_pct` has **zero** real coverage across the entire
+   33,120-row history despite being named as a V8 candidate feature in
+   the original 2026-07-30 spec. `research/snapshot.py:_rugcheck_holders`
+   is supposed to populate it — it never has, in production, ever. Not
+   fixed here (Phase 1 is audit-only); flagged as a known gap.
+2. `venue_state_at_signal` — the field V8-TWIN-FIX added to
+   `memecoin/progress_capture.py` and that V8's live gate actually checks
+   (`venue_state_at_signal == CURVE_ACTIVE`) — was never added to the
+   Supabase schema. A live query for it raises `column ... does not
+   exist`. The historical clean cohort (below) can only replicate the
+   progress half of V8's real gate, not the on-curve/graduated
+   distinction, for any historical row.
+
+### FD3 — temporal feature classification (lookahead prevention)
+
+New artifact: `research/v8_feature_registry.yaml`. Every field
+classified into `T0` / `T0+capture` / `T0+snapshot` / `T+Ns` /
+`POST-TRADE`, with `allowed_for_entry`/`allowed_for_midtrade`/
+`allowed_for_exit` flags. Key findings:
+
+- **DexScreener-sourced fields are NOT T0.** `DEX_RETRY_COUNT=3 ×
+  DEX_RETRY_DELAY_S=30s` means up to 90s of latency, and the fields
+  themselves (`volume_5m`, `price_change_5m`, etc.) describe a rolling
+  window ending at *fetch* time, not alert time. Classified
+  `T0+snapshot`, `allowed_for_entry: false` across the board — matches
+  reality: V8's live fork point (`memecoin/scanner.py`, pre-
+  `screen_token()`) genuinely cannot wait this long, and doesn't.
+- **`dex_id` is flagged with its known bug** (V8-TWIN-FIX: DexScreener
+  indexes pump.fun bonding-curve tokens as `dex_id=pumpfun` long before
+  graduation — never a reliable graduation signal).
+- **`realert_count` as stored is a future-leakage field.** It reflects
+  the cumulative count *as of query time*, not as of any specific
+  decision time. `allowed_for_entry: false`. `realert_times` (the raw
+  timestamp array) is conditionally allowed — only once filtered to
+  entries strictly before the decision timestamp, a reconstruction not
+  yet implemented (Phase 2 work).
+- **Outcome fields** (`pct_change_peak`, `pct_change_peak_3m`,
+  `outcome_complete`) are `POST-TRADE`, `allowed_for_entry: false`
+  everywhere, enforced by a structural test (below) so a future edit
+  can't silently reintroduce lookahead bias.
+
+### FD4 — clean cohort definition
+
+New artifact: `research/v8_clean_cohort.py`, `V8_CLEAN_COHORT_VERSION = 1`.
+Real, live, joint exclusion funnel (not independent per-field
+percentages — each gate applied on top of the prior one):
+
+```
+33,120  solana rows (100%)
+ 1,029  progress_data_ok = True                    (3.1%)
+   895  + pct_change_peak IS NOT NULL               (2.7% of total, 87.0% of prior gate)
+```
+
+Progress-bucket distribution **within the fully-qualified 895-row
+cohort**:
+
+| Bucket | n | % |
+|---|---|---|
+| <50% | 46 | 5.1% |
+| 50–70% | **1** | 0.1% |
+| 70–85% | 335 | 37.4% |
+| 85%+ | 513 | 57.3% |
+
+This independently reproduces (to within a fraction of a percent) an
+earlier, separately-sourced 850-sample measurement from the original
+V8-architecture investigation (5.3% / 0.2% / 37.6% / 56.8%). Two
+different queries, two different moments, same population shape — this
+is a stable, structural property of the Telegram alert stream, not
+sampling noise. **The bucket V8's own gate is built to trade in has a
+grand total of one (1) usable historical row across the entire
+project's history to date.**
+
+### FD5 — event identity / realert leakage audit
+
+Sampled 1,000 rows: **145 of 645 distinct mints (22.5%) appear in more
+than one independent `research_tokens` row.** `research/tracker.py`'s
+dedup only folds re-alerts into one row *within* `DEDUP_WINDOW_HOURS` —
+a mint alerted, forgotten, then alerted again later creates a genuinely
+separate row. **Confirmed empirically, not theoretical**: any future
+train/validation/holdout split must group by `token_address`, never
+split at the row level, or risks leaking correlated outcomes across the
+boundary. Documented in `KNOWN_GAPS`, enforced nowhere yet (Phase 2
+work — FD10/FD11's split logic must implement this).
+
+### FD6 — smart-money leakage audit — verdict: `SMART_MONEY_NOT_ELIGIBLE_FOR_HISTORICAL_SELECTION`
+
+Read `research/smart_wallets.py` and `research/backfill_smart_wallets.py`
+in full. Confirmed structurally circular by design:
+`backfill_smart_wallets.py` builds the wallet registry from **all**
+outcome-complete winners with no temporal cutoff relative to any
+individual scored row, and its `_update_supabase_rows()` writes
+`smart_money_hit=True` directly back onto the *same* winner tokens used
+to build that very registry — a token's own outcome can contribute to
+defining the feature later used to try to predict it.
+
+Then checked whether this is live or historical: **no
+`smart_wallets_vN.json` or `smart_wallets_latest.json` file exists
+anywhere on the VPS filesystem, and none has ever been git-tracked.**
+Yet `smart_money_hit=True` appears on 215 real rows in production data
+(12,861 `False`, ~20,044 `NULL` — never attempted). Those 215 hits came
+from live scoring against a wallet-list version that no longer exists
+in any form — **its provenance cannot be forensically verified, for any
+of them, one way or the other.** Verdict stands regardless of whether
+those specific 215 were actually safe: unauditable is disqualifying on
+its own. `smart_money_hit`/`smart_money_count` locked to
+`allowed_for_entry: false` in the registry, enforced by a structural
+test.
+
+### FD7 — live deployability matrix
+
+| Feature class | Status | Why |
+|---|---|---|
+| `event_id`, `alert_time`, `chain`, `tg_message_text`, `channel_velocity_5m` | `DEPLOYABLE_NOW` | Zero external calls, already in V8's live path |
+| `progress_at_signal`, `vsol_at_signal`, `progress_source` | `DEPLOYABLE_NOW` | Already used live by V8's real gate (PumpPortal-sourced, PF3 async capture) |
+| DexScreener/rugcheck-sourced (`price_usd`, `volume_*`, `dex_id`, `rugcheck_score`, `top10_holder_pct`, `creator_holds_pct`) | `BLOCKED` for V8's actual fork point | 0–90s latency; V8 forks before `screen_token()` runs at all |
+| `smart_money_hit`/`count` | `BLOCKED` | Dedicated Helius call per signal, ruled out by `SOCIAL_ALERT_ONLY`'s zero-Helius-increase constraint (independent of the FD6 leakage disqualification) |
+| `venue_state_at_signal` | `DEPLOYABLE_NOW` live, `RESEARCH_ONLY` historically | Live-computed by V8 today; not persisted to Supabase at all, so unusable for historical candidate derivation until the schema gap is fixed |
+| Forward path ticks (`logs/research_paths/<date>/`) | `RESEARCH_ONLY` | Replay input, never a live V8 signal |
+
+### Path provenance inventory
+
+Two provenance classes, cleanly separated by directory naming:
+- **Forward/naturalistic** (`research/peak_tracker.py`,
+  `logs/research_paths/<date>/`) — written for every tracked token,
+  unconditionally, not selected by outcome. `PATH_REPRESENTATIVENESS_
+  STATUS: NATURALISTIC`. **27 real (non-header-only) files total across
+  14 date-directories** — severely under-populated for any n≥100 or even
+  n≥30 requirement. K-BATCH's writer-bug fix (the reason ~1,207 older
+  files were header-only garbage) is confirmed working now (0 of the 27
+  are header-only), but the *volume* since the fix is still very low.
+  Spot-checked 6 of the VPS's 50 historical `git stash` entries for
+  evidence this was accidentally swept up and lost — found none in the
+  entries checked, not exhaustive. Status: `PATH_VOLUME_GAP_UNEXPLAINED`,
+  a known gap, not resolved.
+- **Case-control backfill** (`research/backfill_paths.py`,
+  `logs/research_paths/backfill/`) — explicitly selects up to N winners
+  (`pct_change_peak >= threshold`) and up to N losers
+  (`pct_change_peak < 0`) by design. `PATH_REPRESENTATIVENESS_STATUS:
+  CASE_CONTROL` — must never be used to estimate absolute win rate or
+  $/day (FD17), only paired conditional exit-mechanics analysis.
+  **0 files currently present** — the backfill pipeline referenced in
+  prior K-BATCH work has produced nothing under this path as of this
+  audit; needs its own investigation in a later phase.
+
+### Artifacts
+
+- `research/v8_feature_registry.yaml` (new) — FD3 timing/leakage/
+  deployability classification for every field investigated.
+- `research/v8_clean_cohort.py` (new) — FD4 versioned cohort definition,
+  `V8_CLEAN_COHORT_VERSION = 1`, real gate counts, `KNOWN_GAPS` list.
+- `research/tests/test_v8_fd_phase1_artifacts.py` (new, 11 tests) —
+  structural validation: every feature has required keys, no
+  `POST-TRADE` feature is ever `allowed_for_entry`, smart-money fields
+  are locked ineligible, `dex_id`'s known bug is flagged, cohort gates
+  are monotonically non-increasing. All pass.
+
+### Tests
+
+11 new tests, all passing. Full combined suite (`memecoin/tests` +
+`research/tests` + `watchdog/tests` + `watchdog/layer2/tests` + `tests`):
+652 passed (up from 641), same 7 pre-existing, unrelated failures as
+every prior run this session.
+
+### Phase 1 status: **`V8_FD_PHASE1_READY`**
+
+We now know what data is legally and statistically usable. This does
+**not** mean a strategy is ready — the 1-row `50–70%` bucket alone makes
+that clear. No filter was ranked, no threshold was picked, no holdout
+was touched, and `memecoin/v8_paper.py` was not modified. Per the user's
+explicit phase-gate instruction, this stops here for review before
+Phase 2 (experiment design + analysis engine) begins.

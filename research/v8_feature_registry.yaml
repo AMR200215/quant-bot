@@ -1,0 +1,473 @@
+# V8-FILTER-DERIVATION Phase 1 (FD3) — feature availability/timing registry.
+#
+# Every field that could conceivably become a V8 candidate feature is listed
+# here with its availability class, source, live-deployability, and known
+# leakage/coverage caveats. Built from LIVE inspection of the running
+# production code (memecoin/scanner.py, research/tracker.py,
+# research/smart_wallets.py, research/backfill_smart_wallets.py,
+# research/snapshot.py, memecoin/progress_capture.py) and a live query
+# against production Supabase (research_tokens, 33,120 rows as of
+# 2026-08-15T19:00 UTC) -- not from historical docs.
+#
+# availability_delay_ms is the WORST-CASE observed/designed latency from
+# alert receipt to the field being computable, not a guess. -1 means
+# "unbounded / can be arbitrarily late" (e.g. an outcome field).
+#
+# Phase 2 (FD8-FD9) reads this file to decide which features a candidate
+# is even allowed to use, and at what entry_delay. This file does NOT rank
+# or select filters -- Phase 1 is audit-only.
+
+schema_version: 1
+generated_at: "2026-08-15T19:05:00Z"
+source_git_sha: "62253be"
+audit_scope: "live VPS + production Supabase (research_tokens), not historical docs"
+
+features:
+
+  # ---------------------------------------------------------------------
+  # T0 -- objectively known at Telegram alert receipt, zero external calls
+  # ---------------------------------------------------------------------
+  - name: event_id
+    semantic: "deterministic sha256(chain:address:alert_ts)[:16], PROGRESS-FIX PF5"
+    source: memecoin/scanner.py:_on_telegram_signal
+    availability_class: T0
+    availability_delay_ms: 0
+    live_deployable: true
+    coverage_note: "2090/33120 rows (6.3%) -- only rows inserted since PF5 (~2026-08-08) carry it"
+    leakage_risk: none
+    allowed_for_entry: true
+    allowed_for_midtrade: true
+    allowed_for_exit: true
+
+  - name: alert_time
+    semantic: "Telegram message receipt timestamp"
+    source: research/tg_listener.py (TGAlert)
+    availability_class: T0
+    availability_delay_ms: 0
+    live_deployable: true
+    coverage_note: "33120/33120 (100%)"
+    leakage_risk: none
+    allowed_for_entry: true
+    allowed_for_midtrade: true
+    allowed_for_exit: true
+
+  - name: chain
+    semantic: "solana | bsc"
+    source: research/tg_listener.py
+    availability_class: T0
+    availability_delay_ms: 0
+    live_deployable: true
+    coverage_note: "33120/33120 (100%); bsc_rows=0 in current data -- V8 is solana-only in practice"
+    leakage_risk: none
+    allowed_for_entry: true
+    allowed_for_midtrade: true
+    allowed_for_exit: true
+
+  - name: tg_message_text
+    semantic: "raw alert text, truncated to 500 chars"
+    source: research/tg_listener.py
+    availability_class: T0
+    availability_delay_ms: 0
+    live_deployable: true
+    coverage_note: "29353/33120 (88.6%)"
+    leakage_risk: none
+    allowed_for_entry: true
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: channel_velocity_5m
+    semantic: "count of tokens inserted to research_tokens in the preceding 5 minutes"
+    source: research/tracker.py:_get_velocity (backward-looking counter, in-process)
+    availability_class: T0
+    availability_delay_ms: 0
+    live_deployable: true
+    coverage_note: "13239/33120 (40.0%) non-null -- always computed, gap is pre-instrumentation history"
+    leakage_risk: none
+    allowed_for_entry: true
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  # ---------------------------------------------------------------------
+  # T0+capture -- resolves via ProgressCapture (PF3 async, started at alert
+  # time), typically sub-second, bounded wait
+  # ---------------------------------------------------------------------
+  - name: progress_at_signal
+    semantic: "bonding-curve completion fraction (vsol/GRAD_SOL_UI) at alert time"
+    source: memecoin/progress_capture.py, event_id-keyed, PF5
+    availability_class: T0+capture
+    availability_delay_ms: 500   # _GATE_CAPTURE_WAIT_S in v8_paper.py; typically <1s (curve_account)
+    live_deployable: true
+    coverage_note: "1031/33120 (3.1%) -- only rows since progress capture was added (~2026-08-08). THIS IS THE CANDIDATE POOL SIZE for any progress-based feature, not 33120."
+    leakage_risk: none
+    allowed_for_entry: true
+    allowed_for_midtrade: true
+    allowed_for_exit: false
+
+  - name: vsol_at_signal
+    semantic: "raw SOL in bonding curve at alert time"
+    source: memecoin/progress_capture.py
+    availability_class: T0+capture
+    availability_delay_ms: 500
+    live_deployable: true
+    coverage_note: "1029/33120 (3.1%)"
+    leakage_risk: none
+    allowed_for_entry: true
+    allowed_for_midtrade: true
+    allowed_for_exit: false
+
+  - name: venue_state_at_signal
+    semantic: "CURVE_ACTIVE | GRADUATED | DEX_ACTIVE | UNKNOWN"
+    source: memecoin/progress_capture.py (V8-TWIN-FIX VF2)
+    availability_class: T0+capture
+    availability_delay_ms: 500
+    live_deployable: true
+    coverage_note: "tracks with progress_at_signal -- not separately queried in Phase 1, assume ~3.1%"
+    leakage_risk: none
+    allowed_for_entry: true
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: progress_source
+    semantic: "curve_account | pp_warm | pp_post_alert -- provenance of the progress read"
+    source: memecoin/progress_capture.py
+    availability_class: T0+capture
+    availability_delay_ms: 500
+    live_deployable: true
+    coverage_note: "1066/33120 (3.2%)"
+    leakage_risk: none
+    allowed_for_entry: false   # provenance metadata, not a strategy signal itself
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: progress_capture_lag_ms
+    semantic: "ms between alert and progress observation"
+    source: memecoin/progress_capture.py
+    availability_class: T0+capture
+    availability_delay_ms: 500
+    live_deployable: true
+    coverage_note: "tracks with progress_at_signal"
+    leakage_risk: none
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  # ---------------------------------------------------------------------
+  # T0+snapshot -- DexScreener/rugcheck sourced. Real latency 0-90s
+  # (DEX_RETRY_COUNT=3 x DEX_RETRY_DELAY_S=30s), AND the field itself
+  # describes a rolling window ending at fetch time, not alert time.
+  # V8's live fork point (memecoin/scanner.py, pre-screen_token) CANNOT
+  # wait this long -- these fields are not usable for V8's live T0 entry
+  # decision as currently wired, only for V7/reporting/offline analysis,
+  # UNLESS the PP-enriched fallback specifically (see _enrich_with_pp)
+  # supplied the value, which is near-T0.
+  # ---------------------------------------------------------------------
+  - name: price_usd
+    semantic: "USD price at snapshot time (PP-preferred over DexScreener when available)"
+    source: research/snapshot.py + research/tracker.py:_enrich_with_pp
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false   # not at V8's actual fork point; PP price IS used elsewhere in the live path
+    coverage_note: "4786/33120 (14.4%) -- majority of rows never got a DexScreener/PP price at all"
+    leakage_risk: none
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: mcap_usd
+    semantic: "market cap at snapshot time"
+    source: research/snapshot.py
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4784/33120 (14.4%)"
+    leakage_risk: none
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: liquidity_usd
+    semantic: "pool liquidity at snapshot time"
+    source: research/snapshot.py
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "1789/33120 (5.4%) -- lower than price/mcap, additional dependency"
+    leakage_risk: none
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: volume_5m
+    semantic: "trailing 5-minute volume ending at SNAPSHOT time, not alert time"
+    source: research/snapshot.py
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4786/33120 (14.4%)"
+    leakage_risk: "window described is relative to fetch time -- can silently include a few seconds to ~90s past the alert, treat as delayed-entry only if used"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: volume_1h
+    semantic: "trailing 1h volume ending at snapshot time"
+    source: research/snapshot.py
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4784/33120 (14.4%)"
+    leakage_risk: "same window-lag caveat as volume_5m"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: buys_5m
+    semantic: "buy tx count, trailing 5m ending at snapshot time"
+    source: research/snapshot.py + PP fallback
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4786/33120 (14.4%)"
+    leakage_risk: "same window-lag caveat"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: sells_5m
+    semantic: "sell tx count, trailing 5m"
+    source: research/snapshot.py + PP fallback
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4786/33120 (14.4%)"
+    leakage_risk: "same window-lag caveat"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: buy_sell_ratio_5m
+    semantic: "buys_5m / (buys_5m+sells_5m)"
+    source: research/snapshot.py + PP fallback
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4428/33120 (13.4%)"
+    leakage_risk: "same window-lag caveat -- this is V7's own MIN_BUY_SELL_RATIO_SOCIAL filter field"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: price_change_5m
+    semantic: "pct price change, trailing 5m ending at snapshot time"
+    source: research/snapshot.py
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4784/33120 (14.4%)"
+    leakage_risk: "same window-lag caveat"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: dex_id
+    semantic: "pumpfun | pumpswap | raydium | orca | ''"
+    source: research/snapshot.py (DexScreener)
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4784/33120 (14.4%)"
+    leakage_risk: "PROVEN UNRELIABLE as a graduation signal -- V8-TWIN-FIX found DexScreener indexes pump.fun bonding-curve tokens as dex_id=pumpfun long before graduation. Never use dex_id where venue_state_at_signal is available instead."
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: rugcheck_score
+    semantic: "rugcheck.xyz summary score"
+    source: research/snapshot.py (rugcheck API)
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "4720/33120 (14.2%)"
+    leakage_risk: none
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: top10_holder_pct
+    semantic: "top-10 wallet holder concentration"
+    source: research/snapshot.py:_rugcheck_holders (full /report call, not /report/summary)
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "2489/33120 (7.5%) -- lower coverage than rugcheck_score, extra API dependency"
+    leakage_risk: none
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: creator_holds_pct
+    semantic: "creator wallet's remaining holding percentage"
+    source: research/snapshot.py:_rugcheck_holders
+    availability_class: T0+snapshot
+    availability_delay_ms: 90000
+    live_deployable: false
+    coverage_note: "0/33120 (0%) -- NEVER POPULATED IN PRODUCTION. Field exists in code and was named as a V8 candidate feature in the original 2026-07-30 spec, but has zero real coverage. Needs its own investigation (why does _rugcheck_holders never successfully return this?) before it can be considered a candidate at all -- not fixed in Phase 1 (audit-only), flagged as a known gap."
+    leakage_risk: unknown
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  # ---------------------------------------------------------------------
+  # Smart money -- SMART_MONEY_NOT_ELIGIBLE_FOR_HISTORICAL_SELECTION (FD6)
+  # ---------------------------------------------------------------------
+  - name: smart_money_hit
+    semantic: "true if any of the token's first-30-buyer wallets appear in the smart-wallet registry"
+    source: research/smart_wallets.py:check_smart_money + research/tracker.py
+    availability_class: T0+snapshot   # computed synchronously at insert time when it runs at all
+    availability_delay_ms: 5000       # bounded by fetch_first_buyers' own Helius call latency
+    live_deployable: false            # dedicated Helius call per signal, ruled out by SOCIAL_ALERT_ONLY
+    coverage_note: "13076/33120 (39.5%) have ANY value; 215 True, 12861 False, 20044 NULL (never attempted)"
+    leakage_risk: >
+      SMART_MONEY_NOT_ELIGIBLE_FOR_HISTORICAL_SELECTION (FD6 verdict). The
+      wallet registry (smart_wallets_vN.json) is built from
+      research/backfill_smart_wallets.py by scanning ALL outcome-complete
+      winners (pct_change_peak >= threshold) with NO temporal cutoff
+      relative to any individual scored row -- a wallet earns "smart"
+      status using outcome data that can postdate the very row being
+      scored. backfill_smart_wallets.py additionally writes
+      smart_money_hit=True directly back onto the SAME winner tokens used
+      to build the wallet list (_update_supabase_rows) -- direct circular
+      writeback for any row touched by that path. CONFIRMED: no
+      smart_wallets_vN.json / smart_wallets_latest.json file exists
+      anywhere on the VPS filesystem or in git history as of this audit
+      -- the file(s) that produced the 215 True rows in current
+      production data no longer exist, so provenance cannot be
+      forensically verified for ANY of them. Ineligible for historical
+      candidate selection until a leakage-safe, versioned,
+      temporally-scoped registry exists with verifiable training_cutoff
+      per row.
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: smart_money_count
+    semantic: "count of smart-wallet hits among first 30 buyers"
+    source: research/smart_wallets.py + research/tracker.py
+    availability_class: T0+snapshot
+    availability_delay_ms: 5000
+    live_deployable: false
+    coverage_note: "tracks with smart_money_hit"
+    leakage_risk: "same SMART_MONEY_NOT_ELIGIBLE_FOR_HISTORICAL_SELECTION verdict as smart_money_hit"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  # ---------------------------------------------------------------------
+  # Realert / re-alert fields -- leakage-risky unless reconstructed
+  # ---------------------------------------------------------------------
+  - name: realert_count
+    semantic: "cumulative count of re-alerts for this token, AS OF QUERY TIME"
+    source: research/tracker.py:_record_realert
+    availability_class: POST-TRADE   # the STORED field value, as queried later, includes future realerts
+    availability_delay_ms: -1
+    live_deployable: true            # the CONCEPT is live-deployable; the stored historical field is not directly usable
+    coverage_note: "9362/33120 (22.6%) rows have realert_count>0; top observed value 34"
+    leakage_risk: >
+      The row's stored realert_count reflects ALL realerts up to whenever
+      the row is queried, not realerts known at any specific decision
+      time. A T0-safe reconstruction MUST count only entries in
+      realert_times strictly before the decision timestamp being
+      evaluated -- never read the field directly as a feature. FD5
+      requirement, not yet implemented -- flagged here for Phase 2.
+    allowed_for_entry: false   # only the reconstructed, time-filtered version is allowed
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: realert_times
+    semantic: "array of ISO timestamps, one per re-alert"
+    source: research/tracker.py:_record_realert
+    availability_class: T0   # each individual timestamp is legitimately T0-known once it happens
+    availability_delay_ms: 0
+    live_deployable: true
+    coverage_note: "tracks with realert_count"
+    leakage_risk: "safe to use ONLY when filtered to timestamps < decision_ts; the raw array read as a whole is a future-leakage vector identical to realert_count"
+    allowed_for_entry: true   # conditional: only after time-filtering, see Phase 2 FD5 requirement
+    allowed_for_midtrade: true
+    allowed_for_exit: false
+
+  # ---------------------------------------------------------------------
+  # POST-TRADE / outcome fields -- NEVER usable as filter inputs
+  # ---------------------------------------------------------------------
+  - name: pct_change_peak
+    semantic: "peak pct price change observed during the outcome-polling window"
+    source: research/peak_tracker.py + outcome poller
+    availability_class: POST-TRADE
+    availability_delay_ms: -1
+    live_deployable: false
+    coverage_note: "3419/33120 (10.3%) -- NOTE: outcome_complete=True for 33017/33120 rows, but only 3419 have a real non-null peak value. outcome_complete does NOT mean 'has a usable outcome' -- see FD4 clean cohort definition."
+    leakage_risk: "outcome data by definition -- forbidden as candidate feature. Confirmed used (correctly, for label/EV purposes) by backfill_smart_wallets.py's winner selection, never for entry filtering."
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: pct_change_peak_3m
+    semantic: "peak pct change within first 3 minutes"
+    source: research/peak_tracker.py
+    availability_class: POST-TRADE
+    availability_delay_ms: -1
+    live_deployable: false
+    coverage_note: "494/33120 (1.5%)"
+    leakage_risk: "outcome data -- forbidden as candidate feature"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  - name: outcome_complete
+    semantic: "polling schedule for this token finished (does not imply a real priced outcome)"
+    source: research outcome poller
+    availability_class: POST-TRADE
+    availability_delay_ms: -1
+    live_deployable: false
+    coverage_note: "33017/33120 (99.7%) -- near-universal, and therefore NOT a useful clean-cohort filter on its own (see pct_change_peak coverage gap above)"
+    leakage_risk: "outcome-adjacent metadata -- forbidden as candidate feature, useful only for cohort qualification in FD4"
+    allowed_for_entry: false
+    allowed_for_midtrade: false
+    allowed_for_exit: false
+
+  # ---------------------------------------------------------------------
+  # Path data -- see path provenance inventory (separate artifact) for
+  # forward/naturalistic vs case-control-backfill classification. Path
+  # ticks themselves are POST-TRADE relative to the alert (they describe
+  # what happened after), but individual ticks are legitimately T+Ns
+  # available for delayed-entry / mid-trade / exit-replay use if the
+  # entry timestamp is correctly aligned (FD15) -- never for a T0 decision.
+  # ---------------------------------------------------------------------
+  - name: path_tick (forward/naturalistic, logs/research_paths/<date>/)
+    semantic: "per-second-ish price/vsol ticks written by peak_tracker.py for every tracked token"
+    source: research/peak_tracker.py
+    availability_class: T+Ns   # N depends on which tick; never T0
+    availability_delay_ms: -1
+    live_deployable: false   # research-only; replay input, not a live V8 signal
+    coverage_note: "27 real (non-header-only) files total across 14 date-directories as of this audit -- severely under-populated for any n>=100 requirement. Older docs referenced ~1207 files, nearly all header-only (K-BATCH-fixed writer bug); current low real count needs its own explanation before Phase 2 -- spot-checked the VPS git-stash backlog (6 of 50 entries) for evidence of accidental loss and found none in the entries checked, not exhaustive. Status: PATH_VOLUME_GAP_UNEXPLAINED, treat as a known gap, not resolved."
+    leakage_risk: "representative/naturalistic by construction (written for every tracked token, not selected by outcome) -- PATH_REPRESENTATIVENESS_STATUS: NATURALISTIC"
+    allowed_for_entry: false
+    allowed_for_midtrade: true
+    allowed_for_exit: true
+
+  - name: path_tick (backfill/case-control, logs/research_paths/backfill/)
+    semantic: "per-tx-derived ticks backfilled for a SELECTED set of winner/loser tokens"
+    source: research/backfill_paths.py:_load_tokens (up to N winners with pct_change_peak>=thresh, up to N losers with pct_change_peak<0)
+    availability_class: T+Ns
+    availability_delay_ms: -1
+    live_deployable: false
+    coverage_note: "0 files currently present in logs/research_paths/backfill/ on the VPS -- the backfill pipeline referenced in prior session work (K-BATCH) has produced no files under this path as of this audit. Needs investigation: did output move, or has it not been (successfully) re-run since the K3 writer-bug fix."
+    leakage_risk: >
+      PATH_REPRESENTATIVENESS_STATUS: CASE_CONTROL, by explicit design
+      (_load_tokens selects winners/losers by outcome threshold). MUST
+      NOT be used to estimate absolute win rate or $/day EV (FD17) --
+      only for paired conditional exit-mechanics analysis with a known,
+      documented selection scheme, or with an explicit, justified
+      reweighting to the real population base rate.
+    allowed_for_entry: false
+    allowed_for_midtrade: true
+    allowed_for_exit: true
