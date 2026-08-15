@@ -2448,7 +2448,27 @@ a single invocation for the first time. The only remaining failures are
 the same 7 in `tests/test_half2.py`/`tests/test_live_gate.py` already
 confirmed pre-existing on clean `main`, unrelated to this work.
 
-Both fixes committed, pushed, and the watchdog check deployed to the VPS
-(timer-triggered, no service restart needed — picks up on its next
-scheduled fire). Not yet re-verified against a second live Layer 2 run;
-that's the actual close-the-loop confirmation, still open.
+Both fixes committed, pushed, and deployed to the VPS. Deploying the
+funnel fix hit the same live-process-dirties-a-tracked-file pattern as
+before (`memecoin/data/memecoin_positions.json` re-dirtied mid-stash);
+handled the same way, no data loss, stash backlog still exactly 50.
+Confirmed live against the real, current 1032-event `v8_funnel.jsonl`:
+`check_v8_funnel()` now returns `OK` (was `CRITICAL`).
+
+**A third bug found in the process of verifying the fix**: the new
+`(telegram_received -> v8_fork_entered)` regression tests used fabricated
+`now_ts=1_000_000.0` timestamps and passed locally, but 2 failed on the
+VPS's real venv — because `check_v8_funnel()` reads the *real*
+`logs/watchdog/v8_rewire_deploy_ts.txt`, which now genuinely exists
+there with a real 2026 epoch value, silently exempting every fabricated
+old-timestamp row as "predates the invariant" and making the tests
+pass-when-they-should-fail. Fixed: the whole test class now patches
+`_v8_rewire_deploy_ts` to `None` by default in `setUp` (deterministic
+regardless of what's actually on disk); the two tests that specifically
+exercise the real-stamp behavior keep their own explicit inner patches.
+13/13 pass on both machines now. Deployed (`a71c831`), verified live.
+
+Not yet re-verified against a second live Layer 2 run — that's the
+actual close-the-loop confirmation for all three fixes together, still
+open. The next automatic run is tomorrow 03:30 UTC (or trigger manually
+via `workflow_dispatch` sooner).
