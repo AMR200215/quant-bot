@@ -80,6 +80,31 @@ _install_stubs()
 
 from memecoin.portfolio import effective_hard_stop_level
 
+# V8-REWIRE (2026-08-15): restore sys.modules to its pre-stub state
+# immediately after the one import this file needs -- NOT deferred to
+# teardown_module. Root cause of a real bug Layer 2's first automatic
+# V8-REWIRE audit caught live: this stub was leaking into every test file
+# collected after this one in the same pytest process, since nothing
+# ever removed it (memecoin.config's real SIGNALS_FILE/GRAD_SOL_UI/etc.
+# would then be missing wherever anything did `from memecoin.config
+# import X` afterward). teardown_module looked like the obvious fix but
+# doesn't actually work for this class of bug: pytest's collection phase
+# imports every test file (running all their module-level code, including
+# _install_stubs()) before any test or teardown runs at all, so by the
+# time any teardown would fire, later files have already failed to
+# collect. Restoring right here works because memecoin.portfolio (and
+# everything it imports) is now fully resolved and cached in sys.modules
+# under its own name -- the stub doesn't need to remain present for this
+# file's actual test runs, only for this one import. Same pattern applied
+# to test_journal_reconciler.py, test_oracle_dedup.py,
+# test_sol_delta_fixes.py, test_phase4.py; test_reconciler_guards.py and
+# test_entry_invariants.py never needed the stub at all (confirmed via
+# grep -- both reimplement the logic under test locally) so their stub
+# calls were removed outright instead.
+for _name in ("memecoin.config", "memecoin.data_client", "memecoin.candidate_log",
+              "memecoin.journal_io", "app", "app.alerts"):
+    sys.modules.pop(_name, None)
+
 
 # ── Test A: fill=2.17x signal → fill floor wins ──
 def test_high_slippage_fill_floor_wins():

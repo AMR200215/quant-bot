@@ -84,10 +84,23 @@ def parse_funnel_events(path: Path, max_lines: int = _MAX_LINES_READ) -> list[di
 
 
 def find_missing_terminal_dispositions(events: list[dict], now_ts: float,
-                                        grace_seconds: float) -> dict[str, list[dict]]:
+                                        grace_seconds: float,
+                                        min_ts_by_entry_stage: Optional[dict[str, float]] = None,
+                                        ) -> dict[str, list[dict]]:
     """Returns {entry_stage: [event, ...]} for events that entered a stage
     more than grace_seconds ago with no matching terminal-stage event for
-    the same event_id."""
+    the same event_id.
+
+    min_ts_by_entry_stage: entry events older than this (per entry_stage)
+    are skipped entirely, not just exempted from grace. Exists for the
+    V8-REWIRE (telegram_received -> v8_fork_entered) pairing specifically:
+    telegram_received rows written before v8_fork_entered existed as a
+    stage will NEVER get one -- the code that emits it didn't exist yet.
+    Without this, every pre-deploy telegram_received row sitting in the
+    file's read window would page CRITICAL forever, not because anything
+    is broken, but because history predates the invariant. Found live:
+    Layer 2's first automatic audit caught exactly this the morning after
+    deploy (101 "stuck" candidates that were really just old rows)."""
     by_event: dict[str, dict[str, dict]] = {}
     for e in events:
         eid = e.get("event_id")
@@ -96,20 +109,39 @@ def find_missing_terminal_dispositions(events: list[dict], now_ts: float,
             continue
         by_event.setdefault(eid, {})[stage] = e
 
+    min_ts_by_entry_stage = min_ts_by_entry_stage or {}
     missing: dict[str, list[dict]] = {}
     for entry_stage, terminal_stages in _TRANSITIONS:
+        min_ts = min_ts_by_entry_stage.get(entry_stage)
         offenders = []
         for eid, stages_seen in by_event.items():
             entry_event = stages_seen.get(entry_stage)
             if not entry_event:
                 continue
-            if now_ts - entry_event.get("ts", now_ts) < grace_seconds:
+            entry_ts = entry_event.get("ts", now_ts)
+            if min_ts is not None and entry_ts < min_ts:
+                continue  # predates the invariant -- never expected to resolve
+            if now_ts - entry_ts < grace_seconds:
                 continue  # too recent to expect resolution yet
             if not (terminal_stages & stages_seen.keys()):
                 offenders.append(entry_event)
         if offenders:
             missing[entry_stage] = offenders
     return missing
+
+
+def _v8_rewire_deploy_ts(repo_root: Path) -> Optional[float]:
+    """Best-effort read of the same self-bootstrapping stamp
+    memecoin/v8_paper.py writes (logs/watchdog/v8_rewire_deploy_ts.txt).
+    Returns None if unreadable -- callers must treat None as "exempt
+    nothing" (fail toward not paging), not "exempt everything": an
+    unreadable stamp is a reason to stay quiet about the new invariant,
+    not a reason to flag all of history against it."""
+    try:
+        stamp_path = repo_root / "logs" / "watchdog" / "v8_rewire_deploy_ts.txt"
+        return float(stamp_path.read_text().strip())
+    except Exception:
+        return None
 
 
 def check_v8_funnel(now_ts: Optional[float] = None,
@@ -143,7 +175,10 @@ def check_v8_funnel(now_ts: Optional[float] = None,
             severity=severity_ceiling,
         )]
 
-    missing = find_missing_terminal_dispositions(events, now_ts, grace_seconds)
+    deploy_ts = _v8_rewire_deploy_ts(REPO_ROOT)
+    min_ts_by_entry_stage = {"telegram_received": deploy_ts} if deploy_ts is not None else {}
+    missing = find_missing_terminal_dispositions(events, now_ts, grace_seconds,
+                                                  min_ts_by_entry_stage=min_ts_by_entry_stage)
     if not missing:
         return [CheckResult(
             check_id=check_id, status=STATUS_OK,

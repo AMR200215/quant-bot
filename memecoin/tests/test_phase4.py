@@ -118,6 +118,18 @@ _make_stubs()
 
 from memecoin.portfolio import Position
 
+# V8-REWIRE (2026-08-15): restore sys.modules to its pre-stub state
+# immediately after the one import this file needs -- NOT deferred to
+# teardown_module. See test_effective_hard_stop.py for the full writeup
+# of why teardown_module doesn't actually fix this class of bug (pytest's
+# collection phase imports every test file before any test or teardown
+# runs). memecoin.portfolio (and everything it imports) is now fully
+# resolved and cached in sys.modules under its own name.
+for _name in ("memecoin.config", "memecoin.data_client", "memecoin.candidate_log",
+              "memecoin.journal_io", "app", "app.alerts", "memecoin.pumpportal_monitor",
+              "memecoin.pumpswap_local", "memecoin.exit_router"):
+    sys.modules.pop(_name, None)
+
 
 # ---------------------------------------------------------------------------
 # 4B — pnl property setters

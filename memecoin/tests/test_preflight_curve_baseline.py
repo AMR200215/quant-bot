@@ -24,8 +24,14 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 _FAKE_MINT = "CurveMint1111111111111111111111111111111111"
 
+_STUB_CFG = None   # captured below so tests can reference it without
+                    # relying on sys.modules["memecoin.config"] staying
+                    # stubbed after collection (see restoration block)
+
+
 def _install_executor_stubs():
     """Install minimal stubs so executor.py can be imported cleanly."""
+    global _STUB_CFG
     sys.modules.setdefault("memecoin", types.ModuleType("memecoin"))
 
     cfg = types.ModuleType("memecoin.config")
@@ -37,6 +43,7 @@ def _install_executor_stubs():
     cfg.LIVE_GATE_EPOCH       = "2026-07-06"
     cfg.POSITIONS_FILE        = "/tmp/positions_curve_test.json"
     sys.modules.setdefault("memecoin.config", cfg)
+    _STUB_CFG = cfg
 
     ppm = types.ModuleType("memecoin.pumpportal_monitor")
     ppm.monitor = MagicMock()
@@ -75,6 +82,22 @@ _ex_spec.loader.exec_module(_ex_mod)
 get_pumpfun_curve_snapshot   = _ex_mod.get_pumpfun_curve_snapshot
 get_pumpfun_curve_complete   = _ex_mod.get_pumpfun_curve_complete
 _GRAD_ORACLE_CACHE           = _ex_mod._GRAD_ORACLE_CACHE
+
+# V8-REWIRE (2026-08-15): restore sys.modules to its pre-stub state
+# immediately after the one warm-up import this file needs -- NOT left
+# permanently stubbed. See test_effective_hard_stop.py for the full
+# writeup of why this matters: an unrestored stub here was leaking into
+# every test file collected after this one in the same pytest process
+# (root-caused live by Layer 2's first automatic V8-REWIRE audit).
+# memecoin.executor is kept under its OWN name (sys.modules["memecoin.
+# executor"]) since this file references it directly as _ex_mod --
+# nothing else needs to re-import it. test_G_gate_threshold_unchanged
+# below reads _STUB_CFG directly rather than sys.modules["memecoin.
+# config"], specifically so this restoration can happen here instead of
+# needing the stub to survive into this file's own test-run phase.
+for _name in ("memecoin.config", "memecoin.pumpportal_monitor", "memecoin.pumpswap_local",
+              "memecoin.execution_rpc", "memecoin.exit_router"):
+    sys.modules.pop(_name, None)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -367,8 +390,7 @@ class TestG_DriftGateEnforced(unittest.TestCase):
 
     def test_G_gate_threshold_unchanged(self):
         """Verify SLIPPAGE_GATE_RT_PCT is still 30% (unchanged by this patch)."""
-        cfg = sys.modules["memecoin.config"]
-        self.assertEqual(cfg.SLIPPAGE_GATE_RT_PCT, 0.30,
+        self.assertEqual(_STUB_CFG.SLIPPAGE_GATE_RT_PCT, 0.30,
                          "SLIPPAGE_GATE_RT_PCT must remain 0.30 (30%)")
 
 

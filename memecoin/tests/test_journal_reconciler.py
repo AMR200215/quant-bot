@@ -74,6 +74,18 @@ def _install_stubs():
 
 _install_stubs()
 
+# V8-REWIRE (2026-08-15): warm up the real target module once, while the
+# stub is active, then restore sys.modules immediately -- see
+# test_effective_hard_stop.py for the full writeup of why this (not
+# teardown_module) is the correct fix. Every test method below does its
+# own `import memecoin.journal_reconciler as jr`, which after this warm-up
+# just hits the sys.modules cache and never needs the stub again.
+import memecoin.journal_reconciler as _jr_warmup  # noqa: F401
+
+for _name in ("memecoin.config", "memecoin.journal_io", "memecoin.execution_rpc",
+              "memecoin.tx_meta", "memecoin.executor"):
+    sys.modules.pop(_name, None)
+
 
 # ---------------------------------------------------------------------------
 # Helper: write a minimal journal CSV with one row

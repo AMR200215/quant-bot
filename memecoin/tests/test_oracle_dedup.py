@@ -60,6 +60,19 @@ def _make_stubs():
 
 _make_stubs()
 
+# V8-REWIRE (2026-08-15): warm up the real target module once, while the
+# stub is active, then restore sys.modules immediately -- see
+# test_effective_hard_stop.py for the full writeup of why this (not
+# teardown_module) is the correct fix. The test method below does its own
+# `import memecoin.executor as ex`, which after this warm-up just hits
+# the sys.modules cache and never needs the stub again.
+import memecoin.executor as _executor_warmup  # noqa: F401
+
+for _name in ("memecoin.config", "memecoin.pumpportal_monitor",
+              "memecoin.pumpswap_local", "memecoin.exit_router"):
+    sys.modules.pop(_name, None)
+
+
 # ---------------------------------------------------------------------------
 # FIX 1 — shared cache tests
 # ---------------------------------------------------------------------------

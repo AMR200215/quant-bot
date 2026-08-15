@@ -133,10 +133,19 @@ def _graduated_block(
 # ---------------------------------------------------------------------------
 
 class TestGraduatedEntryInvariant(unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        _make_stubs()
+    # V8-REWIRE (2026-08-15): _make_stubs() used to run in setUpClass here,
+    # but _graduated_block() below is a local reimplementation -- this
+    # file never actually imports memecoin.portfolio/pumpportal_monitor/
+    # pumpswap_local/exit_router, so the stub served no purpose except to
+    # leak a fake memecoin.config into sys.modules for every test file
+    # collected after this one in the same pytest process (root-caused
+    # live by Layer 2's first automatic V8-REWIRE audit; teardown_module/
+    # tearDownClass can't fix this class of bug -- pytest's collection
+    # phase imports every test file before any test or teardown runs, so
+    # by the time teardown would fire the damage is already done to the
+    # next file's collection). Confirmed via grep that nothing in this
+    # file references a real memecoin module -- simply not stubbing
+    # anything is correct here, not a workaround.
 
     # -- A: dex_id=pumpswap → always blocked (CAT-3) --
     def test_A_pumpswap_dex_always_blocked(self):

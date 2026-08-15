@@ -88,7 +88,17 @@ def _install_stubs():
             sys.modules[mod_name] = m
 
 
-_install_stubs()
+# V8-REWIRE (2026-08-15): _install_stubs() used to be called here
+# unconditionally, but this file never actually imports any real memecoin
+# module (FakePos/_make_pos below are local reimplementations) -- the
+# call served no purpose except to leak a fake memecoin.config into
+# sys.modules for every test file collected after this one in the same
+# pytest process. Root-caused live by Layer 2's first automatic V8-REWIRE
+# audit. teardown_module can't fix this class of bug: pytest's collection
+# phase imports every test file before any test or teardown runs, so by
+# the time teardown would fire, the next file's collection has already
+# failed. Confirmed via grep that nothing in this file references a real
+# memecoin module -- simply not stubbing anything is correct here.
 
 
 @dataclass

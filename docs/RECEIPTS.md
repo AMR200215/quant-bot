@@ -2387,3 +2387,68 @@ the count here.
 
 No trading logic touched; `LIVE_TRADING=false` unchanged throughout;
 V8 remains 100% paper.
+
+### Addendum (2026-08-15) — the first automatic Layer 2 audit found two real bugs, both fixed
+
+The daily 03:30 UTC scheduled Layer 2 audit fired on its own for the
+first time (previously only `workflow_dispatch` runs had been observed —
+closes that caveat from the Phase 5 completion receipt). Its first
+CRITICAL finding (F1) was real, not a false alarm:
+
+**Bug 1 — the new watchdog invariant flagged its own deploy history.**
+`(telegram_received -> v8_fork_entered)` was checked against every row in
+`logs/v8_funnel.jsonl`, including rows written *before* the rewire
+deployed — rows that structurally can never get a `v8_fork_entered`
+stage, since the code that emits it didn't exist yet. This produced a
+persistent, self-inflicted CRITICAL (101 "stuck" candidates that were
+really just old history). Fixed: `find_missing_terminal_dispositions()`
+now takes `min_ts_by_entry_stage`, and `check_v8_funnel()` reads the same
+self-bootstrapping `logs/watchdog/v8_rewire_deploy_ts.txt` stamp
+`memecoin/v8_paper.py` writes, exempting any `telegram_received` row
+older than the real deploy cutover from the new pairing. Fails toward
+"exempt nothing" (not "exempt everything") if the stamp is unreadable.
+4 new regression tests, including one reproducing the exact reported
+scenario.
+
+**Bug 2 (F2, WARN) — a real, separate, pre-existing test-infrastructure
+bug, now root-caused and fixed.** Layer 2 flagged that `memecoin/tests`
+fails to collect at all (`ImportError: cannot import name 'SIGNALS_FILE'
+from 'memecoin.config'`), undermining confidence in the "35 tests
+passing" claim. This is the exact "pre-existing, unrelated sys.modules
+stubbing collision across some files" `watchdog/checks/test_drift.py`'s
+own comment named as "confirmed during V8-TWIN-FIX and out of scope" —
+never previously root-caused. Traced to 8 test files
+(`test_effective_hard_stop.py`, `test_journal_reconciler.py`,
+`test_oracle_dedup.py`, `test_sol_delta_fixes.py`,
+`test_reconciler_guards.py`, `test_entry_invariants.py`, `test_phase4.py`,
+`test_preflight_curve_baseline.py`) that stub `sys.modules["memecoin.
+config"]` (and others) at module-import time to import `memecoin.
+portfolio`/`executor`/etc. without live dependencies, and never restore
+it — the stub then leaks into every test file collected after it in the
+*same pytest process*. `teardown_module`/`tearDownClass` looked like the
+obvious fix but doesn't work for this class of bug: pytest's collection
+phase imports every test file (running all module-level code) before
+any test or teardown runs, so by the time teardown fires, later files
+have already failed to collect. Real fix: warm up whatever real module
+each file needs (triggering its one-time import while the stub is
+active, so it gets cached under its own name) then restore `sys.modules`
+immediately, at module level, in the same file. Two files
+(`test_reconciler_guards.py`, `test_entry_invariants.py`) turned out to
+never import a real memecoin module at all — their stubbing was
+vestigial dead code; removed the call entirely rather than restore
+something never needed. `test_preflight_curve_baseline.py`'s own test
+read `sys.modules["memecoin.config"]` directly at run-time, which would
+have broken under immediate restoration — decoupled it to reference the
+stub object directly instead.
+
+**Result**: `memecoin/tests` (288 tests) and the full combined tree
+(`memecoin/tests` + `research/tests` + `watchdog/tests` + `watchdog/
+layer2/tests` + `tests`, 635 tests) both now collect and run cleanly in
+a single invocation for the first time. The only remaining failures are
+the same 7 in `tests/test_half2.py`/`tests/test_live_gate.py` already
+confirmed pre-existing on clean `main`, unrelated to this work.
+
+Both fixes committed, pushed, and the watchdog check deployed to the VPS
+(timer-triggered, no service restart needed — picks up on its next
+scheduled fire). Not yet re-verified against a second live Layer 2 run;
+that's the actual close-the-loop confirmation, still open.

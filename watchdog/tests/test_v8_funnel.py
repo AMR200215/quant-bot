@@ -11,9 +11,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from watchdog.checks import STATUS_CRITICAL, STATUS_OK, STATUS_UNKNOWN
-from watchdog.checks.v8_funnel import check_v8_funnel
+from watchdog.checks.v8_funnel import check_v8_funnel, find_missing_terminal_dispositions
 
 
 class TestV8FunnelFaultInjection(unittest.TestCase):
@@ -118,6 +119,56 @@ class TestV8FunnelFaultInjection(unittest.TestCase):
         self.path.write_text("")
         results = check_v8_funnel(now_ts=1_000_000.0, funnel_path=self.path)
         self.assertEqual(results[0].status, STATUS_UNKNOWN)
+
+    def test_pre_deploy_telegram_received_rows_are_not_flagged(self):
+        """Regression for a real bug caught live by Layer 2's first
+        automatic audit the morning after V8-REWIRE deployed: old
+        telegram_received rows written before v8_fork_entered existed as
+        a stage were flagged CRITICAL forever, since that stage could
+        never retroactively appear for them. min_ts_by_entry_stage (fed
+        from the same deploy-cutover stamp memecoin/v8_paper.py writes)
+        must exempt them."""
+        now = 1_000_000.0
+        deploy_ts = now - 300   # deploy happened 300s ago
+        events = [
+            # pre-deploy: old row, will never get v8_fork_entered -- must NOT be flagged
+            {"ts": now - 500, "stage": "telegram_received", "event_id": "old1", "mint": "M1"},
+            # post-deploy, past grace (200s > 120s grace) -- legitimately stuck, must still be flagged
+            {"ts": now - 200, "stage": "telegram_received", "event_id": "new1", "mint": "M2"},
+        ]
+        missing = find_missing_terminal_dispositions(
+            events, now_ts=now, grace_seconds=120,
+            min_ts_by_entry_stage={"telegram_received": deploy_ts},
+        )
+        offender_ids = {e["event_id"] for e in missing.get("telegram_received", [])}
+        self.assertNotIn("old1", offender_ids)
+        self.assertIn("new1", offender_ids)
+
+    def test_check_v8_funnel_reads_real_deploy_stamp_and_exempts_old_rows(self):
+        now = 1_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            stamp = Path(tmp) / "v8_rewire_deploy_ts.txt"
+            stamp.write_text(str(now - 100))
+            self._write([
+                {"ts": now - 500, "stage": "telegram_received", "event_id": "old1", "mint": "M1"},
+            ])
+            with patch("watchdog.checks.v8_funnel._v8_rewire_deploy_ts", return_value=now - 100):
+                results = check_v8_funnel(now_ts=now, funnel_path=self.path, grace_seconds=120)
+        self.assertEqual(results[0].status, STATUS_OK, results[0].reason)
+
+    def test_missing_deploy_stamp_does_not_crash_and_fails_toward_quiet(self):
+        """If the stamp is unreadable, min_ts_by_entry_stage ends up empty
+        -- old rows fall back to being checked against the invariant like
+        before this fix existed, which is the pre-fix (noisier) behavior,
+        not a crash. Documents the tradeoff explicitly rather than leaving
+        it implicit."""
+        now = 1_000_000.0
+        self._write([
+            {"ts": now - 500, "stage": "telegram_received", "event_id": "old1", "mint": "M1"},
+        ])
+        with patch("watchdog.checks.v8_funnel._v8_rewire_deploy_ts", return_value=None):
+            results = check_v8_funnel(now_ts=now, funnel_path=self.path, grace_seconds=120)
+        self.assertEqual(results[0].status, STATUS_CRITICAL)
 
     def test_malformed_lines_are_skipped_not_fatal(self):
         now = 1_000_000.0

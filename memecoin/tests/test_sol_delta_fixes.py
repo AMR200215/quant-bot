@@ -73,6 +73,18 @@ def _install_stubs():
 
 _install_stubs()
 
+# V8-REWIRE (2026-08-15): warm up the real target module once, while the
+# stub is active, then restore sys.modules immediately -- see
+# test_effective_hard_stop.py for the full writeup of why this (not
+# teardown_module) is the correct fix. Test methods below do their own
+# `import memecoin.tx_meta as tm`, which after this warm-up just hits the
+# sys.modules cache and never needs the stub again.
+import memecoin.tx_meta as _tx_meta_warmup  # noqa: F401
+
+for _name in ("memecoin.config", "memecoin.pumpportal_monitor", "memecoin.pumpswap_local",
+              "memecoin.exit_router", "memecoin.execution_rpc"):
+    sys.modules.pop(_name, None)
+
 
 # ---------------------------------------------------------------------------
 # A: read_sol_delta retry — null twice then valid
