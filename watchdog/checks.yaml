@@ -157,3 +157,21 @@ layer2:
     runbook: |
       cat logs/watchdog/layer2_heartbeat.json 2>/dev/null || echo "no heartbeat yet"
       gh run list --workflow=layer2-audit.yml --limit 5  # once the workflow exists
+
+# V8-FD Phase 1.5 (P15-7): research path-collection yield, the data
+# full-strategy EV (FD14/FD15/FD17) depends on. Root-caused live: the
+# daily PumpPortal message budget gets exceeded most days, silently
+# dropping newly-scheduled tokens for the rest of the UTC day. WARN, not
+# CRITICAL -- known, cost-bounded constraint (raising the budget spends
+# real SOL, a user decision), not a code bug. The more severe zero-ticks-
+# all-day case already pages via research/peak_tracker.py's own
+# send_alert-based FAIL, independent of this check.
+path_collection:
+  - id: daily_yield
+    description: "research path-collection daily yield vs PumpPortal message budget"
+    stale_threshold_hours: 30
+    severity: WARN
+    profile: slow
+    runbook: |
+      cat logs/watchdog/path_collection_daily.json 2>/dev/null || echo "no status yet"
+      journalctl -u quantbot-research --since "-25h" | grep "PeakTracker DAY REPORT"

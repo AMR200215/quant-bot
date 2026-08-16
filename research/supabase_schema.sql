@@ -109,6 +109,26 @@ DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN progress_schema_version INT; 
 CREATE INDEX IF NOT EXISTS idx_rt_event_id ON research_tokens (event_id);
 -- ── END MIGRATION ─────────────────────────────────────────────────────────────
 
+-- ── V8-FD Phase 1.5 (P15-4) migration (2026-08-16) ─────────────────────────────
+-- V8's real live gate (memecoin/v8_paper.py:passes_v8_gate) checks
+-- progress_at_signal < 0.70 AND venue_state_at_signal == CURVE_ACTIVE (added
+-- V8-TWIN-FIX VF2, memecoin/progress_capture.py). The venue half was never
+-- persisted to Supabase -- Phase 1's data audit found this by trying to
+-- query it and getting "column research_tokens.venue_state_at_signal does
+-- not exist". research/tracker.py now writes it from the SAME canonical
+-- ProgressCapture result already used for progress_at_signal (no new
+-- measurement, no separate capture path) -- but the column must exist
+-- before it lands anywhere. Same manual-application requirement as every
+-- prior migration in this file (no DDL-execution path from application
+-- code). Until applied, PGRST204 retry-and-strip degrades this the same
+-- way it always has -- silently dropped, not broken. This migration is
+-- FORWARD-ONLY: historical rows before this column exists stay NULL/
+-- UNKNOWN permanently. Do not attempt to backfill venue_state_at_signal
+-- for historical rows from dex_id or any other proxy -- dex_id is a
+-- proven-unreliable graduation signal (see research/v8_feature_registry.yaml).
+DO $$ BEGIN ALTER TABLE research_tokens ADD COLUMN venue_state_at_signal TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- ── END MIGRATION ─────────────────────────────────────────────────────────────
+
 CREATE TABLE IF NOT EXISTS research_tokens (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token_address           TEXT NOT NULL,

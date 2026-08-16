@@ -136,6 +136,10 @@ class PeakTracker:
         # unsubscribed mid-flight.
         self._pp_messages_today: int = 0
         self._pp_budget_alerted: bool = False
+        # V8-FD P15-5/P15-7: tokens whose scheduling was dropped outright
+        # because the daily PP message budget was already exhausted --
+        # previously untracked, see the _drain_pending() comment.
+        self._budget_dropped_today: int = 0
 
         # Concurrent-subscription sampling for p95 report
         self._sub_samples: list  = []   # list of int counts
@@ -304,7 +308,7 @@ class PeakTracker:
             p95 = int(quantiles(samples, n=100)[94]) if len(samples) >= 20 else max(samples)
             log.info(
                 "PeakTracker DAY REPORT %s | tokens_scheduled=%d path_files=%d "
-                "ticks=%d sub_p95=%d sub_peak=%d pp_messages=%d/%d",
+                "ticks=%d sub_p95=%d sub_peak=%d pp_messages=%d/%d budget_dropped=%d",
                 day_str,
                 scheduled,
                 self._path_files_today,
@@ -313,6 +317,7 @@ class PeakTracker:
                 max(samples),
                 self._pp_messages_today,
                 PP_DAILY_MSG_BUDGET,
+                self._budget_dropped_today,
             )
             if max(samples) >= 50:
                 log.warning(
@@ -321,6 +326,16 @@ class PeakTracker:
                 )
         else:
             log.info("PeakTracker DAY REPORT %s | no sub samples", day_str)
+
+        # V8-FD P15-7: durable, machine-readable daily status for the
+        # watchdog to consume (watchdog/checks/path_collection.py) --
+        # the send_alert-based deadman/FAIL below is real and already
+        # proven working, but isn't visible to the watchdog's own
+        # incident/debounce/digest system. This file is the bridge.
+        try:
+            self._write_daily_status_json(day_str, scheduled, samples)
+        except Exception as e:
+            log.debug("PeakTracker: daily status JSON write failed: %s", e)
 
         # Deadman: if scanner was active (≥20 signals) but paths are scarce
         if scheduled >= 20 and self._path_files_today < PATH_DEADMAN_MIN_FILES:
@@ -357,6 +372,34 @@ class PeakTracker:
                 send_alert(fail_msg)
             except Exception as al_err:
                 log.debug("PeakTracker FAIL alert failed: %s", al_err)
+
+    def _write_daily_status_json(self, day_str: str, scheduled: int, samples: list) -> None:
+        """V8-FD P15-7: durable status snapshot for
+        watchdog/checks/path_collection.py. Overwrites in place (one file,
+        most recent completed day) -- historical detail lives in the
+        journalctl DAY REPORT lines already, this is just a machine-
+        readable mirror of the same numbers plus the newly-tracked
+        budget_dropped count."""
+        path_files = self._path_files_today
+        yield_pct = round(100.0 * path_files / scheduled, 1) if scheduled > 0 else None
+        status = {
+            "day": day_str,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "tokens_scheduled": scheduled,
+            "path_files": path_files,
+            "ticks": self._ticks_today,
+            "pp_messages": self._pp_messages_today,
+            "pp_daily_msg_budget": PP_DAILY_MSG_BUDGET,
+            "budget_exceeded": self._pp_messages_today >= PP_DAILY_MSG_BUDGET,
+            "budget_dropped_tokens": self._budget_dropped_today,
+            "path_yield_pct": yield_pct,
+            "sub_peak": max(samples) if samples else 0,
+        }
+        out_path = Path(__file__).parent.parent / "logs" / "watchdog" / "path_collection_daily.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(status, indent=2))
+        tmp.replace(out_path)
 
     def _update_path_file_in_db(self, addr: str, rel_path: str):
         """Write path_file to Supabase. Runs in thread-pool executor."""
@@ -528,6 +571,21 @@ class PeakTracker:
                                 # Budget hit — drop pending tokens rather than
                                 # subscribing (already-tracked tokens keep running
                                 # to their natural expiry; see alert in _recv()).
+                                # V8-FD P15-5/P15-7: `new` already came out of
+                                # self._pending (cleared above) -- these tokens
+                                # are not deferred, they are gone, permanently,
+                                # for the rest of the UTC day. Previously
+                                # uncounted -- this is the concrete, confirmed
+                                # root cause of the low path-file-yield rate
+                                # (research/v8_clean_cohort.py's KNOWN_GAPS /
+                                # docs/RECEIPTS.md's Phase 1.5 section): real
+                                # production days show pp_messages exceeding
+                                # PP_DAILY_MSG_BUDGET by 23-48%, and the budget
+                                # getting hit as early as 04:15 UTC on some
+                                # days, after which every newly-scheduled token
+                                # for the remaining ~20h gets silently dropped
+                                # here with zero record of it happening.
+                                self._budget_dropped_today += len(new)
                                 continue
                             for addr in new:
                                 try:
@@ -667,6 +725,7 @@ class PeakTracker:
                 self._ticks_today = 0
                 self._pp_messages_today = 0
                 self._pp_budget_alerted = False
+                self._budget_dropped_today = 0
                 self._today_date = current_date
 
     # ── Supabase write ────────────────────────────────────────────────────────

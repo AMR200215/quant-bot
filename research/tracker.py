@@ -398,6 +398,20 @@ class Tracker:
             _pp_extras["progress_status"]          = _progress.get("progress_status")
             _pp_extras["progress_data_ok"]         = _progress.get("progress_status") == "ok"
             _pp_extras["progress_schema_version"]  = 1
+            # V8-FD P15-4: same canonical ProgressCapture result, not a new
+            # measurement -- V8's real live gate checks this field
+            # (memecoin/v8_paper.py:passes_v8_gate) but it was never
+            # persisted here, so the historical clean cohort could only
+            # ever replicate half of V8's real rule. Written unconditionally
+            # once a capture exists (defaults to "UNKNOWN" on the dataclass
+            # itself if venue couldn't be determined -- never fabricated
+            # here). Requires the venue_state_at_signal column to actually
+            # exist in Supabase (research/supabase_schema.sql's P15-4
+            # migration block, applied manually -- this repo has no DDL-
+            # execution path from application code); until applied, the
+            # existing PGRST204 retry-and-strip logic drops it silently,
+            # same degraded-not-broken behavior as every prior migration.
+            _pp_extras["venue_state_at_signal"]    = _progress.get("venue_state_at_signal")
         else:
             _pp_extras["progress_status"]  = "capture_missing"   # never arrived in time
             _pp_extras["progress_data_ok"] = False

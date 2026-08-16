@@ -60,3 +60,19 @@ logs/watchdog/runner.lock
 logs/v8_funnel.jsonl
 logs/watchdog/v8_rewire_deploy_ts.txt
 *.log
+
+# V8-FD Phase 1.5 (P15-6): logs/research_paths/ was deliberately left
+# untracked-but-NOT-ignored in the VR22 pass above, reasoning it was
+# "real research data" -- but that conflated two separate questions.
+# Gitignoring a path does not delete it or make it less usable (it lives
+# on VPS disk, read by research/analysis/*.py directly, never via git
+# history) -- it only protects it from git-native destructive operations
+# (git stash -u, git clean) the same way VR22 already protected
+# logs/v8_funnel.jsonl for the identical reason. This directory holds
+# per-token trade-path CSVs (research/peak_tracker.py) that full-strategy
+# EV directly depends on (FD14/FD15) -- exactly the kind of untracked,
+# not-ignored, high-value data that has already been silently lost once
+# this session (see the RECEIPTS git-stash-u data-loss entries). Whether
+# any of it should ALSO be git-tracked long-term remains the separate,
+# bigger decision VR22 deferred -- this only closes the stash-safety gap.
+logs/research_paths/

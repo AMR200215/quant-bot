@@ -123,5 +123,49 @@ class TestCleanCohortManifest(unittest.TestCase):
                 self.assertIn(key, g)
 
 
+class TestPhase15Corrections(unittest.TestCase):
+    """P15-1/P15-2/P15-3: the follow-up corrections must actually be
+    present and internally consistent, not just prose in a docstring."""
+
+    def test_candidate0_progress_half_is_a_positive_int_not_hardcoded_to_one_bucket(self):
+        from research import v8_clean_cohort as cc
+        self.assertIsInstance(cc.CANDIDATE0_PROGRESS_HALF_N, int)
+        self.assertGreater(cc.CANDIDATE0_PROGRESS_HALF_N, 1,
+            "must be the sum of <50% and 50-70%, not just the 50-70% bucket alone")
+
+    def test_candidate0_full_gate_historical_n_is_explicitly_unknown(self):
+        """venue_state_at_signal isn't persisted historically -- this must
+        stay None (never fabricated), per P15-4's explicit instruction."""
+        from research import v8_clean_cohort as cc
+        self.assertIsNone(cc.CANDIDATE0_FULL_GATE_HISTORICAL_N)
+
+    def test_clean_cohort_date_range_is_distinct_from_overall_table_range(self):
+        from research import v8_clean_cohort as cc
+        rng = cc.CLEAN_COHORT_DATE_RANGE
+        self.assertIn("min_alert_time", rng)
+        self.assertIn("max_alert_time", rng)
+        self.assertIn("unique_calendar_days", rng)
+        # the overall table spans ~2 months (Jun21-Aug15); the clean
+        # cohort must NOT claim that same span -- it's a much narrower window
+        self.assertLess(rng["unique_calendar_days"], 30)
+
+    def test_progress_policy_candidates_include_p0_through_p3_and_no_dense_grid(self):
+        from research import v8_clean_cohort as cc
+        ids = {c["id"] for c in cc.PROGRESS_POLICY_CANDIDATES}
+        self.assertEqual(ids, {"P0", "P1", "P2", "P3"})
+        # explicitly NOT a fine-grained threshold sweep (FD8's anti-fishing rule)
+        self.assertLessEqual(len(cc.PROGRESS_POLICY_CANDIDATES), 6)
+
+    def test_p2_matches_current_candidate0_threshold(self):
+        from research import v8_clean_cohort as cc
+        p2 = next(c for c in cc.PROGRESS_POLICY_CANDIDATES if c["id"] == "P2")
+        self.assertIn("0.70", p2["rule"])
+
+    def test_p15_9_precondition_constants_exist(self):
+        from research import v8_clean_cohort as cc
+        self.assertIsInstance(cc.ENGINE_DESIGN_READY_MEANS, str)
+        self.assertIsInstance(cc.SELECTION_DATA_READY_MEANS, str)
+
+
 if __name__ == "__main__":
     unittest.main()

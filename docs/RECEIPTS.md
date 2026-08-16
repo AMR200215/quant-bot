@@ -2860,3 +2860,229 @@ that clear. No filter was ranked, no threshold was picked, no holdout
 was touched, and `memecoin/v8_paper.py` was not modified. Per the user's
 explicit phase-gate instruction, this stops here for review before
 Phase 2 (experiment design + analysis engine) begins.
+
+## V8-FILTER-DERIVATION — Phase 1.5: Correct Interpretation + Stop Future Data Loss
+
+Two Phase 1 interpretation corrections, one forward-persistence fix, and
+one root-caused (not just discovered) data gap. Same scope lock as
+Phase 1: no filter ranked, no holdout touched, no change to V8's live
+gate or V7/live trading.
+
+### P15-1 — the `<70` sample count was mis-stated, now corrected
+
+Phase 1's receipt said "the bucket V8's own gate is built to trade in
+has 1 row" — wrong: candidate-0's actual rule is `progress<0.70`, which
+is `<50%` **plus** `50–70%`, not the 50–70% bucket alone. Re-verified
+live the next day (data has grown by one day, as expected):
+`<50%=47, 50–70%=1, combined=48` (confirmed via both the summed query
+and a direct single `<0.70` query). `candidate0_progress_half_n = 48`.
+
+**Deliberately not overcorrected**: `candidate0_full_gate_historical_n`
+(progress<0.70 AND venue_state==CURVE_ACTIVE, the actual full V8 rule)
+remains `UNKNOWN` — `venue_state_at_signal` still wasn't persisted
+historically at the moment this was checked (fixed going forward, see
+P15-4 below), and is never inferred from `dex_id` (proven unreliable).
+
+### P15-2 — the clean cohort's real date range
+
+The Jun 21 – Aug 15 range in Phase 1's receipt described the overall
+33,120-row table, not the 895/904-row clean cohort. Queried the clean
+cohort's own `alert_time` range directly: **2026-08-03 to 2026-08-16 —
+14 calendar days, not two months.** Within that, the `progress<70` rows
+(48 total) are concentrated in just 7 of those 14 days
+(2026-08-09 through 2026-08-15); the first 6 days have zero `<70` rows
+at all. The real regime coverage behind the progress<70 candidate is
+closer to one continuous week than two months of independent regimes —
+a materially different (and worse) picture than the original date range
+implied.
+
+| Day | all clean | <50 | 50-70 | <70 | <85 | <90 |
+|---|---|---|---|---|---|---|
+| 08-03 | 3 | 0 | 0 | 0 | 2 | 2 |
+| 08-04 | 16 | 0 | 0 | 0 | 5 | 13 |
+| 08-05 | 4 | 0 | 0 | 0 | 1 | 1 |
+| 08-06 | 8 | 0 | 0 | 0 | 5 | 8 |
+| 08-07 | 4 | 0 | 0 | 0 | 2 | 3 |
+| 08-08 | 6 | 0 | 0 | 0 | 4 | 6 |
+| 08-09 | 148 | 7 | 0 | 7 | 61 | 101 |
+| 08-10 | 164 | 7 | 0 | 7 | 71 | 118 |
+| 08-11 | 123 | 11 | 0 | 11 | 60 | 94 |
+| 08-12 | 150 | 7 | 0 | 7 | 61 | 112 |
+| 08-13 | 118 | 6 | 0 | 7 | 52 | 88 |
+| 08-14 | 119 | 7 | 0 | 7 | 44 | 88 |
+| 08-15 | 33 | 2 | 0 | 2 | 15 | 27 |
+| 08-16 | 8 (partial day) | 0 | 0 | 0 | 4 | 6 |
+
+### P15-3 — `progress<0.70` is documented as a scaffold, not a frozen constraint
+
+Added explicitly to `research/v8_clean_cohort.py`: candidate-0's
+threshold is inherited from the original 2026-07-30 spec (see this
+doc's V8-REWIRE section for the full provenance trace) and was never
+derived from data. Phase 2's bounded candidate registry must evaluate,
+subject to sample/readiness: **P0** (no cutoff beyond valid
+CURVE_ACTIVE) / **P1** (<0.50) / **P2** (<0.70, current candidate-0) /
+**P3** (<0.85). Any threshold beyond these four needs a genuine
+prior/domain rationale, decided before any holdout is touched.
+
+### P15-4 — `venue_state_at_signal` forward persistence
+
+`research/tracker.py` now writes `venue_state_at_signal` from the exact
+same canonical `ProgressCapture` result already used for
+`progress_at_signal`/`vsol_at_signal` — no new measurement, confirmed
+via `dataclasses.asdict()` that the field was already in the JSONL,
+tracker.py just wasn't copying it into the Supabase row. Migration SQL
+added to `research/supabase_schema.sql`, following the exact pattern of
+every prior migration in that file.
+
+**This repo has no DDL-execution path from application code** (confirmed
+by the file's own PF8-migration precedent: PostgREST-only
+`SUPABASE_URL`/`SUPABASE_KEY`, no `DATABASE_URL`) — the column cannot be
+created by me. Until the SQL is run manually via the Supabase SQL
+editor, the existing PGRST204 retry-and-strip logic degrades this the
+same way every prior migration has degraded (silently dropped, not
+broken) — **code is deployed and safe either way**. The "receipt one
+fresh real production row" requirement from the task is blocked on this
+external, one-time manual step — flagged directly to the user rather
+than silently skipped or fabricated.
+
+### P15-5 — `PATH_VOLUME_GAP_UNEXPLAINED`, root-caused
+
+Checked `journalctl -u quantbot` first and found zero PeakTracker log
+lines — wrong service. `research/main.py` runs as its own systemd unit,
+`quantbot-research.service`, entirely separate from `quantbot.service`.
+`peak_tracker.py` already has its own daily funnel instrumentation
+(`tokens_scheduled_today`, `path_files_today`, `ticks_today`, logged as
+"PeakTracker DAY REPORT" at every UTC rollover, plus an existing
+`send_alert`-based deadman/FAIL mechanism) — real historical data pulled
+directly from `quantbot-research`'s journal:
+
+| Day | scheduled | path_files | yield% | ticks | pp_messages/budget | deadman fired |
+|---|---|---|---|---|---|---|
+| 08-13 | 660 | 555 | 84.1% | 30,715 | 74,117/50,000 | no |
+| 08-14 | 161 | 22 | 13.7% | 41,165 | 63,333/50,000 | yes |
+| 08-15 | 128 | 27 | 21.1% | 41,064 | 61,390/50,000 | yes |
+
+**Confirmed root cause**: `PP_DAILY_MSG_BUDGET` (50,000/day) is exceeded
+on every observed real day (23-48% over). Once hit,
+`research/peak_tracker.py:_drain_pending()` explicitly drops every
+newly-scheduled token for the rest of the UTC day — confirmed live
+today: the budget was hit at **04:15 UTC**, meaning ~20 hours of that
+day get zero new path tracking. 08-13's much higher yield despite also
+exceeding budget is consistent with this: what matters is *when in the
+day* the budget gets consumed, not just whether it's exceeded — a small
+number of very high-tick-volume tokens can exhaust the whole day's
+budget early, locking out everything scheduled afterward.
+
+**A second, previously uncounted bug found in the same code path**: when
+budget is hit, `_drain_pending()` calls `continue` on tokens it had
+already dequeued from `self._pending` — those tokens are not delayed or
+retried, they are **silently and permanently dropped**, with zero record
+anywhere that it happened. Fixed: added `_budget_dropped_today`,
+incremented at the exact drop site, included in the DAY REPORT log line
+and a new machine-readable daily snapshot.
+
+**Separate, unresolved observation, not chased further**: 08-13's
+`tokens_scheduled=660` doesn't match that day's `research_tokens` insert
+count (159, by `alert_time`) — 08-14 and 08-15 match their insert counts
+exactly (161↔161, 128↔128). Flagged honestly as unexplained rather than
+guessed at; doesn't affect the budget-exhaustion root cause, which is
+independently confirmed via direct log evidence on 3 different days.
+
+### P15-6 — path file durability
+
+No logrotate, cron, or systemd-tmpfiles rule touches
+`logs/research_paths/` — checked directly, none found. Daily rotation is
+peak_tracker's own gzip-in-place (never deletes). The real risk was the
+same one already found and partially fixed this session: this directory
+was deliberately left **untracked but NOT gitignored** in the V8-REWIRE
+VR22 pass, reasoning it was "real data" — but that conflated two
+questions. Gitignoring doesn't delete or devalue data living on VPS
+disk; it only removes it from `git stash -u`'s blast radius, the exact
+mechanism that already destroyed real telemetry once this session.
+Added `logs/research_paths/` to `.gitignore`, consistent with VR22's own
+treatment of `logs/v8_funnel.jsonl`. Confirmed zero currently-tracked
+files under that path before adding the rule (pure protective change,
+touches no existing data).
+
+### P15-7 — path collection exposed to the watchdog
+
+New `watchdog/checks/path_collection.py`, reading a new daily JSON
+snapshot (`logs/watchdog/path_collection_daily.json`) written by
+`peak_tracker.py` at each UTC rollover. WARN ceiling, not CRITICAL —
+this is a known, cost-bounded constraint (raising `PP_DAILY_MSG_BUDGET`
+spends real SOL, a decision for the user) not a code bug; the more
+severe zero-ticks-all-day case already pages via `peak_tracker.py`'s own
+existing `send_alert` FAIL path, independent of this check. 8 new tests,
+registered in `checks.yaml`/`runner.py` following the exact
+`layer2_staleness` pattern.
+
+**Honest limitation**: this is code-complete and deployed, but "prove
+new collection over a fresh window" can't show *improved* yield yet —
+nothing about the root cause has been fixed, only counted and exposed.
+The actual fix (raise the budget, or reallocate it more fairly across
+tokens) is a real cost/config decision this phase does not make
+unilaterally. Live confirmation that the watchdog check itself fires
+correctly against real data will happen at tonight's UTC rollover — not
+yet observed as of this commit.
+
+### P15-8 — confirmed non-actions
+
+`creator_holds_pct`: **not repaired** — still 0% coverage, still
+excluded; Phase 1's classification stands. `smart_money` v1: **not
+reused or repaired** — `SMART_MONEY_NOT_ELIGIBLE_FOR_HISTORICAL_
+SELECTION` stands unchanged; any v2 is an explicitly separate future
+experiment. Both locked into `research/v8_clean_cohort.py` as explicit
+statements, not just implied by omission.
+
+### P15-9 — Phase 2 precondition split
+
+Documented in `research/v8_clean_cohort.py`: `ENGINE_DESIGN_READY`
+(methodology can be built/frozen now, independent of data sufficiency)
+is separated from `SELECTION_DATA_READY` (a specific candidate has
+enough representative, leakage-safe, path-backed evidence to support an
+actual decision — not currently true for anything beyond crude
+entry-only comparisons, given 48 rows over one real week and a few
+dozen representative path files). Phase 2 may proceed on the former;
+Phase 3 must not claim an absolute $/day number until the latter is
+separately true for whichever candidate is being evaluated.
+
+### Second automatic Layer 2 audit (2026-08-16 04:05 UTC)
+
+Fired on schedule, second time running (closes the "only observed via
+workflow_dispatch" caveat for good). 5 findings, all INFO/WARN, all
+"evidence bundle doesn't have enough detail to independently confirm
+this claim" rather than actual false claims — a real, structural
+limitation of Layer 2's forced-command evidence scope (git status
+summaries, not deep file enumeration), not a finding against this work.
+Spot-checked the one directly checkable claim (F5: was
+`memecoin/v8_paper.py` really untouched?) — confirmed clean, last
+modified by the V8-REWIRE commit, before Phase 1 even started.
+
+### Tests
+
+19 new tests this batch (11 P15-1/2/3/8/9 additions to
+`test_v8_fd_phase1_artifacts.py`'s existing file, 2 new in
+`test_tracker_progress.py`, 8 new in `test_path_collection.py`). Full
+combined suite: 667 passed (up from 652), same 7 pre-existing, unrelated
+failures.
+
+### Files changed
+
+`research/tracker.py`, `research/peak_tracker.py`,
+`research/supabase_schema.sql`, `research/v8_clean_cohort.py`,
+`.gitignore`, `watchdog/checks.yaml`, `watchdog/runner.py` (modified);
+`watchdog/checks/path_collection.py`,
+`watchdog/tests/test_path_collection.py` (new).
+
+### Phase 1.5 status: **`V8_FD_PHASE15_READY_PATH_GAP_OPEN`**
+
+Not plain `READY`: the path-volume gap is real, root-caused with direct
+log evidence (not guessed), and its fix is a genuine cost/config
+decision outside this phase's authority — exactly the condition under
+which `READY_PATH_GAP_OPEN` is the honest status per the task's own
+definition. Not `BLOCKED`: every other P15 item is closed, the gap is
+understood rather than mysterious, and Phase 2's engine-design work is
+not actually gated on this (P15-9). Two items need the user directly:
+the Supabase SQL migration (P15-4, no DDL path from code) and a real
+decision on `PP_DAILY_MSG_BUDGET` (P15-5/7, a SOL cost tradeoff). STOP
+for review before Phase 2, per the user's explicit instruction.

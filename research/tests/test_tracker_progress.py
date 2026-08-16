@@ -85,6 +85,32 @@ class TestEventIdPersistedForLiveRows(unittest.TestCase):
             "their progress_at_signal.")
 
 
+class TestVenueStatePersisted(unittest.TestCase):
+    """V8-FD Phase 1.5 (P15-4): venue_state_at_signal must be persisted
+    from the same canonical ProgressCapture result used for
+    progress_at_signal, written whenever a capture exists — not a new
+    measurement, not fabricated for historical rows."""
+
+    def test_insert_source_stores_venue_state_from_progress_dict(self):
+        src = Path(tracker.__file__).read_text()
+        self.assertIn(
+            '_pp_extras["venue_state_at_signal"]    = _progress.get("venue_state_at_signal")',
+            src,
+            "venue_state_at_signal must be read from the same _progress dict "
+            "as progress_at_signal/vsol_at_signal, not a separate capture path",
+        )
+
+    def test_venue_state_write_is_inside_the_if_progress_block(self):
+        """Must only ever be written when a real capture exists (never
+        default/fabricate a venue state for a row with no capture at all)."""
+        src = Path(tracker.__file__).read_text()
+        if_block_start = src.index("if _progress:")
+        else_block_start = src.index("else:", if_block_start)
+        venue_write_pos = src.index('_pp_extras["venue_state_at_signal"]')
+        self.assertTrue(if_block_start < venue_write_pos < else_block_start,
+            "venue_state_at_signal write must be inside the `if _progress:` block")
+
+
 class TestBackfillNeverUsesPresentDayState(unittest.TestCase):
     """PF13 #15 — PF10's historical recovery script must be pure path-file
     replay, never a live RPC / present-day curve lookup."""
