@@ -2945,6 +2945,22 @@ fresh real production row" requirement from the task is blocked on this
 external, one-time manual step — flagged directly to the user rather
 than silently skipped or fabricated.
 
+**Deployed and confirmed degrading correctly on real production data**,
+same day: restarted `quantbot-research.service`, then watched
+`research/spool/dropped_fields.jsonl` for a real event —
+
+```
+{"ts": "2026-08-16T21:21:39Z", "token_address": "HhD2MUy...", "symbol": "GrokTok",
+ "column": "venue_state_at_signal", "value": "GRADUATED", "source_file": "tracker.py",
+ "insert_context": "base_row", "alert_time": "2026-08-16T21:21:07Z"}
+```
+
+Real event, real venue-state value computed (`GRADUATED`), correctly
+spooled rather than silently dropped or failing the insert — proves the
+code path works exactly as designed, entirely independent of whether
+the column exists yet. Once the SQL migration is applied, this same
+value will land directly in the row instead of the spool.
+
 ### P15-5 — `PATH_VOLUME_GAP_UNEXPLAINED`, root-caused
 
 Checked `journalctl -u quantbot` first and found zero PeakTracker log
