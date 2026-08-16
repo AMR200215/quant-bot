@@ -100,6 +100,63 @@ def _should_extend(
     return True
 
 
+# ── V8-FD P16-3: budget-paced admission controller ────────────────────────────
+# Replaces "spend until PP_DAILY_MSG_BUDGET is hit, then silently and
+# permanently drop every later token for the rest of the UTC day" (the
+# confirmed root cause of P15-5's time-of-day selection bias) with a
+# pacing scheme that spreads admission chances evenly across all 24 UTC
+# hours. A naturalistic research sample must not be concentrated in
+# whichever hours happen to fire first each day.
+HOURS_PER_DAY = 24
+
+
+def _admission_probability(
+    messages_used_this_hour: float,
+    hourly_budget: float,
+    messages_used_today: float,
+    daily_budget: float,
+) -> float:
+    """
+    Pure function — testable without asyncio, no live state.
+
+    Inputs are ONLY pacing/budget signals (how much of this hour's and
+    today's message allowance has been consumed) — deliberately no
+    token identity, no progress_at_signal, no V7/V8 pass state, no
+    outcome data of any kind (P16-5/P16-6: naturalistic collection must
+    stay independent of the eventual strategy label, and admission must
+    be decidable before any outcome exists).
+
+    Returns a probability in [0, 1], not an admit/reject decision itself
+    — the caller draws its own random number so the probability that
+    was actually used is always available to record (P16-4: inclusion-
+    probability provenance for future inverse-probability weighting).
+
+    Semantics:
+      - Absolute daily ceiling (daily_budget) is a hard stop: 0.0 once
+        reached, regardless of hourly pace. This is the real, approved
+        cost ceiling (P16-2) — pacing must never cause it to be exceeded
+        by an unbounded amount.
+      - Within the daily ceiling, each UTC hour gets an equal share of
+        the budget (hourly_budget = daily_budget / 24 — deterministic,
+        no time-of-day preference of its own). Under that hour's pace:
+        admit freely (1.0).
+      - Over that hour's pace: probability decays smoothly as
+        hourly_budget / messages_used_this_hour rather than cliffing to
+        0 — every hour keeps SOME admission chance even under heavy
+        load, which is the direct fix for the old behavior. At 2x pace,
+        ~50% chance; at 4x, ~25%; approaches but never quite reaches 0
+        for any finite overage (the daily hard stop is what actually
+        reaches 0).
+    """
+    if daily_budget <= 0 or messages_used_today >= daily_budget:
+        return 0.0
+    if hourly_budget <= 0:
+        return 0.0
+    if messages_used_this_hour < hourly_budget:
+        return 1.0
+    return max(0.0, min(1.0, hourly_budget / messages_used_this_hour))
+
+
 class PeakTracker:
     """
     Runs an asyncio loop in its own daemon thread.
@@ -140,6 +197,19 @@ class PeakTracker:
         # because the daily PP message budget was already exhausted --
         # previously untracked, see the _drain_pending() comment.
         self._budget_dropped_today: int = 0
+
+        # V8-FD P16-3/P16-5: hour-paced admission + hourly funnel stats.
+        # _hourly_stats persists for the whole UTC day (reset at daily
+        # rollover, same as the other _today counters above) -- only
+        # _messages_this_hour resets on the hour. Accessed from both the
+        # tracker thread (schedule_token, read-only path_eligible count
+        # via the admission log, not this dict) and the asyncio loop
+        # thread (_recv/_drain_pending/_write_peak) -- kept to simple
+        # dict/int mutations under the GIL, same non-locking assumption
+        # the pre-existing _tokens_scheduled_today counter already makes.
+        self._current_hour: int = -1              # forces first-touch init
+        self._messages_this_hour: int = 0
+        self._hourly_stats: dict[int, dict] = {}   # hour(0-23) -> counters
 
         # Concurrent-subscription sampling for p95 report
         self._sub_samples: list  = []   # list of int counts
@@ -194,6 +264,12 @@ class PeakTracker:
                 "valid_tick_count":     0,
                 "disconnection_periods": [],
                 "ws_connected":         True,
+                # V8-FD P16-5: set once the admission decision is made
+                # (_drain_pending) -- attributes this token's eventual
+                # tick/usable-path stats to the UTC hour it was SAMPLED
+                # in, not whichever hour it happens to finalise in (a
+                # session can run up to 60 minutes).
+                "admission_hour":       None,
             }
         with self._pending_lock:
             self._pending.append(token_address)
@@ -243,6 +319,42 @@ class PeakTracker:
         if sol_amt and token_amt and float(token_amt) > 0:
             return (float(sol_amt) / float(token_amt)) * self._sol_price
         return None
+
+    # ── V8-FD P16-3/P16-4/P16-5: admission pacing + hourly stats ──────────────
+
+    def _hour_bucket(self, hour: int) -> dict:
+        """Lazily initialise and return this UTC hour's stat bucket.
+        Persists for the whole day (reset only at daily rollover)."""
+        b = self._hourly_stats.get(hour)
+        if b is None:
+            b = {
+                "path_eligible": 0, "path_admitted": 0, "subscriptions_started": 0,
+                "ticks_ge1": 0, "ticks_ge2": 0, "usable_paths": 0, "budget_messages": 0,
+            }
+            self._hourly_stats[hour] = b
+        return b
+
+    def _maybe_roll_hour(self, now: float) -> int:
+        """Resets the hourly message counter on a real UTC hour change.
+        Does NOT touch _hourly_stats (that's daily-scoped). Returns the
+        current hour. Called from the asyncio thread only."""
+        hour = datetime.fromtimestamp(now, tz=timezone.utc).hour
+        if hour != self._current_hour:
+            self._current_hour = hour
+            self._messages_this_hour = 0
+        return hour
+
+    def _write_admission_log(self, entry: dict) -> None:
+        """V8-FD P16-4: one line per admission decision. Append-only,
+        same spool-file pattern as research/spool/*.jsonl -- never
+        blocks/raises into the caller."""
+        try:
+            out_dir = Path(__file__).parent.parent / "logs" / "research_admission"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            with open(out_dir / "admission_log.jsonl", "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            log.debug("PeakTracker: admission log write failed: %s", e)
 
     def _open_csv(self, addr: str) -> str:
         """
@@ -374,14 +486,35 @@ class PeakTracker:
                 log.debug("PeakTracker FAIL alert failed: %s", al_err)
 
     def _write_daily_status_json(self, day_str: str, scheduled: int, samples: list) -> None:
-        """V8-FD P15-7: durable status snapshot for
+        """V8-FD P15-7/P16-5: durable status snapshot for
         watchdog/checks/path_collection.py. Overwrites in place (one file,
         most recent completed day) -- historical detail lives in the
         journalctl DAY REPORT lines already, this is just a machine-
-        readable mirror of the same numbers plus the newly-tracked
-        budget_dropped count."""
+        readable mirror plus the P16 hourly breakdown (P16-5's direct
+        answer to "is the sample concentrated in a narrow part of the
+        day"), which has no other durable home."""
         path_files = self._path_files_today
         yield_pct = round(100.0 * path_files / scheduled, 1) if scheduled > 0 else None
+
+        hourly = []
+        for h in range(HOURS_PER_DAY):
+            b = self._hourly_stats.get(h, {})
+            eligible = b.get("path_eligible", 0)
+            admitted = b.get("path_admitted", 0)
+            usable = b.get("usable_paths", 0)
+            hourly.append({
+                "utc_hour": h,
+                "path_eligible": eligible,
+                "path_admitted": admitted,
+                "subscriptions_started": b.get("subscriptions_started", 0),
+                "ticks_ge1": b.get("ticks_ge1", 0),
+                "ticks_ge2": b.get("ticks_ge2", 0),
+                "usable_paths": usable,
+                "budget_messages": b.get("budget_messages", 0),
+                "admission_rate_pct": round(100.0 * admitted / eligible, 1) if eligible else None,
+                "usable_path_yield_pct": round(100.0 * usable / admitted, 1) if admitted else None,
+            })
+
         status = {
             "day": day_str,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -394,6 +527,7 @@ class PeakTracker:
             "budget_dropped_tokens": self._budget_dropped_today,
             "path_yield_pct": yield_pct,
             "sub_peak": max(samples) if samples else 0,
+            "hourly": hourly,
         }
         out_path = Path(__file__).parent.parent / "logs" / "watchdog" / "path_collection_daily.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -489,20 +623,25 @@ class PeakTracker:
                                 if not mint:
                                     continue
                                 self._pp_messages_today += 1
+                                _hr = self._maybe_roll_hour(time.time())
+                                self._messages_this_hour += 1
+                                self._hour_bucket(_hr)["budget_messages"] += 1
                                 if (self._pp_messages_today >= PP_DAILY_MSG_BUDGET
                                         and not self._pp_budget_alerted):
                                     self._pp_budget_alerted = True
                                     log.warning(
                                         "PeakTracker: PumpPortal daily message budget "
-                                        "(%d) reached — pausing new subscriptions until "
-                                        "UTC rollover", PP_DAILY_MSG_BUDGET,
+                                        "(%d) reached — new admissions stop entirely "
+                                        "for the rest of the UTC day (hard ceiling; "
+                                        "see V8-FD P16-3 hourly pacing for the softer "
+                                        "within-day throttling)", PP_DAILY_MSG_BUDGET,
                                     )
                                     try:
                                         from app.alerts import send_alert as _sa
                                         _sa(
                                             f"PeakTracker: PumpPortal daily message budget "
                                             f"({PP_DAILY_MSG_BUDGET}) reached — new research "
-                                            f"subscriptions paused until UTC rollover."
+                                            f"admissions stopped until UTC rollover."
                                         )
                                     except Exception:
                                         pass
@@ -560,39 +699,87 @@ class PeakTracker:
                                 pass
 
                     async def _drain_pending():
-                        """Subscribe new tokens as they arrive from schedule_token()."""
+                        """Subscribe new tokens as they arrive from schedule_token().
+
+                        V8-FD P16-3: admission is now hour-paced rather than
+                        first-come-until-cap. Every pending token gets an
+                        admission decision AND a logged record (P16-4) --
+                        "budget pressure" now means a lower admission
+                        PROBABILITY, sampled rather than a hard drop, except
+                        at the absolute daily ceiling (still a real 0%, since
+                        that ceiling is the actual approved cost bound)."""
+                        import random as _random
                         loop = asyncio.get_event_loop()
                         while True:
                             await asyncio.sleep(0.3)
                             with self._pending_lock:
                                 new = list(self._pending)
                                 self._pending.clear()
-                            if self._pp_messages_today >= PP_DAILY_MSG_BUDGET:
-                                # Budget hit — drop pending tokens rather than
-                                # subscribing (already-tracked tokens keep running
-                                # to their natural expiry; see alert in _recv()).
-                                # V8-FD P15-5/P15-7: `new` already came out of
-                                # self._pending (cleared above) -- these tokens
-                                # are not deferred, they are gone, permanently,
-                                # for the rest of the UTC day. Previously
-                                # uncounted -- this is the concrete, confirmed
-                                # root cause of the low path-file-yield rate
-                                # (research/v8_clean_cohort.py's KNOWN_GAPS /
-                                # docs/RECEIPTS.md's Phase 1.5 section): real
-                                # production days show pp_messages exceeding
-                                # PP_DAILY_MSG_BUDGET by 23-48%, and the budget
-                                # getting hit as early as 04:15 UTC on some
-                                # days, after which every newly-scheduled token
-                                # for the remaining ~20h gets silently dropped
-                                # here with zero record of it happening.
-                                self._budget_dropped_today += len(new)
+                            if not new:
                                 continue
+
+                            now_ts = time.time()
+                            hour = self._maybe_roll_hour(now_ts)
+                            hourly_budget = PP_DAILY_MSG_BUDGET / HOURS_PER_DAY
+                            bucket = self._hour_bucket(hour)
+
+                            admitted, rejected = [], []
                             for addr in new:
+                                bucket["path_eligible"] += 1
+                                prob = _admission_probability(
+                                    messages_used_this_hour=self._messages_this_hour,
+                                    hourly_budget=hourly_budget,
+                                    messages_used_today=self._pp_messages_today,
+                                    daily_budget=PP_DAILY_MSG_BUDGET,
+                                )
+                                draw = _random.random()
+                                is_admitted = draw < prob
+                                if self._pp_messages_today >= PP_DAILY_MSG_BUDGET:
+                                    reason = "daily_cap_hard_stop"
+                                elif prob >= 1.0:
+                                    reason = "under_hourly_pace"
+                                elif is_admitted:
+                                    reason = "sampled_admit"
+                                else:
+                                    reason = "sampled_reject"
+                                self._write_admission_log({
+                                    "ts": now_ts, "token_address": addr, "utc_hour": hour,
+                                    "path_eligible": True, "path_admitted": is_admitted,
+                                    "path_sampling_probability": round(prob, 6),
+                                    "admission_reason": reason,
+                                    "budget_used": self._pp_messages_today,
+                                    "budget_remaining": max(0, PP_DAILY_MSG_BUDGET - self._pp_messages_today),
+                                })
+                                if is_admitted:
+                                    bucket["path_admitted"] += 1
+                                    with self._lock:
+                                        st = self._tracked.get(addr)
+                                        if st is not None:
+                                            st["admission_hour"] = hour
+                                    admitted.append(addr)
+                                else:
+                                    rejected.append(addr)
+
+                            # V8-FD P16-3: rejected tokens are a recorded
+                            # SAMPLING decision (probability logged above),
+                            # not the old silent-and-permanent drop -- but
+                            # they still don't get subscribed this cycle.
+                            # Distinct counter from the pre-P16 hard-drop
+                            # count, which only fires at the absolute daily
+                            # ceiling now.
+                            if rejected:
+                                self._budget_dropped_today += sum(
+                                    1 for a in rejected
+                                    if self._pp_messages_today >= PP_DAILY_MSG_BUDGET
+                                )
+
+                            for addr in admitted:
                                 try:
                                     await ws.send(json.dumps({
                                         "method": "subscribeTokenTrade",
                                         "keys": [addr],
                                     }))
+                                    bucket["subscriptions_started"] += 1
                                     # Open CSV (asyncio thread) then update DB in executor
                                     rel_path = self._open_csv(addr)
                                     await loop.run_in_executor(
@@ -726,11 +913,34 @@ class PeakTracker:
                 self._pp_messages_today = 0
                 self._pp_budget_alerted = False
                 self._budget_dropped_today = 0
+                self._hourly_stats = {}
+                self._messages_this_hour = 0
+                self._current_hour = -1
                 self._today_date = current_date
 
     # ── Supabase write ────────────────────────────────────────────────────────
 
     def _write_peak(self, addr: str, st: dict):
+        # V8-FD P16-5: attribute this token's terminal tick/usable-path
+        # stats to the UTC hour it was ADMITTED in (not whichever hour
+        # finalisation happens to land in -- a session can run up to 60
+        # minutes past admission). Pure local bookkeeping, so this runs
+        # regardless of Supabase connectivity, unlike the write below.
+        # Known limitation, same class as the pre-existing _ticks_today
+        # daily reset: a token admitted just before UTC midnight and
+        # finalising after rollover has its hourly attribution lost along
+        # with that day's _hourly_stats -- not a new regression, the
+        # existing daily counters already have this exact edge case.
+        admission_hour = st.get("admission_hour")
+        if admission_hour is not None:
+            bucket = self._hour_bucket(admission_hour)
+            ticks = st.get("valid_tick_count", 0)
+            if ticks >= 1:
+                bucket["ticks_ge1"] += 1
+            if ticks >= 2:
+                bucket["ticks_ge2"] += 1
+                bucket["usable_paths"] += 1   # P15-7's own bar: a header-only or single-tick file doesn't count
+
         if not self._sb:
             return
 

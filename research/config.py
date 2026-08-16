@@ -127,10 +127,21 @@ PP_WS_URL           = (
 )
 
 # Daily message budget for research's PumpPortal subscription (metered:
-# 0.01 SOL / 10,000 messages as of 2026-08). 50,000 msgs/day ~= 0.05 SOL,
-# conservatively under $4/day even if SOL price moves up from ~$74.
-# New token subscriptions pause for the rest of the UTC day once hit.
-PP_DAILY_MSG_BUDGET = 50_000
+# 0.01 SOL / 10,000 messages as of 2026-08). Raised 50,000 -> 100,000
+# (2026-08-17, user-approved, RESEARCH COLLECTOR ONLY -- confirmed this
+# constant has zero shared usage with memecoin/pumpportal_monitor.py's
+# live-trading path, which has its own separate SCREENING_DAILY_SUB_BUDGET).
+# 100,000 msgs/day ~= 0.1 SOL, still low single-digit $/day even at
+# elevated SOL prices. Real production days (V8-FD Phase 1.5) showed
+# 50k exceeded by 23-48% every day -- this is a temporary, explicitly
+# non-final config change (V8-FD P15/P16): admission is now paced across
+# the UTC day (see PeakTracker._admission_probability) rather than
+# first-come-until-cap, specifically so raising the ceiling doesn't just
+# relocate the same early-day exhaustion problem to a later hour. Do NOT
+# auto-raise again if 100k still proves insufficient -- run this
+# configuration for several real days and report demand/consumption/yield
+# before any further change (P16-8).
+PP_DAILY_MSG_BUDGET = 100_000
 
 # Trade-path persistence (PC1)
 RESEARCH_PATHS_DIR      = Path(__file__).parent.parent / "logs" / "research_paths"
