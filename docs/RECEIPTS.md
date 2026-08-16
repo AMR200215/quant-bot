@@ -3102,3 +3102,164 @@ not actually gated on this (P15-9). Two items need the user directly:
 the Supabase SQL migration (P15-4, no DDL path from code) and a real
 decision on `PP_DAILY_MSG_BUDGET` (P15-5/7, a SOL cost tradeoff). STOP
 for review before Phase 2, per the user's explicit instruction.
+
+## V8-FILTER-DERIVATION — Phase 1.6: Collection Hardening + Phase 2 Foundations
+
+Approved: `PP_DAILY_MSG_BUDGET` 50,000 → 100,000 (research collector
+only) plus a hardening requirement — replace first-come-until-cap
+admission with representative, budget-paced sampling before Phase 2
+begins in earnest. Phase 2's foundational (data-volume-independent)
+work explicitly authorized to proceed in parallel.
+
+### P16-1 — `venue_state_at_signal`: still not landing, likely PostgREST schema cache
+
+The user applied `ALTER TABLE research_tokens ADD COLUMN venue_state_at_
+signal TEXT;`. Checked repeatedly over ~2 hours (23:35 UTC, 22:35 UTC
+next check, and again just before this receipt) — still getting `column
+research_tokens.venue_state_at_signal does not exist` on every attempt,
+and `research/spool/dropped_fields.jsonl` is still receiving real,
+fresh entries for it as of the last check. This pattern (DDL applied via
+the SQL editor, PostgREST's REST layer still can't see it) is a known
+Supabase behavior — the SQL editor doesn't always trigger PostgREST's
+schema cache to reload automatically. **Action needed**: run
+`NOTIFY pgrst, 'reload schema';` in the same SQL editor. Not something I
+can do myself (no DDL/admin path from application code, confirmed
+already in P15-4). Code remains deployed and confirmed degrading
+correctly in the meantime (real spooled entries, not failures) — nothing
+is broken, the column just isn't reachable yet.
+
+### P16-2 — `PP_DAILY_MSG_BUDGET` = 100,000
+
+Confirmed isolated before changing it: this constant exists only in
+`research/config.py`, used only by `research/peak_tracker.py`.
+`memecoin/pumpportal_monitor.py` (the live-trading path) has its own
+entirely separate `SCREENING_DAILY_SUB_BUDGET` — zero shared code. Live
+trading, V7, V8, and execution are untouched.
+
+### P16-3/P16-4 — budget-paced admission controller
+
+Replaced the hard cutoff with an hour-paced probabilistic admission
+scheme (`research/peak_tracker.py:_admission_probability`, pure
+function): each UTC hour gets an equal 1/24 share of the daily budget;
+under that hour's pace, admission is free (probability 1.0); over pace,
+probability decays smoothly as `hourly_budget / messages_used_this_hour`
+— never a hard cliff to zero from hourly pressure alone. The **daily**
+budget remains a true hard stop at 0% (the actual approved cost
+ceiling — pacing softens *within*-day distribution, it does not remove
+the real bound).
+
+Every admission decision — admitted or not — is now logged to
+`logs/research_admission/admission_log.jsonl`: `token_address, utc_hour,
+path_eligible, path_admitted, path_sampling_probability, admission_
+reason, budget_used, budget_remaining`. `admission_reason` is one of
+`under_hourly_pace / sampled_admit / sampled_reject / daily_cap_hard_
+stop`. This is the inclusion-probability provenance P16-4 asked for —
+enough to support inverse-probability weighting or explicit
+representativeness analysis once enough days accumulate.
+
+**Structurally enforced, not just by convention (P16-6)**: a test
+inspects `_admission_probability`'s actual function signature (must be
+exactly `messages_used_this_hour, hourly_budget, messages_used_today,
+daily_budget` — nothing else) and greps `_drain_pending()`'s own source
+for any reference to `progress_at_signal`, `smart_money`,
+`pct_change_peak`, `v8_paper`, `v7`. Both pass. Naturalistic collection
+cannot depend on the eventual strategy label by construction, not just
+by care.
+
+### P16-5 — hourly funnel reporting
+
+`logs/watchdog/path_collection_daily.json` now includes an `hourly`
+array (24 entries): `path_eligible, path_admitted, subscriptions_
+started, ticks_ge1, ticks_ge2, usable_paths, budget_messages,
+admission_rate_pct, usable_path_yield_pct` per UTC hour. Tick/usable-
+path stats are attributed to the token's **admission hour**, not its
+finalization hour (a session can run up to 60 minutes) — stored per-
+token as `admission_hour` at admission time, read back in `_write_peak`.
+Known limitation, same class as the pre-existing daily counters: a token
+admitted just before UTC midnight and finalizing after rollover loses
+its hourly attribution along with that day's `_hourly_stats` — not a new
+regression, the existing `_ticks_today` counter already has this exact
+edge case.
+
+### P16-7 — deployed, partially live-confirmed
+
+Restarted `quantbot-research.service`. Real admission log entry
+observed within seconds of restart:
+
+```
+{"token_address": "AM84wet...", "utc_hour": 23, "path_eligible": true,
+ "path_admitted": true, "path_sampling_probability": 1.0,
+ "admission_reason": "under_hourly_pace", "budget_used": 0,
+ "budget_remaining": 100000}
+```
+
+**Honest limitation**: this confirms the mechanism works correctly for
+the common case (under pace → admit freely, probability and reason both
+correct). The probabilistic-decay branch (`sampled_admit`/`sampled_
+reject`) can only be observed once real hourly budget pressure actually
+builds — not forceable, not yet observed as of this commit. Will show up
+naturally in `path_collection_daily.json`'s `hourly` breakdown once a
+busy hour occurs.
+
+### P16-8 — Phase 2 foundations (parallel, ENGINE_DESIGN_READY scope)
+
+Four new modules, deliberately scoped to what does **not** depend on
+data volume — exit registry/replay interface (FD14/FD19) and the
+execution cost model (FD20) are real, separate, larger pieces of work,
+not attempted here:
+
+- **`research/v8_feature_enforcement.py`** — makes
+  `v8_feature_registry.yaml`'s `allowed_for_*` flags load-bearing at
+  runtime (`assert_features_allowed`/`check_features_allowed`), not just
+  documentation a future candidate definition could silently ignore.
+  Fails closed on any unregistered feature name.
+- **`research/v8_candidate_registry.py`** — frozen, hashed, 7-candidate
+  registry: `BASELINE-0` (the running scaffold, kept as the mandatory
+  control per FD27) plus the `P0`-`P3` progress policies already named
+  in `v8_clean_cohort.py` (P15-3), plus two bounded 3-condition
+  extensions using `channel_velocity_5m`. Every candidate's features are
+  checked against the enforcement module at registry-load time. Max 3
+  conditions per candidate, structurally capped. No candidate chosen by
+  inspecting any outcome.
+- **`research/v8_split.py`** — resolves a real tension between two
+  Phase-1-derived requirements: FD10 wants a chronological split *by
+  time span*, not row count; FD5 (confirmed empirically, 22.5% mint
+  duplication) requires the same token never split across train/
+  validation/holdout. Resolution: a token's first-seen time decides its
+  whole group's split membership. Ambiguous groups (rows naturally
+  spanning a cutoff) are counted, not silently absorbed.
+- **`research/v8_experiment_manifest.py`** — the reproducibility record
+  every real run must produce before touching holdout (FD11/FD29).
+  `holdout_evaluated` defaults `False`; `smart_money_version` defaults
+  `None` (P15-8 — never silently reused).
+
+25 new tests, all passing.
+
+### Tests
+
+40 new tests this batch (15 admission-controller, 25 Phase 2
+foundations). Full combined suite: 708 passed (up from 683), same 7
+pre-existing, unrelated failures every prior run this session has also
+shown.
+
+### Status split, as required — not conflated
+
+**`ENGINE_DESIGN_READY`: substantially advanced.** Feature enforcement,
+candidate registry, grouped chronological split, and experiment
+manifest all exist, are tested, and are deployed. Still missing before
+this is *complete*: the exit/mid-trade registry (FD19), the reusable
+replay interface built on `replay_exits.py` (FD14), and the execution
+cost model (FD20) — none attempted this batch, real separate work.
+
+**`SELECTION_DATA_READY`: still not true for anything beyond crude
+entry-only comparisons.** Unchanged from Phase 1.5's own assessment
+(48 progress<0.70 rows over one real week, a few dozen representative
+path files) — collection hardening improves the *shape* of future
+data, it does not retroactively create more of it. No absolute
+full-strategy EV number exists or is claimed.
+
+Two items still need the user directly: the PostgREST schema-cache
+reload (`NOTIFY pgrst, 'reload schema';`) for `venue_state_at_signal`,
+and — no new ask this batch — everything else proceeds under existing
+authorization. STOP before evaluating the final holdout, per instruction
+(not yet remotely close to that point regardless).
