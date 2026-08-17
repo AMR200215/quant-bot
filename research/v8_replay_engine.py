@@ -25,6 +25,19 @@ on top of this; this module just refuses to bake the old, wrong
 assumption into its own signature). Passing entry_ts=rows[0]["ts_ms"]
 reproduces the pre-P2-7 behavior exactly, which is what
 replay_exits.py's CLI does today (unchanged until P2-7 lands).
+
+PHASE 2.1 item 2b: replay_strategy() itself still accepts any positive
+price -- Phase 2 discovered real, severe price corruption in the path
+corpus (confirmed up to ~$73.5B implied market cap, research/
+v8_path_integrity.py), and that module's PathIntegrityStatus.VALID gate
+must run BEFORE any path is used for an actual $/day result.
+replay_strategy_for_full_ev() is the ONLY sanctioned entrypoint for
+FULL_STRATEGY_EV -- it runs the integrity gate first and refuses
+(returns None) on anything not VALID. replay_strategy() itself is left
+unchanged (still usable directly for exploratory/diagnostic work, per
+the explicit "keep a separate exploratory path set if useful"
+allowance) -- the safety boundary is which function you call, not a
+silent behavior change inside the existing one.
 """
 
 from __future__ import annotations
@@ -218,3 +231,30 @@ def replay_strategy(
 
     last_price = tick_rows[-1]["price_usd"]
     return _exit(last_price, "path_end")
+
+
+def replay_strategy_for_full_ev(
+    rows: list[dict],
+    entry_ts: int,
+    entry_spec: dict,
+    exit_spec: dict,
+    execution_model: ExecutionModel,
+) -> Optional[ReplayResult]:
+    """
+    The ONLY sanctioned entrypoint for FULL_STRATEGY_EV (Phase 2.1 item
+    2b). Runs research.v8_path_integrity.assess_path_integrity(rows)
+    first; if the verdict is anything other than VALID (i.e. INVALID or
+    UNKNOWN), refuses and returns None -- a corrupted or unproven path
+    can never produce a PnL number through this function, regardless of
+    what replay_strategy() itself would have computed from it.
+
+    Exploratory/diagnostic replay should call replay_strategy() directly
+    (unchanged, still accepts any positive price) -- this function exists
+    specifically so FULL_STRATEGY_EV has one auditable choke point.
+    """
+    from research.v8_path_integrity import assess_path_integrity, PathIntegrityStatus
+
+    integrity = assess_path_integrity(rows)
+    if integrity.status != PathIntegrityStatus.VALID.value:
+        return None
+    return replay_strategy(rows, entry_ts, entry_spec, exit_spec, execution_model)

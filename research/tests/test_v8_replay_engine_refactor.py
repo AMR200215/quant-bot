@@ -6,7 +6,9 @@ Run: python -m pytest research/tests/test_v8_replay_engine_refactor.py -v
 
 import unittest
 
-from research.v8_replay_engine import replay_strategy, FixedLagExecutionModel, ReplayResult
+from research.v8_replay_engine import (
+    replay_strategy, replay_strategy_for_full_ev, FixedLagExecutionModel, ReplayResult,
+)
 from research.analysis.replay_exits import _replay_one, _V7_SPEC
 from research.v8_exit_registry import (
     EXIT_CANDIDATES, MIDTRADE_CANDIDATES, MIDTRADE_STATUS,
@@ -88,6 +90,31 @@ class TestReplayEngineInterface(unittest.TestCase):
         self.assertEqual(r.partial_exits, 3)
         # weighted avg of 1.5*0.5 + 2.0*0.5 (+ 2.0*0) = 1.75 -> pnl=+75%
         self.assertAlmostEqual(r.pnl_pct, 75.0, places=1)
+
+
+class TestReplayStrategyForFullEV(unittest.TestCase):
+    """Phase 2.1 item 2b: the mandatory path-integrity choke point."""
+
+    def test_corrupted_path_never_produces_a_result_through_full_ev_entrypoint(self):
+        corrupted_rows = [
+            {"ts_ms": 0, "price_usd": 1.0, "price_sol": 0.006, "vsol": 50.0, "venue_state": "CURVE_ACTIVE"},
+            {"ts_ms": 1000, "price_usd": 73.49292385903, "price_sol": 0.419959564909,
+             "vsol": 116.26907755036314, "venue_state": "CURVE_ACTIVE"},
+        ]
+        result = replay_strategy_for_full_ev(
+            corrupted_rows, entry_ts=0, entry_spec={}, exit_spec=_SPEC,
+            execution_model=FixedLagExecutionModel(exec_lag_ms=0))
+        self.assertIsNone(result)
+
+    def test_clean_path_still_produces_a_result_through_full_ev_entrypoint(self):
+        clean_rows = [
+            {"ts_ms": 0, "price_usd": 0.00005, "price_sol": 0.0000003, "vsol": 50.0, "venue_state": "CURVE_ACTIVE"},
+            {"ts_ms": 1000, "price_usd": 0.00006, "price_sol": 0.00000036, "vsol": 55.0, "venue_state": "CURVE_ACTIVE"},
+        ]
+        result = replay_strategy_for_full_ev(
+            clean_rows, entry_ts=0, entry_spec={}, exit_spec=_SPEC,
+            execution_model=FixedLagExecutionModel(exec_lag_ms=0))
+        self.assertIsNotNone(result)
 
 
 class TestReplayExitsWrapperUnchanged(unittest.TestCase):

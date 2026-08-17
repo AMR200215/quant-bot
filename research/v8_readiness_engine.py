@@ -1,44 +1,65 @@
 """
-research/v8_readiness_engine.py — V8-FILTER-DERIVATION Phase 2 (P2-11):
-data-readiness engine, one report per (entry candidate x exit candidate)
-combination.
+research/v8_readiness_engine.py — V8-FILTER-DERIVATION Phase 2 (P2-11),
+hardened Phase 2.1 item 1 + item 4: data-readiness engine, one report
+per (entry candidate x exit candidate) combination.
 
-NOT a universal n>=100 gate applied blindly everywhere. Each threshold
-below is cited to a specific piece of existing project evidence, and the
-engine reports WHICH ones. Per the explicit P2-11 instruction: thresholds
-must be evidence-specific, never invented low just to force a READY
-verdict.
+PHASE 2.1 CORRECTION (2026-08-17): the original version accepted
+forward_venue_qualified_n as an input field but never actually used it
+in entry_ready/full_eval_ready -- meaning a candidate whose binding rule
+requires venue_state_at_signal == CURVE_ACTIVE could report readiness
+based ONLY on its progress-only historical count, with the venue-state
+half silently unchecked. Every frozen v1 candidate (BASELINE-0, P0, P1,
+P3) requires venue_state_at_signal (confirmed in
+research/tests/test_v8_entry_alignment.py's
+test_all_frozen_v1_candidates_require_venue_state_t0_capture) -- so this
+was a real gap, not a hypothetical one.
 
-Threshold provenance:
-  MIN_ENTRY_N = 100            -- research/analysis/path_stats.py's own
-      long-standing --min-n default across every A-H analysis in this
-      repo; reused, not reinvented, so this engine's bar matches what
-      the rest of the codebase already treats as "enough to report a
-      real number" rather than INSUFFICIENT.
-  MIN_UNIQUE_MINTS = 50        -- FD5's measured 22.5%/26% same-mint
-      duplication rate (Phase 1 audit) means ~74-78% of rows are
-      distinct mints; half of MIN_ENTRY_N is a direct, cited
-      consequence of that measured rate, not a separate guess.
-  MIN_UNIQUE_DAYS = 14         -- P15-2's explicit finding that the
-      progress<70 population was concentrated in ~1 week, not 2, and
-      flagged that as a real regime-coverage risk ("closer to one week
-      than two"). 14 days is the bar P15-2 itself used to describe the
-      shortfall -- reused as the actual gate, not picked fresh.
-  MIN_PATH_N = 100             -- same path_stats.py convention as
-      MIN_ENTRY_N.
-  MIN_PATH_COVERAGE_PCT = 50.0 -- a design choice (more than half of
-      admitted entries must have a usable path), explicitly NOT claimed
-      to be derived from data the way the other thresholds are --
-      labeled as such in THRESHOLD_PROVENANCE below.
-  MIN_SPLIT_BUCKET_N = 20      -- the quick-check --min-n this session
-      itself used when live-querying path_stats.py during the P2-5
-      audit; reused for consistency, not re-derived.
+Fixed by splitting readiness into two distinct, separately-reported
+flags, never conflated:
+
+  PROGRESS_EVIDENCE_READY -- the progress-only historical population is
+      large/diverse enough (same thresholds as before). This is real
+      evidence about SOMETHING, but for any candidate that also
+      requires venue_state_at_signal, it does NOT mean the candidate's
+      actual binding rule has enough evidence.
+  FULL_ENTRY_RULE_READY -- for candidates that bind on venue_state, this
+      requires the CONTEMPORANEOUSLY OBSERVED, VENUE-QUALIFIED
+      population (forward_venue_qualified_n and its own unique-mints/
+      unique-days counts, never the progress-only ones) to independently
+      clear the same thresholds. Historical rows with unknown venue
+      state (from before P2-0's schema fix) can NEVER satisfy this --
+      venue state is never inferred from dex_id (research/
+      v8_feature_registry.yaml's dex_id entry: "PROVEN UNRELIABLE").
+      For a candidate that does NOT bind on venue_state at all,
+      FULL_ENTRY_RULE_READY simply equals PROGRESS_EVIDENCE_READY (there
+      is no second condition to separately satisfy).
+
+full_eval_ready now depends on FULL_ENTRY_RULE_READY, not
+PROGRESS_EVIDENCE_READY -- the readiness matrix can no longer return
+FULL_EVAL_READY for a strategy whose binding features were never
+actually observed for the claimed sample.
+
+PHASE 2.1 CORRECTION (item 4): the numeric floors below (MIN_ENTRY_N,
+MIN_UNIQUE_MINTS, MIN_UNIQUE_DAYS, MIN_SPLIT_BUCKET_N,
+MIN_PATH_COVERAGE_PCT) are ENGINEERING SANITY FLOORS -- preconditions
+below which a number is definitely too thin to report at all -- NOT a
+claim of statistical sufficiency for filter selection. 14 days is not
+"enough" merely because Phase 1.5 happened to observe a 14-day cohort;
+n=20 is not "enough" merely because an earlier quick-check used
+--min-n=20. Real Phase-3 selection readiness needs to additionally
+depend on observed uncertainty/stability -- effective n (after
+IPW/de-duplication), independent days/blocks (not just calendar-day
+count), holdout confidence intervals, block-bootstrap CIs, profit
+concentration (is the result driven by one outlier trade), and regime
+stability across sub-periods. None of that is implemented here --
+FUTURE_STATISTICAL_READINESS_CRITERIA documents what's still missing so
+it isn't silently forgotten, and READINESS_KIND labels every threshold
+below as a precondition, not a sufficiency claim.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 MIN_ENTRY_N = 100
 MIN_UNIQUE_MINTS = 50
@@ -46,6 +67,8 @@ MIN_UNIQUE_DAYS = 14
 MIN_PATH_N = 100
 MIN_PATH_COVERAGE_PCT = 50.0
 MIN_SPLIT_BUCKET_N = 20
+
+READINESS_KIND = "ENGINEERING_SANITY_FLOOR"  # applies to every threshold below -- NOT "STATISTICAL_SUFFICIENCY"
 
 THRESHOLD_PROVENANCE = {
     "MIN_ENTRY_N": "research/analysis/path_stats.py --min-n default (100)",
@@ -56,15 +79,38 @@ THRESHOLD_PROVENANCE = {
     "MIN_SPLIT_BUCKET_N": "the --min-n=20 quick-check threshold used live during the P2-5 audit query",
 }
 
+# Phase-3 statistical-sufficiency criteria this engine does NOT yet
+# implement -- listed explicitly so "we have enough data" is never
+# claimed on engineering-floor grounds alone. Each is False until built.
+FUTURE_STATISTICAL_READINESS_CRITERIA = {
+    "effective_n_after_ipw": False,       # de-duplicated/weighted n, not raw row count
+    "independent_days_or_blocks": False,  # block-level independence, not just distinct calendar days
+    "holdout_confidence_interval": False,
+    "block_bootstrap_confidence_interval": False,
+    "profit_concentration_check": False,  # is the result driven by one outlier trade
+    "regime_stability_across_subperiods": False,
+}
+
 
 @dataclass(frozen=True)
 class ReadinessInputs:
     candidate_id: str
     exit_id: str
-    historical_entry_n: int              # rows passing the entry candidate's PROGRESS half historically
-    forward_venue_qualified_n: int       # rows also passing the venue_state half (0 until P2-0 resolves)
+    requires_venue_state: bool           # does this candidate's rule bind on venue_state_at_signal?
+
+    # Progress-only historical population (venue state possibly unknown/pre-P2-0).
+    historical_entry_n: int
     unique_mints: int
     unique_days: int
+
+    # Venue-qualified population: CONTEMPORANEOUSLY OBSERVED venue_state_at_signal
+    # matching the candidate's requirement (e.g. CURVE_ACTIVE). Never inferred from
+    # dex_id or any other proxy -- a row with unknown historical venue state does
+    # not belong in this count, full stop.
+    forward_venue_qualified_n: int
+    venue_qualified_unique_mints: int
+    venue_qualified_unique_days: int
+
     train_n: int
     validation_n: int
     holdout_n: int
@@ -79,7 +125,8 @@ class ReadinessInputs:
 class ReadinessReport:
     candidate_id: str
     exit_id: str
-    entry_data_ready: bool
+    progress_evidence_ready: bool
+    full_entry_rule_ready: bool
     path_data_ready: bool
     execution_model_ready: bool
     full_eval_ready: bool
@@ -90,18 +137,39 @@ class ReadinessReport:
 def assess_readiness(inputs: ReadinessInputs) -> ReadinessReport:
     reasons: list[str] = []
 
-    entry_ready = (
+    progress_ready = (
         inputs.historical_entry_n >= MIN_ENTRY_N
         and inputs.unique_mints >= MIN_UNIQUE_MINTS
         and inputs.unique_days >= MIN_UNIQUE_DAYS
     )
-    if not entry_ready:
+    if not progress_ready:
         if inputs.historical_entry_n < MIN_ENTRY_N:
             reasons.append(f"historical_entry_n={inputs.historical_entry_n} < MIN_ENTRY_N={MIN_ENTRY_N}")
         if inputs.unique_mints < MIN_UNIQUE_MINTS:
             reasons.append(f"unique_mints={inputs.unique_mints} < MIN_UNIQUE_MINTS={MIN_UNIQUE_MINTS}")
         if inputs.unique_days < MIN_UNIQUE_DAYS:
             reasons.append(f"unique_days={inputs.unique_days} < MIN_UNIQUE_DAYS={MIN_UNIQUE_DAYS}")
+
+    if inputs.requires_venue_state:
+        full_entry_ready = (
+            inputs.forward_venue_qualified_n >= MIN_ENTRY_N
+            and inputs.venue_qualified_unique_mints >= MIN_UNIQUE_MINTS
+            and inputs.venue_qualified_unique_days >= MIN_UNIQUE_DAYS
+        )
+        if not full_entry_ready:
+            reasons.append(
+                f"forward_venue_qualified_n={inputs.forward_venue_qualified_n} < MIN_ENTRY_N={MIN_ENTRY_N} "
+                "-- venue_state_at_signal must be contemporaneously observed; historical rows with "
+                "unknown venue state never satisfy this, and it is never inferred from dex_id"
+            )
+            if inputs.venue_qualified_unique_mints < MIN_UNIQUE_MINTS:
+                reasons.append(f"venue_qualified_unique_mints={inputs.venue_qualified_unique_mints} "
+                                f"< MIN_UNIQUE_MINTS={MIN_UNIQUE_MINTS}")
+            if inputs.venue_qualified_unique_days < MIN_UNIQUE_DAYS:
+                reasons.append(f"venue_qualified_unique_days={inputs.venue_qualified_unique_days} "
+                                f"< MIN_UNIQUE_DAYS={MIN_UNIQUE_DAYS}")
+    else:
+        full_entry_ready = progress_ready
 
     path_ready = (
         inputs.representative_path_n >= MIN_PATH_N
@@ -129,12 +197,15 @@ def assess_readiness(inputs: ReadinessInputs) -> ReadinessReport:
             f"(train={inputs.train_n}, validation={inputs.validation_n}, holdout={inputs.holdout_n})"
         )
 
-    full_ready = entry_ready and path_ready and execution_ready and split_not_degenerate
+    # full_eval_ready is gated on FULL_ENTRY_RULE_READY, never on
+    # progress_ready alone -- this is the load-bearing fix.
+    full_ready = full_entry_ready and path_ready and execution_ready and split_not_degenerate
 
     return ReadinessReport(
         candidate_id=inputs.candidate_id,
         exit_id=inputs.exit_id,
-        entry_data_ready=entry_ready,
+        progress_evidence_ready=progress_ready,
+        full_entry_rule_ready=full_entry_ready,
         path_data_ready=path_ready,
         execution_model_ready=execution_ready,
         full_eval_ready=full_ready,
@@ -149,30 +220,32 @@ def build_readiness_matrix(inputs_list: list[ReadinessInputs]) -> list[Readiness
 
 # ── Real current-state readiness for BASELINE-0 x E0 (2026-08-17) ──────
 #
-# Live-cited numbers, not synthetic: research/v8_clean_cohort.py's
-# CANDIDATE0_PROGRESS_HALF_N=48 (progress<0.70 clean cohort),
-# CLEAN_COHORT_DATE_RANGE's progress_lt70_concentrated_in_days=7,
-# CANDIDATE0_FULL_GATE_HISTORICAL_N=None (venue_state_at_signal not yet
-# persisted historically -- P2-0 unresolved as of this writing).
-# unique_mints/path counts are NOT yet computed by any live query in
-# this codebase (would require a dedicated join query this module
-# doesn't run itself, consistent with P15-9: Phase 2 builds the engine,
-# it doesn't have to already have sufficient data). Reported as 0/unknown
-# rather than guessed.
+# Live-cited numbers: research/v8_clean_cohort.py's
+# CANDIDATE0_PROGRESS_HALF_N=48 (progress<0.70 clean cohort, Phase-1
+# snapshot; grows daily), CLEAN_COHORT_DATE_RANGE's
+# progress_lt70_concentrated_in_days=7. Venue-qualified counts are from
+# the live post-P2-0 query (2026-08-17): 1 row currently satisfies
+# progress<0.70 AND venue_state_at_signal==CURVE_ACTIVE; venue_state
+# data itself spans under 1 calendar day so far (P2-0's schema fix only
+# just landed). unique_mints for both populations are NOT yet computed
+# by any live query in this codebase -- reported as 0, not guessed.
 def current_baseline0_e0_readiness() -> ReadinessReport:
     from research.v8_clean_cohort import CANDIDATE0_PROGRESS_HALF_N, CLEAN_COHORT_DATE_RANGE
 
     inputs = ReadinessInputs(
         candidate_id="BASELINE-0",
         exit_id="E0",
+        requires_venue_state=True,
         historical_entry_n=CANDIDATE0_PROGRESS_HALF_N,
-        forward_venue_qualified_n=0,   # P2-0 unresolved -- venue_state_at_signal not yet in production schema
-        unique_mints=0,                # not yet computed by any live query -- reported honestly, not guessed
+        unique_mints=0,
         unique_days=CLEAN_COHORT_DATE_RANGE["progress_lt70_concentrated_in_days"],
-        train_n=0, validation_n=0, holdout_n=0, boundary_purged_n=0,   # split not yet run against real data
-        representative_path_n=0,       # not yet computed
+        forward_venue_qualified_n=1,      # live query, 2026-08-17, post-P2-0 recovery
+        venue_qualified_unique_mints=0,   # not yet computed
+        venue_qualified_unique_days=1,    # venue_state coverage spans <1 calendar day so far
+        train_n=0, validation_n=0, holdout_n=0, boundary_purged_n=0,
+        representative_path_n=0,
         path_coverage_pct=0.0,
-        cost_model_available=True,     # research/v8_execution_cost_model.py exists (P2-9)
-        entry_slippage_measured=False,  # ENTRY_SLIPPAGE_STATUS=UNMEASURED_ENTRY_SLIPPAGE (P2-9)
+        cost_model_available=True,
+        entry_slippage_measured=False,
     )
     return assess_readiness(inputs)
