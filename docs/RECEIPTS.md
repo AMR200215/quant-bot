@@ -3263,3 +3263,279 @@ reload (`NOTIFY pgrst, 'reload schema';`) for `venue_state_at_signal`,
 and — no new ask this batch — everything else proceeds under existing
 authorization. STOP before evaluating the final holdout, per instruction
 (not yet remotely close to that point regardless).
+
+---
+
+## V8-FILTER-DERIVATION — Phase 2 Completion (P2-0..P2-16)
+
+**2026-08-17, git SHA `87d837b`.** Fixed two real bugs the user caught
+in the Phase-1.6 handoff (split-integrity leakage, duplicate candidate
+identity), audited and removed an unverified threshold, then built the
+remaining Phase-2 engineering: exit registry, reusable replay interface,
+entry-time alignment, IPW design, execution cost model, data-readiness
+engine, and an enforceable holdout lock. **Holdout was never evaluated.**
+
+### P2-0 — venue_state_at_signal (BLOCKED, needs the user)
+
+Re-queried live after the user's `ALTER TABLE` + `NOTIFY pgrst, 'reload
+schema';`: still `column research_tokens.venue_state_at_signal does not
+exist`. Diagnosed directly against PostgREST's own OpenAPI schema
+endpoint (`GET {SUPABASE_URL}/rest/v1/`) rather than assuming an
+app-code bug: 109 columns exposed for `research_tokens`, target column
+absent, while genuinely older/newer neighboring columns
+(`path_valid_tick_count`, `venue_state_final`) ARE present and current —
+ruling out a stale cache (a real reload would show ANY existing column,
+not skip just one). This means the `ALTER TABLE` did not actually commit
+against this database. Handed the user one authoritative check to run
+directly (`SELECT column_name FROM information_schema.columns WHERE
+table_name='research_tokens' AND column_name='venue_state_at_signal'`)
+since this repo has no direct Postgres catalog access from application
+code. **Still open** — does not block ENGINE_READY (see status split
+below), but blocks `SELECTION_DATA_READY` for the full BASELINE-0 gate
+same as it has since Phase 1.
+
+### P2-1 (bug fix) — split-integrity leakage
+
+`research/v8_split.py`'s original "first-seen timestamp decides the
+whole group" policy moved a mint's LATER (holdout-era) rows backward
+into train whenever that mint's first alert fell in the train window —
+real temporal leakage, exactly as the user's worked example showed.
+Rewrote to: each row's own timestamp decides its own natural bucket;
+group by mint; a group entirely within one bucket stays there; a group
+spanning more than one bucket is PURGED from all three splits
+(`boundary_spanning_groups`/`purged_rows`), never relocated. Both
+invariants now asserted simultaneously in code (not just documented):
+strict per-split time ordering AND zero mint overlap between any two
+splits. Regression test covers the user's exact case (early train-era
+row + later holdout-era row → both purged, neither in train).
+
+### P2-2 (bug fix) — duplicate candidate identity
+
+`BASELINE-0` and the `P2` progress policy were the literal same rule
+(`progress<0.70 AND CURVE_ACTIVE`) counted as two candidates. Collapsed
+to one identity (`BASELINE-0`); the registry-building loop now
+explicitly skips `P2` with a code comment explaining why, rather than
+silently producing a second identical entry under a different ID.
+
+### P2-3 — channel_velocity_5m<=5 threshold audit
+
+The removed candidates' rationale claimed `<=5` was "the channel's own
+median order of magnitude observed in Phase 1 data" — never actually
+verified. Queried the real feature-only population (chain=='solana' AND
+progress_data_ok==True, zero outcome/holdout fields touched, n=1249
+live rows): **min=0, p25=0, median=0, p75=1, mean=0.74, max=67.** The
+real median is 0, nowhere near 5. Failed the reproducibility audit.
+Removed from v1 rather than retuned to a better-fitting number (that
+would be post-hoc tuning dressed as a fix, per FD8).
+
+### P2-4 — v1 entry-candidate registry frozen
+
+Exactly the expected core survives: `BASELINE-0`, `V8-P0`, `V8-P1`,
+`V8-P3` — 4 candidates, hash
+`56990d2757a63930efadba001d838c2845359361209728d24a1c85af9ffe8251`.
+`assert_registry_frozen()` raises on any drift from this exact hash;
+changing any candidate now requires an explicit "experiment v2," not an
+in-place edit.
+
+### P2-5 — exit + mid-trade registry (FD19), NO_MIDTRADE_RULE_SUPPORTED
+
+Audited every existing artifact before adding anything new, per
+instruction. `research/analysis/replay_exits.py` already had 3
+pre-registered, non-outcome-tuned exit specs (E0=v7 current, E1/E2
+alternatives) — reused as-is, not redefined. Ran
+`research/analysis/path_stats.py`'s A-H analyses live against the full
+4262-file path corpus:
+
+- **Real, disqualifying finding**: post-peak decay (B) and peak-mcap
+  (E) are corrupted by genuine `price_usd` outliers — confirmed up to
+  **$73.5 BILLION implied market cap** on real path files (e.g.
+  `FN1pzrGdaRfpJeabHtPzDQpRhdMnqaHiE3Nywts7GNdR`,
+  `AmqU7xrW8RMswHdcve7jE1dk7uD9ByudSfmBJrx8hBvH`) — physically
+  impossible for a memecoin. B's "retention" numbers were exactly 0.000
+  across n=148/52 as a direct symptom. Neither analysis is usable
+  evidence until a dedicated price-outlier-cleaning pass exists
+  (explicitly out of P2-5's scope).
+- The one clean, uncontaminated finding — pre-dump sell pressure (C):
+  n=1185 dump windows, Cohen's d=-0.378, verdict TRUE — has no
+  leakage-safe derived threshold. Inventing one now would repeat
+  exactly the P2-3 mistake on the exit side.
+
+Froze `NO_MIDTRADE_RULE_SUPPORTED` as the explicit v1 outcome (3 exit
+candidates, 0 mid-trade candidates), hash
+`bb64c2ec6b6efba39f6a1c6c309add08fbe452212a28960175397f6a64c72b40`,
+enforced the same way as the entry registry (`assert_registry_frozen`).
+
+### P2-6 — reusable replay interface (FD14)
+
+`research/v8_replay_engine.py`: `replay_strategy(rows, entry_ts,
+entry_spec, exit_spec, execution_model) -> ReplayResult`, refactored
+(not rewritten) out of `replay_exits.py`'s inline simulator. Preserves
+hard-stop/trailing/TP-ladder/profit-lock/time-stop/exec-lag/partial-exit
+semantics exactly, including a pre-existing zero-fraction "_final" TP
+marker quirk (left alone — a refactor doesn't get to also silently fix
+unrelated behavior). `entry_ts` is now a required, explicit parameter —
+the interface itself refuses to assume `rows[0]` is the entry.
+`ExecutionModel` is a duck-typed interface so FD20's cost model can plug
+in later without touching the engine again.
+
+### P2-7 — real entry-time alignment
+
+`research/v8_entry_alignment.py` resolves entry timing per
+(event, candidate) instead of the `rows[0]==entry` assumption every
+prior tool made. `decision_available_ts` comes from the CANDIDATE's own
+required features (T0 vs T0+capture), using the REAL per-event
+`progress_capture_lag_ms` when present and only falling back to the
+feature registry's nominal delay when a row predates that field —
+the two provenances are never conflated in the output
+(`entry_source`). A mint with more than one event row shares one
+continuous path file across multiple alerts (FD5) — attaching a
+path-based entry decision to any one of them is a guess, so
+`find_ambiguous_mints()` excludes them outright
+(`AMBIGUOUS_PATH_EVENT_JOIN`). A target past the end of the path file is
+`NO_EXECUTABLE_TICK_AFTER_TARGET`, never a silent nearest-match.
+
+### P2-8 — IPW design (not applied)
+
+`research/v8_ipw.py`: `compute_ipw_weight()` (1/P(admitted), raises
+rather than returning inf on an invalid probability) and
+`diagnose_admission_log()` (unweighted vs weighted numbers always
+reported as separate fields, never blended). **Confirmed not wired into
+any live code** (grepped). Live-verified precondition against the real
+admission log (n=75 real decisions, VPS): 43 admitted rows, **zero**
+with `path_sampling_probability<=0` — the precondition IPW requires.
+Applying the weighting is explicitly Phase-3+ work.
+
+### P2-9 — execution cost model (FD20)
+
+`research/v8_execution_cost_model.py`, `EXECUTION_COST_MODEL_VERSION=1`.
+Built from cited evidence only: code constants
+(`SLIPPAGE_BUY_PCT`=30% revert ceiling, `SELL_LADDER`=35/60/98%,
+priority-fee floors 0.0005/0.0015/0.005 SOL) and the real live journal
+(n=80 real live trades, VPS): `sell_failed` 8/80 (10.0%),
+`abort_tripwire` 5/80 (6.25%). Hard-stop overshoot (n=9, mean=-50.2pp)
+explicitly NOT promoted to MEASURED — too few usable rows, and spans
+both the pre- and post-MU-retry-ladder eras. Entry-side fill-vs-baseline
+slippage could not be computed from the current journal export —
+recorded as `UNMEASURED_ENTRY_SLIPPAGE` rather than guessed.
+MEASURED/CONSERVATIVE/STRESS tiers per component. $2 and $5 handled
+separately: the fixed-SOL priority fee is modeled exactly per-notional
+(genuinely a bigger % hit on $2); slippage has no curve-depth model in
+this repo, so it's applied identically regardless of size, labeled
+`LINEAR_SIZE_PROJECTION_ONLY` rather than presented as size-aware.
+
+### P2-10 — 48-row cohort is not a validation
+
+Codified as an enforceable constant
+(`CANDIDATE0_PROGRESS_HALF_IS_NOT_A_VALIDATION=True`) plus a test, not
+just a comment. Reconfirmed `CANDIDATE0_FULL_GATE_HISTORICAL_N` stays
+`None` and that no code path anywhere infers `venue_state_at_signal`
+from `dex_id` (grepped — only the feature registry's own "proven
+unreliable" note references it).
+
+### P2-11 — data-readiness engine
+
+`research/v8_readiness_engine.py`: `ENTRY_DATA_READY` /
+`PATH_DATA_READY` / `EXECUTION_MODEL_READY` / `FULL_EVAL_READY` per
+(entry candidate, exit candidate) pair. Not a blanket n≥100 rule —
+every threshold cites specific prior evidence
+(`MIN_ENTRY_N`/`MIN_PATH_N`=100 from `path_stats.py`'s own convention;
+`MIN_UNIQUE_MINTS`=50 from FD5's measured duplication rate;
+`MIN_UNIQUE_DAYS`=14 from P15-2's own regime-coverage finding;
+`MIN_PATH_COVERAGE_PCT`=50 explicitly labeled as the one non-derived,
+design-choice threshold). Ran against REAL current numbers for
+`BASELINE-0` × `E0`, not just synthetic tests — correctly reports
+`full_eval_ready=False` today with concrete reasons.
+
+### P2-12 — enforceable holdout lock
+
+`research/v8_experiment_manifest.py` hardened: manifest now records
+`feature_registry_hash` (SHA256 of the raw YAML, catches edits that
+don't bump a version number) plus real `exit_registry_hash`/
+`execution_cost_model_version` (previously always `None`, since neither
+existed yet). `unlock_holdout_for_phase3(manifest, confirmation)` is the
+only sanctioned setter for `holdout_evaluated` — requires the literal
+`PHASE3_HOLDOUT_UNLOCK_SENTINEL` string, refuses a wrong/missing
+confirmation or a second unlock of the same manifest.
+`assert_holdout_not_evaluated()` is the guard Phase-2 reporting code
+must call before printing any results table. `check_v1_not_invalidated()`
+scans every manifest ever written and raises
+`ExperimentV1InvalidatedError` if a registry hash has drifted since a
+holdout-evaluated manifest recorded it — the concrete mechanism behind
+"editing a registry after holdout invalidates experiment v1."
+
+### P2-13 — collection hardening, live check
+
+Real, continuous ~17.25-hour window (2026-08-16T23:02 →
+2026-08-17T16:18 UTC, VPS). `admission_reason` mix over n=75 real
+decisions: `under_hourly_pace`=25, `daily_cap_hard_stop`=23,
+`sampled_admit`=18, `sampled_reject`=9. **The probabilistic-decay branch
+is confirmed live** (`sampled_admit`/`sampled_reject` both observed,
+not just theoretical) — `PACING_BRANCH_LIVE_UNPROVEN` does NOT apply.
+18 of 24 UTC hours had at least one admission decision logged in this
+window. Separately, the daily path-collection summary (2026-08-16, a
+real but low-volume day): 6 tokens scheduled, 4 path files, 66.7%
+path yield — all activity concentrated in hour 23 (6 eligible, 4
+admitted, 3 usable paths, 75% usable-path yield).
+
+### P2-14 — PP_DAILY_MSG_BUDGET clarification (answered inline, prior turn)
+
+`PP_DAILY_MSG_BUDGET=100000` is the current, deployed, correct value
+(`research/config.py`). "Backlog untouched at 50" referred to the VPS's
+unrelated git-stash historical count, re-verified as exactly 50 both
+before and after every operation this batch (peaked at 51 mid-deploy
+during a stash-pop race with the live `quantbot` process on
+`memecoin_positions.json`, resolved by confirming the stashed and live
+on-disk content were byte-identical before dropping the redundant
+entry).
+
+### P2-15 — full regression suite
+
+712 tests locally (`research/tests/`, excluding 3 files gated behind a
+local-only missing `croniter` package). On the VPS's real environment:
+**703 passed** across `research/tests/` + `watchdog/tests/` +
+`memecoin/tests/` (croniter present there). Top-level `tests/`: 49
+passed, same 7 pre-existing, unrelated failures as every prior run this
+session (`test_half2.py`/`test_live_gate.py` — Jupiter-quote/dry-run gate
+tests, untouched by any Phase 2 work). **Zero regressions in V8/V7
+runtime behavior**, confirmed by that unchanged failure count on the
+real production environment.
+
+### Files changed (this batch)
+
+New: `research/v8_exit_registry.py`, `research/v8_replay_engine.py`,
+`research/v8_entry_alignment.py`, `research/v8_ipw.py`,
+`research/v8_execution_cost_model.py`, `research/v8_readiness_engine.py`,
+7 new test files. Modified: `research/v8_split.py`,
+`research/v8_candidate_registry.py`, `research/v8_clean_cohort.py`,
+`research/v8_experiment_manifest.py`, `research/v8_feature_enforcement.py`,
+`research/analysis/replay_exits.py`.
+
+Commits: `9e93bed` (P2-1/2/3/4/5/6/10), `5830704` (P2-7), `77355b1`
+(P2-9), `c915e12` (P2-8), `e91f436` (P2-12), `87d837b` (P2-11). Final
+git SHA: **`87d837b`**, pushed to `origin/main`, pulled and verified on
+the VPS.
+
+### Final status
+
+**`ENGINE_DESIGN_READY: TRUE`** — every piece of Phase-2 methodology
+(candidate registry, exit registry, split logic, replay interface,
+entry alignment, cost model, readiness engine, holdout lock) is built,
+frozen where applicable, hashed, and tested. Two real bugs the user
+caught (split leakage, duplicate candidate) are fixed and regression-
+tested; one unverified threshold (channel_velocity_5m) was audited and
+correctly removed rather than retuned.
+
+**`SELECTION_DATA_READY: FALSE`** — unchanged in substance from Phase 1:
+the readiness engine itself now confirms this with real numbers
+(`BASELINE-0`×`E0` reports `full_eval_ready=False`, entry n=48 vs.
+required 100, venue-state-qualified n still 0 pending P2-0).
+
+**`V8_FD_PHASE2_ENGINE_READY`**
+
+Not `V8_FD_PHASE2_BLOCKED` — P2-0's open item (the
+`venue_state_at_signal` schema gap) blocks `SELECTION_DATA_READY`, which
+was already known false; it does not block the engineering machinery
+itself, which is complete. **Holdout was not evaluated. No V8 winner
+was ranked. No live trading code was touched.** One item needs the user
+directly: run the `information_schema.columns` check given above and
+report back — everything else in Phase 2 is closed.
