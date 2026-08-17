@@ -1,0 +1,49 @@
+# Audit Summary — audit-20260817T040914Z
+
+## Deployed git SHA / working tree
+- HEAD is at `de724c7f1dbdec43aeb32acbf8f6f4d0de81ec0f` (EV002).
+- The working tree is **not clean**. There are modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_positions.json`, `memecoin/data/memecoin_signals.json`) and a large number of untracked files/directories (e.g. `logs/epoch_daily.jsonl`, `logs/price_paths/`, `research/spool/*.jsonl`, `p15_1_2_audit.py`, `research/data/`, etc.) (EV002).
+- This same SHA is corroborated as the SHA actively used by the watchdog runs and job receipts (EV005: `latest_fast_run.git_sha`, `latest_slow_run.git_sha`, and receipt entries all show `de724c7f1dbdec43aeb32acbf8f6f4d0de81ec0f`), so the deployed/running code matches HEAD even though the tree has uncommitted changes.
+
+## systemd services/timers
+- `quantbot.service`: active/running, last result success (EV003).
+- `quantbot-research.service`: active/running, last result success (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead** (last `Result=success`, `ExecMainStatus=0`) (EV003).
+- `quantbot-watchdog-slow.service`: **inactive/dead** (last `Result=success`, `ExecMainStatus=0`) (EV003).
+- Both watchdog services are timer-activated (oneshot pattern): `quantbot-watchdog-fast.timer` last fired 2026-08-17T04:05:03Z (4min9s ago at evidence time) with next fire in 47s; `quantbot-watchdog-slow.timer` last fired 2026-08-17T04:03:02Z (6min ago) with next fire in 53min (EV003). The "inactive/dead" service state is therefore consistent with normal oneshot-via-timer operation and not on its own evidence of failure — it only reflects that the service isn't currently mid-run.
+
+## Cron file validity / parser errors
+- Three cron files exist: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode `0o100644`, with well-formed single-line crontab entries invoking `watchdog.exec_wrapper` (EV004).
+- `recent_parser_error_lines` is an empty list — no recent parser errors reported (EV004).
+- The watchdog's own fast-check results independently confirm all three (`cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`) as `OK`, "parses cleanly, no recent journal parser errors" (EV005).
+- Historical incident log shows `cron_static.epoch_daily` and `cron_static.v8_vs_v7_daily` each had a prior WARN incident that later reached state `RECOVERED` (first_seen ~1786578303, recovered by 1786578901–1786704004) (EV005, `all_incidents`). These are past events, not current problems, per the current OK status above.
+
+## Watchdog's own most recent run status / active incidents
+- Latest fast run (`e543ab1317bd445a`, profile `fast`): started/finished 2026-08-17 ~03:xx UTC (unix 1786939506.x), duration 17.3ms, `checks_due=11`, `checks_completed=11`, `final_runner_status="ok"` (EV005).
+- Latest slow run (`5aebbb46cc7b44fa`, profile `slow`): duration 15.8ms, `checks_due=10`, `checks_completed=10`, `final_runner_status="ok"` (EV005).
+- All 11 fast checks report `OK` except none failing (EV005, `latest_fast_check_results`).
+- Slow checks: all `OK` except `claims.batch.v8_readiness`, which is **WARN** — 4 of 7 batch items (`N2`, `N4`, `N6`, `N7`) are in `PARTIAL` state, explicitly noted as a case where "batch_verify's own exit code would be 0 ... this is exactly the gap between 'exit code says fine' and 'actually complete'" (EV005).
+- Active (unresolved) incident: `claims.batch.v8_readiness` — state `FIRING`, first_seen 1786585581, last_seen 1786939390 (i.e., still firing as of the latest slow run), `consecutive_failures=118`, last_notified 1786928591 (EV005, `all_incidents`). This is the **only currently-active incident**; all other listed incidents (self_test synthetic, cron_static epoch/v8, cron_execution k5/epoch/v8, test_drift collection memecoin, feed.pumpportal, layer2.staleness, funnel.v8, research.path_collection) show `state: RECOVERED` (EV005).
+- `layer2.staleness` check itself is `OK`: last Layer 2 audit was 23.9h ago (`audit-20260816T040523Z`), reporting 5 findings, 0 critical (EV005).
+
+## Research pipeline queue lag
+- Watchdog check `pipeline.research_queue_lag` at fast-run time reported `OK`, "consumer caught up (gap=0 bytes)", with `queue_size=492049`, `offset=492049` (EV005).
+- However, a separate, later(?) evidence snapshot EV006 (`research_pipeline`) shows `queue_size=493705`, `queue_offset="493705"` — also a zero gap between size and offset, i.e., internally consistent with "caught up," but note the offset is reported as a string here versus an int in EV005, and the numeric values differ from the watchdog's fast-check evidence (EV005 vs EV006). No timestamp is attached to EV006, so I cannot verify whether this is a later or independent read, only that the two data points are inconsistent with each other in raw magnitude, though both are self-consistent with lag=0 at their respective moments.
+- `pipeline.research_spool` check: `OK`, "0 failed insert(s) in the last 2.0h ... below the 5-sample floor for an alert," with `total_lines=68` historical lines on disk noted explicitly as "not itself evidence of an active problem" (EV005).
+
+## Other evidence-supported facts
+- Host uptime is 3,556,226.62s (~41.1 days) as of 2026-08-17T04:09:12Z, boot_id `d0a4169b-96f4-4bb1-b365-92ca527627e6` (EV001); this same boot_id matches the boot_id recorded in both watchdog runs (EV005), so no reboot occurred between those runs and the evidence snapshot.
+- `feed.telegram` check: OK, last `telegram_received` event 619.5s ago vs threshold 7200s (EV005).
+- `feed.pumpportal` check: OK, last observed event was a successful WebSocket connect at 2026-08-17 04:04:57 UTC; the check description notes "reconnects every ~45-60s are expected rotation behavior, not evaluated here," meaning reconnect frequency itself is explicitly out of scope for this check (EV005).
+- Test collection checks (memecoin: 288 tests, research: 229 tests, watchdog: 103 tests, layer2: 39 tests, quant-bot: 56 tests) all report clean collection with no collection errors (EV005).
+- `claims.batch.rc_closure`: OK, 3/3 items GREEN, commit `db32f53` (EV005) — note this commit hash differs from the deployed HEAD `de724c7f1dbdec43aeb32acbf8f6f4d0de81ec0f` (EV002); the evidence does not explain this discrepancy (e.g., whether `db32f53` is a short-SHA of an ancestor commit or an unrelated batch-verification run), so I treat it only as an observed fact, not a resolved one.
+- `research.path_collection` check (OK) reports for day 2026-08-16: 6 tokens scheduled, 4 path files (yield 66.7%), budget usage 10,122 of 100,000 messages, all activity concentrated in UTC hour 23 (all other hours show zero activity) (EV005). This same check has a `RECOVERED` incident entry (first_seen 1786917790, recovered 1786924990) predating the current OK read (EV005).
+- `docs/RECEIPTS.md` file: mtime 1786924681.59, length 175,125 bytes (EV007). This mtime matches the `finished_at`/`started_at` timestamp of the `v8_vs_v7_daily` scheduler receipt (1786924681.6) (EV005), consistent with that job having written to this file at that time, though EV007 alone does not state file content/correctness, only size and mtime.
+- No boot/crash events, OOM kills, or service restarts are shown anywhere in the provided evidence — but no journal/dmesg excerpt was provided either, so absence of such evidence is a gap, not a confirmed absence of incidents at the OS level.
+
+## Explicit gaps / ambiguities
+- No evidence was provided for the actual content or diff of the uncommitted changes in EV002 beyond filenames — cannot assess what those changes contain or whether they are safe/intended.
+- The identity and meaning of commit `db32f53` referenced in `claims.batch.rc_closure` (EV005) is not reconciled against HEAD SHA `de724c7f1...` (EV002); no evidence explains this.
+- EV006's queue numbers are not timestamped and conflict numerically with EV005's `pipeline.research_queue_lag` evidence; cannot determine which is more current or why they differ.
+- No systemd evidence is given for `quantbot.service`/`quantbot-research.service` timers, restart counts, or history beyond the single-line status strings in EV003 — cannot assess restart frequency or historical stability.
+- No evidence given for CPU/memory/disk resource utilization, network reachability beyond the feed checks, or database/queue health beyond what's stated above.
