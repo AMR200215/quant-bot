@@ -3539,3 +3539,256 @@ itself, which is complete. **Holdout was not evaluated. No V8 winner
 was ranked. No live trading code was touched.** One item needs the user
 directly: run the `information_schema.columns` check given above and
 report back — everything else in Phase 2 is closed.
+
+---
+
+## V8-FILTER-DERIVATION — Phase 2.1: Final Engine Integrity Pass
+
+**2026-08-17, git SHA `5f76491`.** External review of Phase 2 found three
+load-bearing gaps before `ENGINE_DESIGN_READY` could be called final:
+the readiness engine collected `forward_venue_qualified_n` but never
+used it; the replay engine accepted any positive price with no defense
+against the real price corruption Phase 2 itself had found; and the
+execution-cost model conflated configured slippage tolerances with
+measured realized cost. All three fixed. **Holdout was never
+evaluated. No candidate was ranked. V7/V8 strategy code and live
+trading were not touched.**
+
+### P2-0 follow-up (resolved this session, before Phase 2.1 started)
+
+`venue_state_at_signal` was confirmed missing at the database level
+(`information_schema.columns` returned 0 rows) — the earlier `ALTER
+TABLE` had never actually committed. User re-ran it fresh; column now
+exists and is live-queryable, confirmed by direct query
+(`sb.table("research_tokens").select(...).not_.is_("venue_state_at_signal","null")`
+succeeds, previously raised `42703 column does not exist`). 95 real
+values that `tracker.py`'s insert retry loop had spooled to
+`research/spool/dropped_fields.jsonl` (rather than losing them) while
+the column didn't exist were recovered via
+`research/backfill_venue_state_from_spool.py` — genuine already-
+captured data, not inference (`venue_state_at_signal` is still never
+derived from `dex_id`, per `KNOWN_GAPS`). Re-checked fresh for this
+Phase 2.1 report: **121 rows now carry a non-null
+`venue_state_at_signal`**, growing continuously (up from 97 at
+recovery time). Real full-gate count (`progress<0.70 AND
+venue_state_at_signal==CURVE_ACTIVE`) is still 1 — the schema is fixed,
+the sample is not yet built.
+
+### Item 1 — readiness must require the actual entry rule
+
+`research/v8_readiness_engine.py` accepted `forward_venue_qualified_n`
+as an input field but never used it in `entry_ready`/`full_eval_ready`
+— a candidate requiring `venue_state_at_signal==CURVE_ACTIVE` could
+report readiness from progress-only evidence alone, with the binding
+venue condition silently unchecked. Every frozen v1 candidate requires
+`venue_state_at_signal`.
+
+Split into two separately-reported flags:
+- **`PROGRESS_EVIDENCE_READY`** — progress-only population clears the
+  thresholds. Real evidence about something, not about the candidate's
+  actual rule if it also binds on venue state.
+- **`FULL_ENTRY_RULE_READY`** — for venue-binding candidates, requires
+  the *contemporaneously observed, venue-qualified* population
+  (`forward_venue_qualified_n` + its own unique-mints/days, never the
+  progress-only ones) to independently clear the same bars. Historical
+  rows with unknown venue state can never satisfy this — never inferred
+  from `dex_id`.
+
+`full_eval_ready` now gates on `FULL_ENTRY_RULE_READY`, not progress
+alone. Regression tests confirm: 500 progress-qualified rows + 0
+venue-qualified rows → `FULL_ENTRY_RULE_READY=False`; 10,000 rows of
+pure progress evidence still cannot satisfy `CURVE_ACTIVE` with zero
+venue-qualified observations; genuine venue-qualified evidence clearing
+the bar correctly flips it `True`; a candidate not requiring venue
+state uses progress-readiness directly. `current_baseline0_e0_readiness()`
+re-run with the real post-recovery numbers (1 full-gate row, <1 day of
+venue coverage) correctly reports `full_entry_rule_ready=False`.
+
+### Item 4 — threshold semantics (folded into item 1)
+
+Every numeric floor (`MIN_ENTRY_N`, `MIN_UNIQUE_MINTS`,
+`MIN_UNIQUE_DAYS`, `MIN_PATH_N`, `MIN_PATH_COVERAGE_PCT`,
+`MIN_SPLIT_BUCKET_N`) is now explicitly labeled
+`READINESS_KIND=ENGINEERING_SANITY_FLOOR` — a precondition below which
+a number is too thin to report at all, never a claim of statistical
+sufficiency. `FUTURE_STATISTICAL_READINESS_CRITERIA` documents six
+criteria real Phase-3 selection readiness will eventually need
+(effective n after IPW, independent days/blocks, holdout CI,
+block-bootstrap CI, profit concentration, regime stability) — all
+explicitly `False`, none implemented, none silently claimed.
+
+### Item 2 — path-integrity gate (`research/v8_path_integrity.py`, new)
+
+`V8_PATH_INTEGRITY_VERSION=1`. `assess_path_integrity()` →
+VALID/INVALID/UNKNOWN + reason codes, per path (aggregated from a
+per-tick pass, since 15/44 sampled files were mixed — corruption is not
+purely file-level).
+
+**Audit of the $73.5B examples, done before encoding any rule (not
+skipped):**
+- `vsol=116.27` exceeds `GRAD_SOL_UI=115.0` while `venue_state` still
+  reads `CURVE_ACTIVE` — a token cannot have more real SOL in its curve
+  than the graduation point while still "on curve." 70 such rows found
+  in a 400-file random sample.
+- `price_sol=0.41996` checked against pump.fun's own bonding-curve
+  formula, not a hand-picked ceiling: using the protocol's fixed public
+  constants (initial virtual token reserves 1,073,000,000; real tokens
+  sold by graduation 793,100,000) and this project's own
+  `GRAD_SOL_UI=115`, the theoretical maximum `CURVE_ACTIVE` price is
+  `(30+115)/279,900,000 ≈ 5.18e-7 SOL/token` — the single highest-price
+  instant on the whole curve. The observed value is **~810,000x**
+  above that ceiling.
+- Two plausible-but-wrong hypotheses were tested and ruled out first:
+  `token_amount==0` looked discriminating but is universal across 100%
+  of `live_pp` rows (a separate, harmless, pre-existing gap — not
+  evidence of price corruption); `price_usd/price_sol`'s internal ratio
+  stays "sane" (50-400) even on corrupted rows, so it can't catch this
+  either.
+- A corpus-wide empirical check independently corroborates the
+  formula-derived finding: the live (non-backfilled) implied-mcap
+  distribution is sharply bimodal — p64=$860,030 (plausible) to
+  p65=$12,447,651,489 (impossible), essentially nothing in between.
+  Used ONLY as a courtesy `UNKNOWN` (never `INVALID`) ceiling for
+  non-`CURVE_ACTIVE` rows, since DEX price discovery is legitimately
+  unconstrained by the curve formula.
+
+**This bug is still active** — corrupted rows dated 2026-08-04 through
+2026-08-17 (today). Root-causing the live-capture bug itself is out of
+this task's scope (Phase 2.1 builds the exclusion gate, not the
+upstream fix) — flagged here so it isn't lost.
+
+**Real corpus scan results** (VPS, `logs/research_paths/`, 4262 total
+path files found; 672 contain any parseable rows via the canonical
+loader — the other 3590 are empty files, a pre-existing, separately
+documented gap from P15-5/P15-7, not a new Phase 2.1 finding):
+
+| | total | valid | invalid | unknown |
+|---|---|---|---|---|
+| **Overall** | 672 | 323 | 346 | 3 |
+| by source: `live_pp` | 463 | 119 | 344 | 0 |
+| by source: `backfill_std_rpc` | 209 | 204 | 2 | 3 |
+
+**51.5% of scanned live-bearing paths are INVALID overall — but 74% of
+`live_pp`-sourced paths are invalid vs. ~1% of `backfill_std_rpc`
+paths** — confirms this is overwhelmingly a live-capture-side bug, not
+a backfill issue. By failure reason:
+`PRICE_EXCEEDS_THEORETICAL_CURVE_MAX`=345,
+`VSOL_EXCEEDS_GRADUATION_WHILE_CURVE_ACTIVE`=183,
+`MCAP_ABOVE_EMPIRICAL_GAP_CEILING_NONCURVE`=3. By date: every single
+calendar day from 2026-08-03 through 2026-08-17 shows corrupted rows
+(rates ranging 0%-100% valid per day) — an ongoing, daily-recurring
+issue, not a resolved historical incident.
+
+### Item 2b — wired into the replay engine
+
+`research/v8_replay_engine.py`'s `replay_strategy_for_full_ev()` is now
+the sole sanctioned entrypoint for `FULL_STRATEGY_EV` — runs the
+integrity gate first, returns `None` on anything not `VALID`.
+`replay_strategy()` itself is unchanged (still usable directly for
+exploratory work). Regression test proves a corrupted extreme-positive
+path can never produce a result through the full-EV entrypoint, while a
+clean path with identical shape still does.
+
+### Item 3 — execution-cost semantics rebuilt (v1 → v2)
+
+`EXECUTION_COST_MODEL_VERSION=2`. v1 wrongly labeled `SELL_LADDER`'s
+35/60/98% rungs as measured scenario slippage — those are the
+executor's willingness-to-accept ceiling
+(`memecoin/executor.py:SELL_LADDER`), not an observation of what
+slippage actually occurs. Now structurally separated and never merged:
+
+- **`CONFIGURED_TOLERANCE`** — pure config facts (buy revert ceiling
+  30%, sell ladder 35/60/98%, priority fee floors), no evidence-class
+  axis at all — a tolerance setting isn't a measurement question.
+- **`ACTUAL_REALIZED_EXECUTION_COST`** — each component tagged with an
+  honest evidence class:
+
+| component | value | evidence class |
+|---|---|---|
+| sell_failed_rate | 8/80 = 10.0% | `MEASURED` |
+| abort_tripwire_rate | 5/80 = 6.25% | `MEASURED` |
+| hard_stop_overshoot_median_pp | -51.3pp (n=9) | `PARTIALLY_MEASURED` |
+| entry_side_slippage_pct | — | `UNMEASURED` |
+| priority_fee_actual_usd | — | `ASSUMPTION_BOUND` (floor only) |
+
+**Cohort check — explicitly required, not previously done: are the 80
+historical live trades exchangeable with V8?** Checked directly, not
+assumed: **no.** All 80 carry `config_tag` in
+`{v7_entry_filters_2026-06-06 (44), v4_2026-05-13 (36)}`,
+`signal_type=social_alert` (80/80) — V8 has never been live-traded.
+Venue-state stratification (`CURVE_ACTIVE` vs. graduated/DEX) was
+attempted and is **confirmed impossible** with the current journal
+schema: `dex_id` is proven unreliable (per the feature registry's own
+note) and no `venue_state` field exists in
+`logs/memecoin_live_journal.csv` at all. Every realized component now
+carries `cohort_matches_v8=False` and an explanatory note — applying
+this evidence to V8 is a labeled transport assumption, never a proven
+equivalence.
+
+**SOL/USD conversion re-audited**, not kept as a static comment: no
+time-aligned market SOL/USD source exists anywhere in this project's
+data. Directly confirmed: the price-capture pipeline itself computes
+`price_usd = price_sol * 175.0` as a fixed constant (verified against
+202,385 integrity-qualified real ticks — p10-p90 range
+174.9998–175.0002, i.e. essentially exact). `SOL_USD_REFERENCE` updated
+from the prior ~$170 code-comment guess to the confirmed $175 constant,
+still explicitly labeled `STATIC_ASSUMPTION` — never claimed to be
+time-aligned market evidence, because none exists.
+
+### Item 5 — venue column, re-verified fresh for this report
+
+Re-ran the exact live check: **121 rows now carry a non-null
+`venue_state_at_signal`** (up from 97 at recovery time — confirms the
+forward pipe keeps working continuously, not just as a one-time fix).
+No fabrication either direction — historical rows before the fix stay
+`NULL` permanently.
+
+### Item 6 — final engine acceptance
+
+`research/tests/test_v8_phase21_dry_pipeline.py` (new): a train-split
+(non-holdout) synthetic dataset run through split → path-integrity →
+readiness → cost-model together, proving all five required guarantees
+hold in combination:
+1. A corrupted path is excluded before it can reach a replay result.
+2. Abundant progress-only evidence with zero venue-qualified
+   observations still reports `full_entry_rule_ready=False`.
+3. Configured tolerance values never appear as a realized-cost value.
+4. Realized components retain distinct evidence classes and
+   `cohort_matches_v8=False` — never flattened or upgraded.
+5. The manifest's holdout lock holds throughout — holdout-split rows
+   are never read for any metric.
+
+**Tests**: 68 new/updated across `test_v8_readiness_engine.py` (23),
+`test_v8_path_integrity.py` (23, new), `test_v8_replay_engine_refactor.py`
+(+2), `test_v8_execution_cost_model.py` (16, rewritten),
+`test_v8_holdout_lock.py` (1 updated), `test_v8_phase21_dry_pipeline.py`
+(7, new). Full suite on the VPS's real environment (`research/tests/` +
+`watchdog/tests/` + `memecoin/tests/`): **749 passed** (up from 703
+before Phase 2.1). Top-level `tests/`: 49 passed, same 7 pre-existing
+unrelated failures as every prior run this session — zero regressions
+in V8/V7 runtime behavior.
+
+**Files**: new — `research/v8_path_integrity.py`,
+`research/backfill_venue_state_from_spool.py`,
+`research/tests/test_v8_path_integrity.py`,
+`research/tests/test_v8_phase21_dry_pipeline.py`. Modified —
+`research/v8_readiness_engine.py`, `research/v8_replay_engine.py`,
+`research/v8_execution_cost_model.py`, and their test files.
+
+Commits: `e50c42c` (items 1/2/2b), `8eebcff` (item 3), `5f76491`
+(item 6 + dry pipeline). Final git SHA: **`5f76491`**, pushed to
+`origin/main`, pulled and verified on the VPS (`git rev-parse HEAD`
+matches on both sides).
+
+### Final status
+
+**`V8_FD_PHASE21_ENGINE_READY`**
+
+Not `V8_FD_PHASE21_BLOCKED` — every load-bearing gap identified in
+review is fixed, tested, and verified end to end (dry pipeline, real
+environment, real evidence). `SELECTION_DATA_READY` remains false
+(unchanged in substance — the schema now works, the sample doesn't
+exist yet), which was never the bar for this status. **Holdout was not
+evaluated. No candidate was ranked. V7/V8 strategy code and live
+trading were not touched.** Ready to wait for `SELECTION_DATA_READY`
+and later enter Phase 3.
