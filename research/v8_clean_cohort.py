@@ -141,6 +141,20 @@ GATES = [
 CANDIDATE0_PROGRESS_HALF_N = 48          # progress_at_signal < 0.70, clean cohort
 CANDIDATE0_FULL_GATE_HISTORICAL_N = None  # UNKNOWN -- venue_state_at_signal not persisted historically; never inferred from dex_id
 
+# P2-10 (2026-08-17): explicit, permanent policy -- CANDIDATE0_PROGRESS_HALF_N
+# (48 rows at P15-1, grows over time) is the PROGRESS HALF of candidate-0's
+# gate only, over ~one week, one continuous regime (P15-2). It is NOT a
+# validation of candidate-0 and must never be reported as one. Phase 2 may
+# use this population only for: pipeline/join testing, data-readiness
+# calculation (research/v8_split.py, a future readiness engine), and
+# feature-coverage inspection. It may NOT be used to claim any candidate
+# is "validated," "profitable," or "confirmed" -- that requires the venue
+# state half of the gate, which stays UNKNOWN for historical rows (never
+# approximated from dex_id -- see KNOWN_GAPS and
+# v8_feature_registry.yaml's dex_id entry) until forward-collected data
+# (venue_state_at_signal, persisted going forward per P15-4) accumulates.
+CANDIDATE0_PROGRESS_HALF_IS_NOT_A_VALIDATION = True
+
 # P15-2 (2026-08-16 re-verification) -- the CLEAN cohort's own date range,
 # distinct from the overall 33120-row table's Jun21-Aug15 span
 CLEAN_COHORT_DATE_RANGE = {

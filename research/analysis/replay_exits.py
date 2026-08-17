@@ -36,6 +36,7 @@ from pathlib import Path
 from statistics import mean, median, quantiles
 
 from research.path_schema import load_path_file
+from research.v8_replay_engine import replay_strategy, FixedLagExecutionModel
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -149,39 +150,12 @@ def _discover_paths(research_paths_dir: Path, live_only: bool) -> list[Path]:
 
 
 # ── Replay engine ──────────────────────────────────────────────────────────────
-
-@dataclass
-class _Position:
-    entry_price:   float
-    entry_ts_ms:   int
-    remaining:     float = 1.0          # fraction of position still open
-    peak_price:    float = 0.0
-    peak_ts_ms:    int   = 0
-    trail_stop:    float = 0.0          # absolute price level (0 = not armed)
-    profit_locked: bool  = False
-    tp_idx:        int   = 0            # which TP level we're up to
-    exits:         list  = field(default_factory=list)
-    # each exit: (price, fraction_of_entry, reason)
-
-
-def _find_price_at_lag(rows: list[dict], from_ts_ms: int, lag_ms: int) -> float:
-    """Return price of nearest tick at or after from_ts_ms + lag_ms."""
-    target = from_ts_ms + lag_ms
-    after  = [r for r in rows if r["ts_ms"] >= target]
-    if after:
-        return after[0]["price_usd"]
-    # Past end of file — use last price
-    return rows[-1]["price_usd"]
-
-
-def _effective_trail_pct(spec: dict, gain: float) -> float | None:
-    """Return the currently active trailing stop width (as a negative fraction)."""
-    active = None
-    for tier in spec["trail_tiers"]:
-        if gain >= tier["activates_at"]:
-            active = -abs(tier["trail_pct"])
-    return active
-
+#
+# P2-6/FD14: the tick-resolution simulator itself now lives in
+# research/v8_replay_engine.py (replay_strategy) as a reusable interface.
+# This wrapper preserves the exact prior call shape (dict in, dict out,
+# entry assumed at rows[0] -- P2-7 fixes that assumption at the caller
+# level, not here) so this script's CLI output is unchanged.
 
 def _replay_one(rows: list[dict], spec: dict, exec_lag_ms: int) -> dict | None:
     """
@@ -189,110 +163,22 @@ def _replay_one(rows: list[dict], spec: dict, exec_lag_ms: int) -> dict | None:
     {exit_price, exit_reason, pnl_pct, hold_time_s, partial_exits}
     Returns None if path is too short.
     """
-    if len(rows) < 2:
-        return None
-
-    entry_price  = rows[0]["price_usd"]
-    entry_ts_ms  = rows[0]["ts_ms"]
-    if entry_price <= 0:
-        return None
-
-    pos = _Position(
-        entry_price = entry_price,
-        entry_ts_ms = entry_ts_ms,
-        peak_price  = entry_price,
-        peak_ts_ms  = entry_ts_ms,
+    result = replay_strategy(
+        rows=rows,
+        entry_ts=rows[0]["ts_ms"] if rows else 0,
+        entry_spec={},
+        exit_spec=spec,
+        execution_model=FixedLagExecutionModel(exec_lag_ms=exec_lag_ms),
     )
-
-    # Helpers
-    hard_stop_price  = entry_price * (1 + spec["hard_stop"])
-    time_stop_ms     = spec["time_stop_min"] * 60 * 1000
-    time_stop_floor  = spec.get("time_stop_min_gain", 0.30)
-    pl_min           = spec.get("profit_lock_min_gain", 0.40)
-    pl_max           = spec.get("profit_lock_max_gain", 1.00)
-    pl_stall_ms      = spec.get("profit_lock_stall_sec", 60) * 1000
-    tp_levels        = spec.get("tp_levels", [])
-
-    def _exit(price: float, reason: str, fraction: float = None) -> dict:
-        """Build result dict from a full or final-partial exit."""
-        frac = fraction if fraction is not None else pos.remaining
-        pos.exits.append((price, frac, reason))
-        pos.remaining -= frac
-
-        # Compute weighted average exit price across all partial exits
-        weighted = sum(p * f for p, f, _ in pos.exits)
-        total_f  = sum(f for _, f, _ in pos.exits)
-        avg_exit = weighted / total_f if total_f > 0 else price
-
-        pnl_pct     = (avg_exit / entry_price - 1) * 100
-        hold_time_s = (rows[-1]["ts_ms"] - entry_ts_ms) / 1000
-        return {
-            "exit_price":    avg_exit,
-            "exit_reason":   reason,
-            "pnl_pct":       round(pnl_pct, 2),
-            "hold_time_s":   round(hold_time_s, 1),
-            "partial_exits": len(pos.exits),
-        }
-
-    for tick in rows[1:]:
-        price  = tick["price_usd"]
-        now_ms = tick["ts_ms"]
-        if price <= 0:
-            continue
-
-        gain = price / entry_price - 1
-
-        # Update peak
-        if price > pos.peak_price:
-            pos.peak_price = price
-            pos.peak_ts_ms = now_ms
-
-        peak_gain = pos.peak_price / entry_price - 1
-
-        # ── TP ladder (partial exits) ─────────────────────────────────────────
-        for tp_idx in range(pos.tp_idx, len(tp_levels)):
-            tp_gain, tp_fraction = tp_levels[tp_idx]
-            if gain >= tp_gain and pos.remaining > 0:
-                fill = _find_price_at_lag(rows, now_ms, exec_lag_ms)
-                frac = min(tp_fraction, pos.remaining)
-                pos.exits.append((fill, frac, f"tp_{tp_idx}"))
-                pos.remaining -= frac
-                pos.tp_idx = tp_idx + 1
-                if pos.remaining <= 0.01:
-                    return _exit(fill, f"tp_{tp_idx}_final")
-
-        # ── Hard stop ─────────────────────────────────────────────────────────
-        if price <= hard_stop_price:
-            fill = _find_price_at_lag(rows, now_ms, exec_lag_ms)
-            return _exit(fill, "hard_stop")
-
-        # ── Trailing stop (armed when peak_gain crosses tier) ─────────────────
-        trail_pct = _effective_trail_pct(spec, peak_gain)
-        if trail_pct is not None:
-            trail_price = pos.peak_price * (1 + trail_pct)
-            if price <= trail_price:
-                fill = _find_price_at_lag(rows, now_ms, exec_lag_ms)
-                return _exit(fill, "trail_stop")
-            # Keep highest possible trail level
-            pos.trail_stop = max(pos.trail_stop, trail_price)
-
-        # ── Profit lock (stall detector) ──────────────────────────────────────
-        if (not pos.profit_locked
-                and pl_min <= peak_gain <= pl_max
-                and (now_ms - pos.peak_ts_ms) >= pl_stall_ms):
-            fill = _find_price_at_lag(rows, now_ms, exec_lag_ms)
-            return _exit(fill, "profit_lock")
-
-        # ── Time stop ─────────────────────────────────────────────────────────
-        elapsed_ms = now_ms - entry_ts_ms
-        if elapsed_ms >= time_stop_ms and gain < time_stop_floor:
-            fill = _find_price_at_lag(rows, now_ms, exec_lag_ms)
-            return _exit(fill, "time_stop")
-
-    # Path ended without exit trigger → exit at last price
-    last_price = rows[-1]["price_usd"]
-    fill = last_price  # no lag available at end of file
-    return _exit(fill, "path_end")
+    if result is None:
+        return None
+    return {
+        "exit_price":    result.exit_price,
+        "exit_reason":   result.exit_reason,
+        "pnl_pct":       result.pnl_pct,
+        "hold_time_s":   result.hold_time_s,
+        "partial_exits": result.partial_exits,
+    }
 
 
 # ── Statistics ─────────────────────────────────────────────────────────────────
