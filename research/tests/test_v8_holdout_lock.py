@@ -26,8 +26,9 @@ class TestManifestProvenanceFields(unittest.TestCase):
         self.assertTrue(m.exit_registry_hash)
 
     def test_execution_cost_model_version_populated(self):
+        from research.v8_execution_cost_model import EXECUTION_COST_MODEL_VERSION
         m = build_manifest_from_current_state()
-        self.assertEqual(m.execution_cost_model_version, 1)
+        self.assertEqual(m.execution_cost_model_version, EXECUTION_COST_MODEL_VERSION)
 
     def test_feature_registry_hash_populated_and_deterministic(self):
         m1 = build_manifest_from_current_state()
