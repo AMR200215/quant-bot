@@ -16,6 +16,7 @@ test-only guarantee to a runtime one.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Optional
 
@@ -44,6 +45,14 @@ def reload_registry() -> None:
     """Force a fresh read from disk (tests only, normally)."""
     global _cache
     _cache = None
+
+
+def feature_registry_hash() -> str:
+    """SHA256 of the raw registry file bytes -- P2-12: the experiment
+    manifest needs to detect ANY edit to the feature registry (including
+    ones that don't change parsed values, e.g. reordering), not just a
+    version-number bump someone forgot to make."""
+    return hashlib.sha256(_REGISTRY_PATH.read_bytes()).hexdigest()
 
 
 def _feature_by_name(name: str) -> Optional[dict]:
