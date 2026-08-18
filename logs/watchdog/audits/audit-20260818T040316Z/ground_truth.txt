@@ -1,0 +1,57 @@
+# Audit Summary — audit-20260818T040316Z
+
+## Deployed SHA / working tree
+- Deployed HEAD is `a82f90a0286197382938aa41fa4430e86e24addb` (EV002), and this same SHA is recorded against the latest fast watchdog run and all recent job receipts (EV005), so the running code corresponds to this commit.
+- The working tree is **not clean**. `git status`-style output shows 5 modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_positions.json`, `memecoin/data/memecoin_signals.json` — 6 total `M` lines) and a large number of untracked files/directories, including a script `p15_1_2_audit.py`, new log/data directories, and `research/spool/dropped_fields.jsonl` / `failed_inserts.jsonl` (EV002). No claim can be made about *why* these are dirty — only that the tree differs from the commit.
+
+## systemd services / timers
+- `quantbot.service`: active/running, last exit success (EV003).
+- `quantbot-research.service`: active/running, last exit success (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead**, but `Result=success`/`ExecMainStatus=0`, consistent with a oneshot job that ran and exited (EV003). Its timer shows a completed run 2m58s ago and next fire in 1m44s (EV003), and a corresponding fast watchdog run record exists (EV005), so this inactivity appears to be the normal oneshot idle state, not a failure — but the evidence does not explicitly label it as "expected," only exit-code success.
+- `quantbot-watchdog-slow.service`: state is `activating`/`start` (EV003) — i.e., currently in the process of starting/running, not yet settled. Consistent with EV005's `latest_slow_run` showing `finished_at: null`, `checks_completed: null`, `final_runner_status: "in_progress"` — the slow watchdog run is **still in progress** at evidence-collection time.
+- No service is in a `failed` ActiveState per this evidence (EV003).
+
+## Cron
+- Three cron files exist (`quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`), all mode `0100644`, with well-formed single-line entries invoking `watchdog.exec_wrapper` (EV004).
+- `recent_parser_error_lines` is an empty list — no recent parser errors recorded (EV004).
+- Watchdog's own static cron checks (`cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`) all report `OK`, "parses cleanly, no recent journal parser errors" (EV005).
+- Historical incident records show these same cron_static/cron_execution checks *previously* fired WARN and later RECOVERED (e.g., `cron_static.epoch_daily` first_seen 1786578303, recovered 1786704004; `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily` similarly recovered) (EV005). These are past incidents, not current — all show `state: RECOVERED`.
+
+## Watchdog's own most recent run status
+- **Fast profile**: run `b4c65d9116ac4b00`, started/finished at 1787025620.06 (duration ~12.5ms), `final_runner_status: "ok"`, 11/11 checks completed, git_sha matches deployed HEAD (EV005).
+- **Slow profile**: run `dd1ac58beabf49c2`, started at 1787025791.24, `finished_at: null`, `checks_completed: null`, `final_runner_status: "in_progress"` (EV005) — this run had not completed as of evidence capture, even though 10 check results are listed. Whether these 10 results are final or partial is not stated explicitly; the run record itself says in-progress, so treat completion as unconfirmed.
+
+## Active incidents
+Per `all_incidents` (EV005), two incidents are currently **FIRING** (not recovered):
+1. `claims.batch.v8_readiness` — FIRING since 1786585581, last_seen 1787025791, `consecutive_failures: 146`. Underlying check detail (EV005, `claims.batch.v8_readiness`) shows 3/7 GREEN, 4/7 PARTIAL (`N2`, `N4`, `N6`, `N7`), 0 FAIL — noted explicitly as a case where the batch-verify CLI exit code would be 0 despite incompleteness.
+2. `research.path_collection` — FIRING since 1786917790, last_seen 1787025791, `consecutive_failures: 6` (note: it shows one prior `recovered_at: 1786924990` followed by re-firing, so it recovered once and is firing again now). Underlying check (EV005, `research.path_collection`) reports for 2026-08-17: path yield 29.1% (below 50% floor) and PumpPortal daily message budget exceeded (105,406/100,000, 88 tokens dropped).
+
+All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `funnel.v8`) show `state: RECOVERED` (EV005) — historically fired, currently resolved.
+
+## Research pipeline queue lag
+- EV005's own `pipeline.research_queue_lag` check (evaluated as part of the fast run, timestamped near 1787025617) reports `status: OK`, `gap_bytes: 0`, with `queue_size: 634338` and `offset: 634338` — consumer caught up at that check time.
+- EV006, a separate/later raw snapshot, shows `queue_size: 634386` and `queue_offset: "634386"` — also equal, implying no lag at the time EV006 was captured. However, EV006 has no timestamp of its own in the evidence, so its recency relative to EV005's check cannot be independently confirmed beyond the values being higher (634386 > 634338), consistent with more data having arrived and been consumed since.
+- No lag is evidenced in either source.
+
+## research_spool
+- `pipeline.research_spool` check: `OK`, 0 failed inserts in the last 2.0h; 68 total historical lines on disk noted explicitly as not itself indicating an active problem (EV005).
+
+## Test collection / drift
+- All four test-collection checks (memecoin: 288 tests, research: 358 tests, watchdog: 103 tests, layer2: 39 tests, quant-bot root: 56 tests) report `OK`/"collects cleanly" (EV005).
+- `test_drift.stale_mocks`: OK, 130 resolvable patch() targets checked, explicitly noting third-party/stdlib targets are skipped and unverified (EV005).
+
+## claims.batch.rc_closure
+- `OK`, 3/3 GREEN, commit `db32f53` (EV005) — note this commit differs from the deployed HEAD SHA `a82f90a...` (EV002); evidence doesn't clarify the relationship between these two SHAs.
+
+## Layer 2 audit staleness
+- Check reports `OK`: last Layer 2 audit `audit-20260817T040914Z` was 23.9h ago with 8 findings, 0 critical (EV005).
+
+## Feeds
+- `feed.telegram`: OK, last event 1223s ago vs. 7200s threshold (EV005).
+- `feed.pumpportal`: OK, most recent event a successful connect at 03:59:59 UTC; evidence notes reconnects every ~45-60s are treated as expected rotation and explicitly "not evaluated here" (EV005) — so connection stability beyond "last event was a successful connect" is not assessed by this check.
+
+## Gaps / ambiguities explicitly noted
+- The relationship (if any) between deployed HEAD `a82f90a0...` (EV002/EV005) and commit `db32f53` referenced in `claims.batch.rc_closure` (EV005) is not established by the evidence.
+- The slow watchdog run's `final_runner_status` is `in_progress` with `finished_at: null` (EV005) — its 10 listed check results may not represent a finalized/complete run; no evidence confirms completion.
+- EV006 carries no explicit timestamp, so its temporal relationship to EV005's queue-lag check timestamp is inferred only from the higher queue_size value, not confirmed.
+- No host-level explanation is given for why `quantbot-watchdog-fast.service` shows `inactive/dead` between timer firings — evidence is consistent with normal oneshot behavior (successful exit code, timer firing on schedule) but the evidence does not state this is the intended/designed lifecycle, only what is observed.
