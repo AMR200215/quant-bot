@@ -10,7 +10,7 @@ Run: python -m pytest memecoin/tests/test_pumpfun_reserve_pricing.py -v
 import unittest
 
 from memecoin.pumpfun_reserve_pricing import (
-    price_sol_from_pp_reserves, price_usd_from_pp_reserves,
+    price_sol_from_pp_reserves, price_usd_from_pp_reserves, venue_state_from_pp_reserves,
     PUMPFUN_INITIAL_VIRTUAL_TOKEN_RESERVES, PUMPFUN_REAL_TOKEN_RESERVES_AT_GRADUATION,
     MIN_VIRTUAL_TOKEN_RESERVES_ON_CURVE,
 )
@@ -88,6 +88,26 @@ class TestInvariants(unittest.TestCase):
         self.assertEqual(PUMPFUN_INITIAL_VIRTUAL_TOKEN_RESERVES, 1_073_000_000)
         self.assertEqual(PUMPFUN_REAL_TOKEN_RESERVES_AT_GRADUATION, 793_100_000)
         self.assertEqual(MIN_VIRTUAL_TOKEN_RESERVES_ON_CURVE, 279_900_000)
+
+
+class TestVenueStateFromReserves(unittest.TestCase):
+    """V8 DATA RECOVERY item 4: venue_state was previously hardcoded
+    CURVE_ACTIVE unconditionally -- the direct cause of Phase 2.1's
+    VSOL_EXCEEDS_GRADUATION_WHILE_CURVE_ACTIVE findings."""
+
+    def test_reserves_present_is_curve_active(self):
+        self.assertEqual(venue_state_from_pp_reserves(30.1, 1_069_434_660.76), "CURVE_ACTIVE")
+
+    def test_reserves_absent_is_unknown_not_curve_active(self):
+        self.assertEqual(venue_state_from_pp_reserves(None, None), "UNKNOWN")
+        self.assertEqual(venue_state_from_pp_reserves(0, 0), "UNKNOWN")
+
+    def test_never_asserts_graduated_or_dex_active_without_proof(self):
+        """Only CURVE_ACTIVE or UNKNOWN may come out of this function --
+        it must never assert a specific post-graduation state it cannot
+        prove from this message shape alone."""
+        for vsol, vtok in [(None, None), (0, 0), (30.0, 0), (0, 1000.0)]:
+            self.assertIn(venue_state_from_pp_reserves(vsol, vtok), ("CURVE_ACTIVE", "UNKNOWN"))
 
 
 if __name__ == "__main__":

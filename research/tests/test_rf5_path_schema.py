@@ -371,7 +371,8 @@ class TestTraderPk(unittest.TestCase):
         os.close(fd)
         tmp_path = Path(tmp)
         try:
-            v1_header = [c for c in PATH_HEADER if c != "trader_pk"]
+            v1_only_fields = {"trader_pk", "vtok", "admission_probability", "admission_reason"}
+            v1_header = [c for c in PATH_HEADER if c not in v1_only_fields]
             with open(tmp_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow(v1_header)

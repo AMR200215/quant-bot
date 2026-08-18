@@ -38,7 +38,19 @@ log = logging.getLogger(__name__)
 # ── Schema constants ───────────────────────────────────────────────────────────
 
 # Increment when PATH_HEADER changes
-PATH_SCHEMA_VERSION: int = 2
+#
+# v3 (V8 DATA RECOVERY batch, 2026-08-19, item 4): adds "vtok"
+# (vTokensInBondingCurve, raw PumpPortal field, UI units -- see
+# memecoin/pumpfun_reserve_pricing.py for why no conversion is needed)
+# and "admission_probability"/"admission_reason" (this mint's P16-3/
+# P16-4 admission decision, denormalized onto every row of its path so
+# future pricing/IPW audits never require a separate join against
+# logs/research_admission/admission_log.jsonl to reconstruct it).
+# Preserving the raw reserve fields going forward is what makes future
+# execution/price-impact modeling possible without having to
+# reconstruct information that was never saved (exactly the gap this
+# batch's root-cause investigation ran into for existing rows).
+PATH_SCHEMA_VERSION: int = 3
 
 # Fields that must be present and non-empty for a row to be valid
 PATH_REQUIRED_FIELDS: list[str] = ["schema_version", "ts_ms", "price_usd", "backfilled"]
@@ -54,12 +66,15 @@ PATH_HEADER: list[str] = [
     "side",                # "buy" | "sell" | "unknown"
     "token_amount",        # float (0 if unknown)
     "sol_amount",          # float
-    "vsol",                # vSolInBondingCurve (0 if backfill)
+    "vsol",                # vSolInBondingCurve, UI SOL units (0 if backfill)
+    "vtok",                # v3: vTokensInBondingCurve, UI token units, NO /1e6 (0 if backfill/unavailable)
     "source",              # "live_pp" | "backfill_helius" | "unknown"
     "venue_state",         # "CURVE_ACTIVE" | "GRADUATED" | "DEX_ACTIVE" | "UNKNOWN"
     "backfilled",          # "true" | "false"
     "data_status",         # "ok" | "partial" | "inferred"
     "trader_pk",           # N7(a): PP traderPublicKey — base58 wallet, "" if unknown/legacy
+    "admission_probability",  # v3: this mint's P16-3 admission probability at admit time ("" if unknown/legacy)
+    "admission_reason",       # v3: "under_hourly_pace" | "sampled_admit" | etc. ("" if unknown/legacy)
 ]
 
 # Allowed values for enum-like fields
@@ -69,7 +84,7 @@ _VALID_VENUES     = {"CURVE_ACTIVE", "GRADUATED", "DEX_ACTIVE", "UNKNOWN"}
 _VALID_STATUSES   = {"ok", "partial", "inferred"}
 _VALID_BACKFILLED = {"true", "false"}
 
-# Defaults used when normalising legacy (v0) rows
+# Defaults used when normalising legacy (v0/v1/v2) rows
 _LEGACY_DEFAULTS: dict = {
     "schema_version":    "0",
     "research_event_id": "",
@@ -78,6 +93,9 @@ _LEGACY_DEFAULTS: dict = {
     "token_amount":      "0",
     "venue_state":       "UNKNOWN",
     "data_status":       "ok",
+    "vtok":                    "0",  # v3 field, absent on pre-v3 rows -- never reconstructed
+    "admission_probability":   "",   # v3 field, absent on pre-v3 rows
+    "admission_reason":        "",   # v3 field, absent on pre-v3 rows
 }
 
 

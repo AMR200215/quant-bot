@@ -53,6 +53,7 @@ from research.config import (
 )
 from research.spool.writer import spool_dropped_field
 from research.path_schema import PATH_HEADER as _CSV_HEADER, PATH_SCHEMA_VERSION as _SCHEMA_VER
+from memecoin.pumpfun_reserve_pricing import venue_state_from_pp_reserves as _venue_state_from_pp_reserves
 
 log = logging.getLogger(__name__)
 
@@ -677,13 +678,22 @@ class PeakTracker:
                                         side       = msg.get("txType", "") or "unknown"
                                         sol_amount = float(msg.get("solAmount") or 0)
                                         vsol       = float(msg.get("vSolInBondingCurve") or 0)
+                                        vtok       = float(msg.get("vTokensInBondingCurve") or 0)
                                         ts_ms      = int(now * 1000)
                                         price_sol  = round(price / self._sol_price, 12) if self._sol_price > 0 else 0.0
-                                        # Retrieve IDs from state (set in schedule_token)
+                                        # V8 DATA RECOVERY item 4: see
+                                        # memecoin.pumpfun_reserve_pricing.venue_state_from_pp_reserves
+                                        # -- venue_state was previously hardcoded "CURVE_ACTIVE"
+                                        # unconditionally, the direct cause of Phase 2.1's
+                                        # VSOL_EXCEEDS_GRADUATION_WHILE_CURVE_ACTIVE findings.
+                                        venue_state = _venue_state_from_pp_reserves(vsol, vtok)
+                                        # Retrieve IDs + admission provenance from state (set in schedule_token)
                                         with self._lock:
                                             _st = self._tracked.get(mint, {})
                                             _rev_id = _st.get("research_event_id", "")
                                             _ev_id  = _st.get("event_id", "")
+                                            _admit_prob   = _st.get("path_sampling_probability", "")
+                                            _admit_reason = _st.get("admission_reason_at_admit", "")
                                         # Canonical RF5 row — column order matches PATH_HEADER
                                         trader_pk = msg.get("traderPublicKey", "")  # N7(a)
                                         try:
@@ -698,11 +708,14 @@ class PeakTracker:
                                                 0,                    # token_amount (not from PP)
                                                 sol_amount,           # sol_amount
                                                 vsol,                 # vsol
+                                                vtok,                 # vtok (v3)
                                                 "live_pp",            # source
-                                                "CURVE_ACTIVE",       # venue_state
+                                                venue_state,          # venue_state
                                                 "false",              # backfilled
                                                 "ok",                 # data_status
                                                 trader_pk,            # trader_pk (N7a)
+                                                _admit_prob,          # admission_probability (v3)
+                                                _admit_reason,        # admission_reason (v3)
                                             ])
                                             self._ticks_today += 1
                                         except Exception:
@@ -768,6 +781,13 @@ class PeakTracker:
                                         st = self._tracked.get(addr)
                                         if st is not None:
                                             st["admission_hour"] = hour
+                                            # V8 DATA RECOVERY item 4: stash the admission
+                                            # decision on tracked state too (not just the
+                                            # log line) so every tick row this mint writes
+                                            # can carry it -- no separate join against
+                                            # admission_log.jsonl needed to reconstruct it.
+                                            st["path_sampling_probability"] = round(prob, 6)
+                                            st["admission_reason_at_admit"] = reason
                                     admitted.append(addr)
                                 else:
                                     rejected.append(addr)

@@ -93,3 +93,25 @@ def price_usd_from_pp_reserves(v_sol_in_bonding_curve, v_tokens_in_bonding_curve
     if rate <= 0:
         return None
     return price_sol * rate
+
+
+def venue_state_from_pp_reserves(v_sol_in_bonding_curve, v_tokens_in_bonding_curve) -> str:
+    """
+    V8 DATA RECOVERY item 4: research/peak_tracker.py previously wrote
+    venue_state="CURVE_ACTIVE" unconditionally on every tick -- the
+    direct cause of Phase 2.1's VSOL_EXCEEDS_GRADUATION_WHILE_
+    CURVE_ACTIVE findings (a genuinely-graduated token kept getting
+    every later tick mislabeled).
+
+    Reserve fields present (the same presence check
+    price_sol_from_pp_reserves already uses to decide its formula
+    branch) is the only evidence-grounded signal available from this
+    message shape: their presence means the token is still on the
+    bonding curve; their absence means it left, but this shape alone
+    cannot prove GRADUATED vs DEX_ACTIVE -- reported "UNKNOWN" rather
+    than asserted, per this project's "prove, don't infer" discipline
+    (no live-captured evidence of a genuinely-graduated message's exact
+    shape exists yet to justify a more specific claim).
+    """
+    price = price_sol_from_pp_reserves(v_sol_in_bonding_curve, v_tokens_in_bonding_curve)
+    return "CURVE_ACTIVE" if price is not None else "UNKNOWN"
