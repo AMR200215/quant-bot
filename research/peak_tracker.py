@@ -305,15 +305,27 @@ class PeakTracker:
         """
         Derive USD price from bonding-curve reserves, falling back to
         per-trade amounts for graduated/pump-amm tokens (no vSol/vTokens
-        on those messages — same gap found and fixed in
-        memecoin/pumpportal_monitor.py's _compute_price on 2026-08-04).
-        tokenAmount/solAmount arrive already in human-readable UI units —
-        do NOT apply the /1e6 that vTokensInBondingCurve needs.
+        on those messages).
+
+        V8 DATA RECOVERY (2026-08-19): this used to apply an erroneous
+        /1e6 to vTokensInBondingCurve, on the wrong belief that
+        PumpPortal delivers it in raw base units the way the on-chain
+        account does. Proven wrong by live capture (see
+        memecoin/pumpfun_reserve_pricing.py's module docstring for the
+        evidence) -- vTokensInBondingCurve arrives already in UI units,
+        exactly like tokenAmount/solAmount below. Both reserve fields
+        and both trade-amount fields need NO conversion; this was the
+        root cause of the price corruption research/v8_path_integrity.py
+        found and excluded downstream (Phase 2.1) -- fixed here at the
+        producer instead of only filtered after the fact.
         """
-        vsol = float(msg.get("vSolInBondingCurve") or 0)
-        vtok = float(msg.get("vTokensInBondingCurve") or 0)
-        if vsol > 0 and vtok > 0:
-            return (vsol / (vtok / 1e6)) * self._sol_price
+        from memecoin.pumpfun_reserve_pricing import price_usd_from_pp_reserves
+
+        vsol = msg.get("vSolInBondingCurve")
+        vtok = msg.get("vTokensInBondingCurve")
+        price = price_usd_from_pp_reserves(vsol, vtok, self._sol_price)
+        if price is not None:
+            return price
         sol_amt   = msg.get("solAmount")
         token_amt = msg.get("tokenAmount")
         if sol_amt and token_amt and float(token_amt) > 0:

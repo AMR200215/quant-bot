@@ -11,8 +11,11 @@ Two modes:
      in/out, creator_sold flag.  scanner._run_screening_checks() reads state
      at T+30/60/120s and fires a paper-only signal if conditions are met.
 
-Price formula (both modes):
-  price_usd = (vSolInBondingCurve / (vTokensInBondingCurve / 1e6)) * sol_price_usd
+Price formula (both modes) — see memecoin/pumpfun_reserve_pricing.py,
+the single canonical implementation both branches of _compute_price()
+call (V8 DATA RECOVERY, 2026-08-19; the /1e6 previously shown here was
+proven wrong by live capture and removed):
+  price_usd = (vSolInBondingCurve / vTokensInBondingCurve) * sol_price_usd
 
 Latency: ~1s from on-chain confirm to price update vs 10s DexScreener poll.
 
@@ -1129,20 +1132,31 @@ class PumpPortalMonitor:
     # ------------------------------------------------------------------
 
     def _compute_price(self, msg: dict) -> float:
-        """Derive USD price from virtual reserves, falling back to trade amounts."""
+        """
+        Derive USD price from virtual reserves, falling back to trade
+        amounts.
+
+        V8 DATA RECOVERY (2026-08-19): the reserve branch below used to
+        apply an erroneous /1e6 to vTokensInBondingCurve -- the EXACT
+        SAME bug as the one root-caused in this file on 2026-08-04 for
+        the trade-amount fallback branch (that fix only touched the
+        fallback, leaving this primary branch still wrong -- precisely
+        the "same bug recurs in a sibling path" failure mode a single
+        un-shared implementation invites). Proven wrong by live capture
+        (memecoin/pumpfun_reserve_pricing.py's module docstring) --
+        vTokensInBondingCurve arrives already in UI units, needing no
+        conversion, same as tokenAmount/solAmount below. Both branches
+        now call the one canonical helper.
+        """
+        from memecoin.pumpfun_reserve_pricing import price_usd_from_pp_reserves
+
         with self._sol_price_lock:
             sol_price = self._sol_price
         v_sol    = msg.get("vSolInBondingCurve")
         v_tokens = msg.get("vTokensInBondingCurve")
-        if v_sol and v_tokens and float(v_tokens) > 0:
-            return (float(v_sol) / (float(v_tokens) / 1e6)) * sol_price
-        # NOTE: unlike vTokensInBondingCurve (raw base units, needs /1e6),
-        # per-trade tokenAmount/solAmount arrive already in human-readable
-        # (UI) units — dividing by 1e6 here inflated price ~1,000,000x for
-        # every graduated/pump-amm token (no vSol/vTokens on those messages,
-        # so this branch is the only path). Root-caused 2026-08-04 from
-        # corrupted paper-close PnL (e.g. exit_price=$16.73 on a token whose
-        # entry was $0.00001295 — off by ~1e6, matching this exact bug).
+        price = price_usd_from_pp_reserves(v_sol, v_tokens, sol_price)
+        if price is not None:
+            return price
         sol_amt   = msg.get("solAmount")
         token_amt = msg.get("tokenAmount")
         if sol_amt and token_amt and float(token_amt) > 0:

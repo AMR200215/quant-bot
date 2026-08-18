@@ -31,6 +31,25 @@ class TestVersioning(unittest.TestCase):
         self.assertEqual(V8_PATH_INTEGRITY_VERSION, 1)
 
 
+class TestCeilingFormulaCorrection(unittest.TestCase):
+    """V8 DATA RECOVERY (2026-08-19): GRAD_SOL_UI is already the full
+    virtual SOL reserve at graduation -- confirmed by a real live-
+    captured near-graduation PumpPortal message (vSolInBondingCurve=
+    ~115.005, matching GRAD_SOL_UI=115.0 directly). The theoretical
+    ceiling must use GRAD_SOL_UI alone, not GRAD_SOL_UI+30."""
+
+    def test_theoretical_ceiling_uses_grad_sol_ui_directly(self):
+        from research.config import GRAD_SOL_UI
+        expected = GRAD_SOL_UI / 279_900_000
+        self.assertAlmostEqual(THEORETICAL_MAX_CURVE_ACTIVE_PRICE_SOL, expected, places=12)
+
+    def test_real_near_graduation_example_stays_at_or_under_ceiling(self):
+        # mint=eMSgEEkS8RBgyKeS4HZwFcb6gZ3gN8Zj4Y4grQ5pump, live-captured 2026-08-19
+        v_sol, v_tok = 115.005359056806, 279900000
+        real_price = v_sol / v_tok
+        self.assertLessEqual(real_price, CURVE_ACTIVE_PRICE_CEILING_SOL)
+
+
 class TestTickIntegrity(unittest.TestCase):
 
     def test_real_corrupted_row_is_invalid_with_both_provable_reasons(self):

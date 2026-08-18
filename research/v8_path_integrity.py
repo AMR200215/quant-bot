@@ -86,18 +86,28 @@ V8_PATH_INTEGRITY_VERSION = 1
 # ── Formula-derived bound (CURVE_ACTIVE only) ───────────────────────────
 # Public, well-documented pump.fun protocol bonding-curve constants --
 # NOT measured from this project's own data, standard fixed AMM
-# parameters used by every pump.fun bonding-curve token. Cross-checked
-# above against this project's own empirical corpus finding.
-PUMPFUN_INITIAL_VIRTUAL_TOKEN_RESERVES = 1_073_000_000
-PUMPFUN_REAL_TOKEN_RESERVES_AT_GRADUATION = 793_100_000
-PUMPFUN_INITIAL_VIRTUAL_SOL_RESERVES = 30.0
+# parameters used by every pump.fun bonding-curve token.
+#
+# V8 DATA RECOVERY (2026-08-19) CORRECTION: this originally added a
+# +30 SOL "initial virtual reserve" baseline on top of GRAD_SOL_UI,
+# assuming GRAD_SOL_UI represented only the REAL (incremental) SOL
+# added to the curve. Live capture (memecoin/pumpfun_reserve_pricing.py's
+# module docstring) proved that wrong: a real near-graduation
+# PumpPortal message showed vSolInBondingCurve=~115.005 -- matching
+# GRAD_SOL_UI=115.0 directly, not ~145. GRAD_SOL_UI (research/config.py:
+# "SOL in curve at graduation (virtual reserves)") already IS the full
+# virtual SOL reserve figure; no +30 baseline belongs in this formula.
+# Reuses memecoin/pumpfun_reserve_pricing.py's constants directly rather
+# than re-declaring them a second time (the exact drift risk this batch
+# was asked to eliminate).
+from memecoin.pumpfun_reserve_pricing import (
+    PUMPFUN_INITIAL_VIRTUAL_TOKEN_RESERVES, PUMPFUN_REAL_TOKEN_RESERVES_AT_GRADUATION,
+    MIN_VIRTUAL_TOKEN_RESERVES_ON_CURVE as _MIN_VIRTUAL_TOKEN_RESERVES_ON_CURVE,
+)
 
-_MIN_VIRTUAL_TOKEN_RESERVES_ON_CURVE = (
-    PUMPFUN_INITIAL_VIRTUAL_TOKEN_RESERVES - PUMPFUN_REAL_TOKEN_RESERVES_AT_GRADUATION
-)  # 279,900,000 -- reached exactly at graduation, the curve's highest-price instant
 THEORETICAL_MAX_CURVE_ACTIVE_PRICE_SOL = (
-    (PUMPFUN_INITIAL_VIRTUAL_SOL_RESERVES + GRAD_SOL_UI) / _MIN_VIRTUAL_TOKEN_RESERVES_ON_CURVE
-)  # ~5.18e-7 SOL/token
+    GRAD_SOL_UI / _MIN_VIRTUAL_TOKEN_RESERVES_ON_CURVE
+)  # ~4.11e-7 SOL/token -- empirically confirmed exact via live capture
 
 # Slack multiplier: PUMPFUN_* constants above are recalled protocol
 # knowledge, not re-derived from this project's own on-chain reads in
