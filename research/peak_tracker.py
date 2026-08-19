@@ -54,6 +54,11 @@ from research.config import (
 from research.spool.writer import spool_dropped_field
 from research.path_schema import PATH_HEADER as _CSV_HEADER, PATH_SCHEMA_VERSION as _SCHEMA_VER
 from memecoin.pumpfun_reserve_pricing import venue_state_from_pp_reserves as _venue_state_from_pp_reserves
+from research.v8_execution_proxy import build_curve_observation as _build_execution_proxy_observation
+import dataclasses as _dataclasses
+
+_EXECUTION_PROXY_LOG_PATH = Path("logs") / "research_execution_proxy" / "execution_proxy_log.jsonl"
+_EXECUTION_PROXY_NOTIONALS_USD = [2.0, 5.0]
 
 log = logging.getLogger(__name__)
 
@@ -177,6 +182,11 @@ class PeakTracker:
         # PC1 — path persistence
         # All _csv_* accessed only from the asyncio event-loop thread
         self._csv_files: dict    = {}   # addr → {file, writer, path, path_str}
+
+        # V8 DATA RECOVERY item 7: mints already given their one execution-
+        # proxy observation (fired once per mint on its first valid tick,
+        # not per-tick). Asyncio-thread only, same as _csv_files.
+        self._execution_proxy_logged: set = set()
 
         # Daily stats (reset at UTC midnight)
         self._today_date: str    = ""
@@ -368,6 +378,23 @@ class PeakTracker:
                 f.write(json.dumps(entry) + "\n")
         except Exception as e:
             log.debug("PeakTracker: admission log write failed: %s", e)
+
+    def _write_execution_proxy_observations(self, event_id: str, token_address: str,
+                                             vsol: float, vtok: float, sol_price_usd: float) -> None:
+        """V8 DATA RECOVERY item 7: one $2 and one $5 paper execution-
+        cost observation for this mint, from its first valid CURVE_ACTIVE
+        tick's real reserves. Sends no transaction. Append-only, same
+        spool-file pattern as _write_admission_log -- never raises into
+        the caller (also wrapped by the caller itself, belt and braces)."""
+        out_dir = Path(__file__).parent.parent / "logs" / "research_execution_proxy"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with open(out_dir / "execution_proxy_log.jsonl", "a") as f:
+            for notional in _EXECUTION_PROXY_NOTIONALS_USD:
+                obs = _build_execution_proxy_observation(
+                    event_id=event_id, token_address=token_address, notional_usd=notional,
+                    sol_price_usd=sol_price_usd, vsol=vsol, vtok=vtok,
+                )
+                f.write(json.dumps(_dataclasses.asdict(obs)) + "\n")
 
     def _open_csv(self, addr: str) -> str:
         """
@@ -720,6 +747,21 @@ class PeakTracker:
                                             self._ticks_today += 1
                                         except Exception:
                                             pass
+                                        # V8 DATA RECOVERY item 7: one execution-proxy
+                                        # observation per mint, fired on its first valid
+                                        # CURVE_ACTIVE tick only. Fully isolated -- never
+                                        # raises into the tick-writing path, never sends a
+                                        # transaction, off the live-trading critical path
+                                        # entirely (this whole module is research-only).
+                                        if venue_state == "CURVE_ACTIVE" and mint not in self._execution_proxy_logged:
+                                            self._execution_proxy_logged.add(mint)
+                                            try:
+                                                self._write_execution_proxy_observations(
+                                                    event_id=_ev_id, token_address=mint,
+                                                    vsol=vsol, vtok=vtok, sol_price_usd=self._sol_price,
+                                                )
+                                            except Exception:
+                                                pass
                             except Exception:
                                 pass
 
