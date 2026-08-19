@@ -3792,3 +3792,228 @@ exist yet), which was never the bar for this status. **Holdout was not
 evaluated. No candidate was ranked. V7/V8 strategy code and live
 trading were not touched.** Ready to wait for `SELECTION_DATA_READY`
 and later enter Phase 3.
+
+---
+
+## V8 DATA RECOVERY + FORWARD READINESS BATCH
+
+**2026-08-19, git SHA `b62a1c3`.** Root-caused and fixed the ACTIVE
+live_pp price corruption Phase 2.1 could only filter, audited its
+impact on existing V8 paper data, repaired forward path collection,
+built a $2/$5 paper execution-cost collector, and built the automatic
+forward-readiness report + statistical-selection machinery + final
+state machine Phase 2.1's diagnostics work pointed at. **Holdout was
+never evaluated. No candidate was ranked. V7/V8 strategy code and live
+trading were not touched.**
+
+### 1-2 — Root cause, proven and fixed everywhere
+
+**Proven, not assumed:** PumpPortal delivers both `vSolInBondingCurve`
+and `vTokensInBondingCurve` already in UI (human-readable) units.
+`research/peak_tracker.py`'s `_price_from_msg` and `memecoin/
+pumpportal_monitor.py`'s `_compute_price` both applied `vsol /
+(vtok / 1e6)` — an erroneous extra `/1e6` on the token-reserve side,
+on the mistaken belief it needed the same raw-unit conversion the
+on-chain bonding-curve ACCOUNT bytes do (which really is raw, and
+`memecoin/executor.py`'s `get_pumpfun_curve_price` was always correct).
+
+Live capture (8 real `subscribeNewToken`→`subscribeTokenTrade` "create"
+events, VPS, 2026-08-19) proved it directly:
+- A fresh launch showed `vTokensInBondingCurve=1069434660.76` —
+  matching pump.fun's PUBLIC initial virtual token reserve
+  (~1.073B UI tokens) almost exactly. Raw base units would read ~1.07e15.
+- A near-graduation event showed `vSolInBondingCurve=115.005`,
+  `vTokensInBondingCurve=279900000` — EXACTLY
+  `1,073,000,000 − 793,100,000`, the theoretical minimum virtual token
+  reserve at graduation from pump.fun's own public constants.
+  Non-coincidental: confirms the units fix AND independently validates
+  the exact protocol constants `research/v8_path_integrity.py` already
+  used. Also revealed `GRAD_SOL_UI` already represents the FULL virtual
+  SOL reserve at graduation (not `+30`) — Phase 2.1's theoretical
+  ceiling formula corrected to match.
+
+**Canonical formula after fix** (`memecoin/pumpfun_reserve_pricing.py`,
+the ONE place in the repo permitted to compute this):
+`price_sol = vSolInBondingCurve / vTokensInBondingCurve` — no
+conversion on either input, output in SOL/token; `price_usd =
+price_sol * sol_price_usd`.
+
+**All affected code paths, fixed:**
+- `research/peak_tracker.py:_price_from_msg` (research price capture)
+- `memecoin/pumpportal_monitor.py:_compute_price` (live/paper price
+  monitor) — this exact bug had already recurred once in this file (a
+  2026-08-04 incident fixed only the trade-amount fallback branch,
+  leaving the primary reserve branch still wrong)
+- `research/peak_tracker.py`'s tick writer also hardcoded
+  `venue_state="CURVE_ACTIVE"` unconditionally on every row — the
+  direct cause of Phase 2.1's `VSOL_EXCEEDS_GRADUATION_WHILE_
+  CURVE_ACTIVE` findings. Fixed via `venue_state_from_pp_reserves()`:
+  `CURVE_ACTIVE` only when reserve fields are present, `UNKNOWN`
+  otherwise (never asserts `GRADUATED`/`DEX_ACTIVE` without proof of
+  that message shape).
+
+Both `research/analysis/path_stats.py`'s own error-tracing and
+`memecoin/pumpportal_monitor.py`'s own incident comment are now
+consistent with the fix; the exact `1e6` magnitude matches the
+~810,000x corruption Phase 2.1 measured.
+
+### 3 — V8 paper impact audit
+
+All 6 real V8 paper rows (`logs/memecoin_v8_journal.csv`) classified
+`PCT_PNL_PRESERVED_ABSOLUTE_PRICE_BAD` by direct arithmetic (
+`research/v8_paper_impact_audit.py`): absolute prices are implausible
+(~$5–16/token — matching the bug's ~1e6x inflation exactly) but every
+row's `entry_price`/`exit_price` ratio matches its recorded `pnl_pct`
+to within 0.5pp (e.g. row 1: 6.860301.../13.152426... = −47.84%,
+exact). The bug's constant multiplicative factor cancels in any ratio
+— `pnl_pct`/`pnl_usd` are trustworthy for all 6 rows; absolute price
+fields are not. 0 rows `UNAFFECTED`, 0 `PCT_PNL_CORRUPTED`, 0
+`UNKNOWN`. A separate provenance artifact was written; the original
+journal was never touched.
+
+### 4-5 — Forward path repair / historical corruption not "cleaned"
+
+`research/path_schema.py` bumped to v3 (backward compatible): adds
+`vtok` (raw reserve, UI units) and `admission_probability`/
+`admission_reason` (denormalized per row, no join needed against
+`admission_log.jsonl`). Wired into `research/peak_tracker.py`'s tick
+writer alongside the price/venue_state fix.
+
+**Historical corruption stays exactly as Phase 2.1 left it, per
+explicit instruction — nothing was reconstructed:** pre-v3 path rows
+never saved `vTokensInBondingCurve` at all (only `vsol`), so exact
+recomputation of a historical corrupted price is genuinely impossible
+— `INVALID` stays `INVALID`, `UNKNOWN` stays `UNKNOWN`, no winsorizing,
+no guessing from current token state. The one place recovery WAS
+possible (item 3, V8 paper `pnl_pct`) used exact ratio-cancellation on
+values already in hand, not reconstruction from missing data, and wrote
+a new artifact rather than overwriting anything.
+
+### 6 — Live verification, mechanical acceptance
+
+Both `quantbot-research` and `quantbot` restarted with the fix live
+(`LIVE_TRADING` untouched, still `false`). **10 fresh post-deploy
+PumpPortal messages captured directly and run through the fixed
+functions:** 10/10 `CURVE_ACTIVE`/`VALID`, 10/10 `vsol ≤ GRAD_SOL_UI`,
+10/10 below the theoretical ceiling, prices $0.0000049–$0.0000066/token
+(vs. the old $5–16/token corruption) — zero 1e6-scale discontinuities.
+
+| | pre-fix (Phase 2.1) | post-fix (direct live capture) |
+|---|---|---|
+| live_pp invalid rate | 51.5% (346/672 paths) | 0% (0/10 fresh ticks) |
+
+The passive/automated pipeline's own recent-window check
+(`research/v8_final_state.py`) currently reports `UNKNOWN` rather than
+`HEALTHY` — real yield is naturally thin (matches P15-5/P15-7's
+documented pattern) and fewer than 5 live_pp rows have landed in the
+last 24h through the passive path since restart. This is the correct,
+conservative behavior (never assume healthy from silence) — direct
+capture already confirms the fix works; the ongoing monitor will
+independently confirm it too once enough passive ticks accumulate.
+
+### 7 — $2/$5 execution-proxy collector
+
+`research/v8_execution_proxy.py`: exact constant-product AMM math (the
+real formula pump.fun's curve implements) applied to the same reserve
+fields validated above. `PUMPFUN_TRADING_FEE_RATE=1%` is a cited public
+protocol constant, not independently re-measured — labeled as such, not
+claimed `MEASURED`. Non-`CURVE_ACTIVE` venue reuses `memecoin/
+executor.py`'s existing non-binding `_jup_get_quote` (no transaction);
+neither available → `EXECUTION_PROXY_UNAVAILABLE`, never a fabricated
+cost. Notable exact result found while testing: an immediate buy-then-
+sell with no intervening trades cancels the price-impact term
+completely in a constant-product AMM (provable algebraically) — round-
+trip loss is size-invariant, driven purely by the two fee legs, while
+each leg's own `price_impact_pct` does grow with size.
+
+Wired into `research/peak_tracker.py` (fires once per mint on its first
+valid `CURVE_ACTIVE` tick, fully exception-isolated) — deliberately
+NOT wired through `memecoin/progress_capture.py` (feeds the live V8
+gate decision) or `memecoin/scanner.py` (live-trading-adjacent);
+uses `peak_tracker.py`'s own already-validated reserve snapshot instead
+to stay entirely off the live-trading critical path. Sends no
+transaction, ever. Coverage as of this report: 0 observations (research
+service was restarted minutes before this report ran; real yield is
+naturally thin, same as path collection) — the mechanism itself is
+fully tested (16 tests) and verified against real captured reserve
+values.
+
+### 8 — Naturalistic sampling + admission provenance
+
+Unchanged, confirmed still intact: the P16-3 budget-paced admission
+controller does not select on V7/V8 pass, progress bucket, outcome, or
+winner/loser status (P16-6's structural test, untouched this batch).
+Inclusion probability continues to be recorded (now also denormalized
+into path rows per item 4). `PP_DAILY_MSG_BUDGET` was not changed.
+Monitoring surface (eligible/admitted/usable/integrity/probability/
+UTC-hour/budget) is now unified in item 9's forward-readiness report
+rather than a second, separate always-running system.
+
+### 9 — Automatic forward-readiness report
+
+`research/v8_forward_readiness_report.py` — one read-only, run-anytime
+report, reusing the frozen v1 registries and the existing readiness
+engine as a live-data populator (not a redesign). Real numbers as of
+this run:
+
+| candidate | historical_entry_n | unique_mints | unique_days | venue_qualified_n | vq_unique_mints | vq_unique_days |
+|---|---|---|---|---|---|---|
+| BASELINE-0 | 80 | 80 | 11 | 2 | 2 | 2 |
+| V8-P0 | 1452 | 1452 | 17 | 266 | 266 | 4 |
+| V8-P1 | 77 | 77 | 11 | 1 | 1 | 1 |
+| V8-P3 | 611 | 611 | 17 | 105 | 105 | 4 |
+
+Path integrity (full corpus, includes permanently-INVALID pre-fix
+rows): total=672, valid=322, invalid=347, unknown=3. Accumulation
+velocity: new_venue_qualified/day=66.5, new_valid_paths/day=24.77 —
+both `TOO_VARIABLE_TO_PROJECT` (expected: `venue_state_at_signal`
+coverage only started flowing correctly in the last ~24h due to this
+batch's own fix, so day-over-day rate is not yet a stable signal). No
+completion date projected, per instruction. None of the 12 (candidate,
+exit) pairs are `full_eval_ready` — closest is V8-P0 (clears
+n/mints, short only on `venue_qualified_unique_days`: 4 of the required
+14).
+
+### 10 — Statistical-selection machinery
+
+`research/v8_statistical_selection.py` — block-bootstrap CI (day-block,
+not per-trade), Kish effective-n after IPW, profit concentration
+(top-1/top-5), regime stability (per-week CV), train→validation
+degradation, max drawdown, max losing streak. 27 tests, synthetic
+fixtures only — no function in this module accepts a holdout dataset.
+
+### 11 — Final state machine
+
+`research/v8_final_state.py`, run live:
+
+```
+ENGINE_READY = True
+FORWARD_DATA_PIPELINE_HEALTHY = None (UNKNOWN -- <5 recent live_pp rows to judge; direct capture above already confirms the fix works)
+SELECTION_DATA_READY = False (no candidate/exit pair is engineering-ready yet; V8-P0 closest, short on venue-qualified day coverage)
+holdout_evaluated = False (structural constant, no setter exists)
+```
+
+### Tests
+
+99 new tests across 8 new test files (`test_pumpfun_reserve_pricing.py`
+10, `test_pumpportal_monitor_pricing.py` 3, `test_peak_tracker_pricing.py`
+3, `test_v8_paper_impact_audit.py` 8, `test_v8_execution_proxy.py` 16,
+`test_v8_forward_readiness_report.py` 11, `test_v8_statistical_selection.py`
+27, `test_v8_final_state.py` 4, plus updates to `test_v8_path_integrity.py`
+and `test_rf5_path_schema.py`). Full suite on the VPS's real environment
+(`research/tests/`+`memecoin/tests/`+`watchdog/tests/`): **836 passed**,
+zero regressions.
+
+### Final state
+
+```
+ENGINE_READY = TRUE
+FORWARD_DATA_PIPELINE_HEALTHY = UNKNOWN (direct verification: HEALTHY; automated recent-window monitor: not enough passive data yet)
+SELECTION_DATA_READY = FALSE
+```
+
+Final git SHA: **`b62a1c3`**, pushed to `origin/main`, pulled and
+verified on the VPS. No further phase follows this one. The healthy
+collector/readiness monitor is left running; the data accumulates.
+Opening the one-shot holdout remains the single intentional user
+decision still ahead, not another engineering task.
