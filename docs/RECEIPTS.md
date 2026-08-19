@@ -4017,3 +4017,137 @@ verified on the VPS. No further phase follows this one. The healthy
 collector/readiness monitor is left running; the data accumulates.
 Opening the one-shot holdout remains the single intentional user
 decision still ahead, not another engineering task.
+
+---
+
+## V8 READINESS MONITOR CORRECTION — SINGLE PATCH
+
+**2026-08-19, git SHA `f2d7c75`.** Review of the previous batch found
+`SELECTION_DATA_READY` could never become `True` regardless of
+accumulated data, and `FORWARD_DATA_PIPELINE_HEALTHY` checked only one
+of the five streams its own definition named. Fixed both, plus two
+related readiness bugs the same review surfaced. **Frozen candidate/
+exit registries untouched. Holdout never opened, never evaluated. No
+V7/V8/live-trading code touched** — only
+`research/v8_forward_readiness_report.py` and
+`research/v8_final_state.py` (plus two new supporting modules) changed.
+
+### 1-2 — Real split counts + candidate-specific path coverage
+
+`train_n`/`validation_n`/`holdout_n`/`path_coverage_pct` were hardcoded
+to `0` for every candidate — the permanent-`False` bug. Fixed:
+- Real counts via the frozen `research/v8_split.py`
+  `grouped_chronological_split`, applied per candidate to its own
+  venue-qualified population. Counts eligible rows per bucket only —
+  never reads holdout **outcome/PnL** data (verified by a structural
+  test: `result.holdout` never appears as an operand anywhere in the
+  diagnostics-feasibility function's source).
+- `research/v8_candidate_path_coverage.py` (new): candidate-specific
+  representative path coverage, joining through `research_tokens`' own
+  `path_file` column (never a mint-only guess), respecting ambiguous-
+  mint exclusion, real entry-time alignment, and `path integrity ==
+  VALID`. Replaces the old "all VALID paths in the whole corpus" number
+  that was identical for every candidate regardless of eligibility.
+
+**Real finding surfaced by the fix, not a bug in it**: candidate-
+specific path coverage is currently **0.0% for every candidate**. For
+V8-P0 (278 venue-qualified events): 92 have no `path_file` at all, 186
+have a `path_file` recorded but the file genuinely does not exist on
+disk (spot-checked directly — confirmed real, not a join bug). This
+matches the already-documented P15-5/P15-7 thin-path-collection
+pattern; the old report's "322 valid paths" number was real but
+described the wrong population entirely.
+
+### 3 — Execution-proxy readiness
+
+`entry_slippage_measured = execution_proxy_total > 0` meant one
+observation was sufficient. Fixed: `research/
+v8_execution_proxy_readiness.py` (new) requires both
+`EXECUTION_PROXY_MIN_N=100` and `EXECUTION_PROXY_MIN_COVERAGE_PCT=50%`
+— reusing the SAME cited conventions as `research/
+v8_readiness_engine.py`'s `MIN_ENTRY_N`/`MIN_PATH_COVERAGE_PCT`, no new
+threshold invented. Computed per candidate; an event qualifying for
+both `V8-P0` and `V8-P3` is never double-counted because there is no
+global denominator anywhere in this design, only per-candidate ones
+(proven by a test with identical overlapping events fed to both
+candidates — neither count is inflated by the other).
+
+### 4 — Pipeline health, five real independent components
+
+`research/v8_final_state.py` rewritten: `FORWARD_DATA_PIPELINE_HEALTHY`
+previously checked only recent `live_pp` path integrity. Now five
+components — `progress_at_signal` flow, `venue_state_at_signal` flow,
+live_pp path volume, path integrity/price quality, execution-proxy
+flow — combined by: any `UNHEALTHY` → `UNHEALTHY`; no `UNHEALTHY` but
+any `UNKNOWN` → `UNKNOWN`; all `HEALTHY` → `HEALTHY`. Low natural yield
+produces `UNKNOWN` for that component, never `UNHEALTHY`, but still
+blocks overall `HEALTHY` — proven with a synthetic corpus 90% full of
+the exact real `$73.5B`-mcap corruption pattern, which correctly flips
+that one component `UNHEALTHY`.
+
+### 5-6 — Corrected SELECTION_DATA_READY + diagnostics feasibility
+
+`SELECTION_DATA_READY` now requires, per candidate:
+`FULL_ENTRY_RULE_READY` + `PATH_DATA_READY` + `EXECUTION_PROXY_READY` +
+non-degenerate train/validation/holdout counts + pre-holdout
+diagnostics feasibility — never holdout performance (which cannot
+exist before holdout is opened). Diagnostics feasibility is a pure
+row/day-block **count** check (train+validation rows with non-null
+`pct_change_peak`, spread across ≥2 days) — never reads, prints, or
+uses the actual PnL values, and never touches the holdout bucket.
+
+### 7 — Self-audit (all passing, all real)
+
+Readiness transitions `FALSE→TRUE` with a sufficiently large synthetic
+dataset (300 events, real path files, real proxy observations, 60/20/20
+split); stays `FALSE` with 300 venue-qualified rows + zero usable
+paths; stays `FALSE` with paths but zero execution proxies; one
+execution-proxy observation cannot make it ready; candidate-specific
+path coverage correctly differs between a broad candidate (`V8-P0`, 50
+eligible) and a narrow one (`V8-P3`, 0 eligible) on the identical
+corpus; overlapping `P0`/`BASELINE-0` events don't inflate either
+candidate's own proxy coverage; pipeline health goes `UNKNOWN` when the
+execution-proxy stream is silent and `UNHEALTHY` on demonstrated
+corruption; frozen registries and holdout lock verified unchanged via
+`git status` (only the two report/state modules + two new supporting
+modules touched).
+
+### Real live results (VPS, this run)
+
+| candidate | venue_qualified_n | split (train/val/holdout) | path coverage | exec-proxy ready | diagnostics computable |
+|---|---|---|---|---|---|
+| BASELINE-0 | 2 | 1/0/1 | 0.0% (0/2) | False | False (1 day-block) |
+| V8-P0 | 278 | 155/47/76 | 0.0% (0/278) | False (0 obs) | True (120 outcome rows, 3 days) |
+| V8-P1 | 1 | 0/0/0 | 0.0% (0/1) | False | False (<2 events) |
+| V8-P3 | 110 | 66/19/25 | 0.0% (0/110) | False (0 obs) | True (43 outcome rows, 3 days) |
+
+Pipeline components (24h window): `progress_at_signal_flow`=**HEALTHY**
+(135/135, 100%), `venue_state_at_signal_flow`=**HEALTHY** (135/135,
+100%), `live_pp_paths_flow`=**UNKNOWN** (0 recent rows), `path_integrity_
+quality`=**UNKNOWN** (0 recent rows), `execution_proxy_flow`=**UNKNOWN**
+(0 recent observations) — all three UNKNOWNs are low-natural-yield, not
+corruption; the two HEALTHY components directly confirm the P2-0/item-4
+schema fix is still working correctly.
+
+### Tests
+
+63 new/updated tests across `test_v8_candidate_path_coverage.py` (7,
+new), `test_v8_execution_proxy_readiness.py` (7, new),
+`test_v8_forward_readiness_report.py` (23, rewritten), `test_v8_final_
+state.py` (14, rewritten). Full suite on the VPS's real environment:
+**872 passed**, zero regressions.
+
+### Final state
+
+```
+ENGINE_READY = TRUE
+FORWARD_DATA_PIPELINE_HEALTHY = UNKNOWN (3 of 5 components UNKNOWN from low natural yield; the 2 checkable components are both HEALTHY)
+SELECTION_DATA_READY = FALSE (real blocker: candidate-specific path coverage is 0% for every candidate -- path_file entries are recorded but the files don't exist on disk; execution-proxy collector has 0 observations so far)
+```
+
+Final git SHA: **`f2d7c75`**, pushed to `origin/main`, pulled and
+verified on the VPS. Per instruction: STOP ENGINEERING. The collector
+and readiness monitor are left running. If `SELECTION_DATA_READY`
+later becomes `True`, the correct next step is to report it and wait
+for explicit user approval to open holdout — not to open it
+automatically.
