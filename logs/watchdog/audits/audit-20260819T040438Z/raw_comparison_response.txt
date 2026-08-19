@@ -1,0 +1,76 @@
+```json
+[
+  {
+    "finding_id": "F1",
+    "severity": "INFO",
+    "component": "receipts_tail content vs EV007 evidence",
+    "claim": "Detailed narrative of pipeline health components, SELECTION_DATA_READY logic, live results table, test counts (872 passed), and final git SHA f2d7c75, all presented as a completed engineering report.",
+    "observed_ground_truth": "EV007 as available to the ground-truth audit provided only an mtime (1787103520.26 ≈ 2026-08-19T02:38:40Z) and byte length (220811) for the receipts file — no content, job names, or pass/fail status. The detailed narrative now shown is asserted documentation text, not something the original evidence could substantiate.",
+    "expected_ground_truth": "The claim implies the receipts file contains this exact detailed, verified content and that ground truth could confirm it.",
+    "evidence_ids": ["EV007"],
+    "operational_impact": "The claimed content cannot be independently verified from raw evidence; any downstream decision relying on this narrative's accuracy is unverified.",
+    "suggested_next_step": "Read the actual content of the receipts file (e.g. tail -c 5000 on the receipts file at the recorded mtime) and diff against the claimed narrative.",
+    "confidence": "high"
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "Git SHA reconciliation",
+    "claim": "Final git SHA: f2d7c75, pushed to origin/main, pulled and verified on the VPS.",
+    "observed_ground_truth": "Ground truth shows deployed HEAD SHA as c106ee71028d57ef9c773374936b34e0038d953b, corroborated by both watchdog runs. Job receipts reference yet other SHAs (4e020b69f..., 8d0c3b8ea...), and claims.batch.rc_closure reports commit db32f53. None of these match f2d7c75, and the evidence provides no timestamp linkage among any of the four distinct SHA values.",
+    "expected_ground_truth": "The claim implies f2d7c75 is the current, verified-on-VPS commit, which would be expected to match the deployed HEAD SHA.",
+    "evidence_ids": ["EV002", "EV005"],
+    "operational_impact": "If f2d7c75 is truly the latest pushed/pulled commit but the deployed HEAD is c106ee7, the running service may not reflect the claimed engineering changes (including the 63 new tests and readiness logic fixes).",
+    "suggested_next_step": "Run `git log --oneline -1` and `git rev-parse HEAD` on the VPS deployment directory and compare against f2d7c75, c106ee7, db32f53, and the two job-receipt SHAs.",
+    "confidence": "high"
+  },
+  {
+    "finding_id": "F3",
+    "severity": "INFO",
+    "component": "Working tree cleanliness vs claimed push",
+    "claim": "Final git SHA... pushed to origin/main, pulled and verified on the VPS.",
+    "observed_ground_truth": "The working tree is not clean: 4 modified tracked files and 15 untracked paths (including a new script p15_1_2_audit.py and new research/ directories) were present at audit time (EV002).",
+    "expected_ground_truth": "A 'pulled and verified' state after a clean push would typically be expected to leave a clean working tree, absent unrelated local scratch work.",
+    "evidence_ids": ["EV002"],
+    "operational_impact": "Untracked/modified files could indicate either unrelated in-progress work or an incomplete/impure deployment of the claimed commit; ambiguous without further inspection.",
+    "suggested_next_step": "Run `git status --porcelain` and `git diff` on the VPS checkout to enumerate exactly which files are modified/untracked and whether any relate to the claimed engineering work.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F4",
+    "severity": "INFO",
+    "component": "Test suite count claim",
+    "claim": "Full suite on the VPS's real environment: 872 passed, zero regressions.",
+    "observed_ground_truth": "Ground truth only confirms test-collection drift checks are clean with no drift, for specific suites: memecoin 304, research 465, watchdog 103, layer2 39, quant-bot root 56 tests (EV005). These are collection counts, not a full pass/fail execution report, and their sum (967) does not equal the claimed 872 passed — though these are different measurements (collection vs. execution) and not directly comparable.",
+    "expected_ground_truth": "The claim implies an actual full-suite execution result of 872 passing tests, distinct from and not contradicted by, but also not corroborated by, the collection-drift check.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "Cannot independently confirm the claimed test execution outcome; test-collection health alone does not prove all tests pass.",
+    "suggested_next_step": "Run the project's full test command (e.g. pytest -q) on the VPS and compare the pass count/regressions against the claimed 872 passed figure.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F5",
+    "severity": "INFO",
+    "component": "SELECTION_DATA_READY / ENGINE_READY final state",
+    "claim": "ENGINE_READY = TRUE; FORWARD_DATA_PIPELINE_HEALTHY = UNKNOWN (3 of 5 components UNKNOWN); SELECTION_DATA_READY = FALSE due to 0% path coverage across all candidates and zero execution-proxy observations.",
+    "observed_ground_truth": "Ground truth's closest corroborating evidence is claims.batch.v8_readiness, WARN, FIRING for 173 consecutive failures, reporting '4/7 item(s) PARTIAL ([N2,N4,N6,N7])' — a different check with different item labels (N2/N4/N6/N7 vs BASELINE-0/V8-P0/V8-P1/V8-P3) and no direct correspondence to the claimed candidate table or component health breakdown.",
+    "expected_ground_truth": "If the claimed readiness report were reflected in the watchdog's incident state, one would expect claims.batch.v8_readiness (or an equivalent check) to show consistent status/counts with the claimed FALSE readiness and UNKNOWN pipeline health.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "Cannot confirm from ground-truth evidence whether the detailed candidate-level readiness state described in the claim is the same system/state as the actively firing claims.batch.v8_readiness incident, or a separate/newer report not yet reflected in watchdog checks.",
+    "suggested_next_step": "Inspect the watchdog check definition for claims.batch.v8_readiness and any associated report file to see if it maps to the same BASELINE-0/V8-P0/V8-P1/V8-P3 candidate table referenced in the claim.",
+    "confidence": "low"
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "p15_1_2_audit.py untracked file",
+    "claim": "",
+    "observed_ground_truth": "EV002 lists p15_1_2_audit.py as an untracked new script with no content or purpose described anywhere in the evidence.",
+    "expected_ground_truth": "The claims document describes extensive new engineering work (readiness monitor, report modules, tests) — it's plausible but unconfirmed that this untracked script relates to that work.",
+    "evidence_ids": ["EV002"],
+    "operational_impact": "An unreviewed, untracked script present on a production VPS is a minor operational hygiene concern regardless of its relation to the claims.",
+    "suggested_next_step": "Run `cat p15_1_2_audit.py` or `git diff --stat` to review its contents and determine if it should be committed, removed, or ignored.",
+    "confidence": "medium"
+  }
+]
+```

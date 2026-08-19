@@ -1,0 +1,58 @@
+# Audit Summary — audit-20260819T040438Z
+
+## Git / deployment state
+
+- Deployed HEAD SHA: `c106ee71028d57ef9c773374936b34e0038d953b` (EV002, corroborated as the SHA recorded in both watchdog runs at EV005 `latest_fast_run.git_sha` / `latest_slow_run.git_sha`).
+- The working tree is **not clean**. `git status`-style output shows 4 modified tracked files and 15 untracked paths, including logs, JSON data files, a new script `p15_1_2_audit.py`, and new `research/` directories (EV002 `dirty_tree_lines`).
+- Note: the job receipts embedded in EV005 (`recent_job_receipts` / `latest_fast_check_results.cron_execution.*`) reference different SHAs for actual job runs — `4e020b69f...` (k5_nightly), `8d0c3b8ea...` (epoch_daily, v8_vs_v7_daily) — which do **not** match the currently deployed HEAD SHA `c106ee7...`. Evidence does not explain this discrepancy (e.g., whether those jobs ran under an older checkout); it is simply what the receipts show.
+
+## systemd services and timers
+
+- `quantbot.service`: active/running, last result success (EV003).
+- `quantbot-research.service`: active/running, last result success (EV003).
+- `quantbot-watchdog-fast.service`: inactive/dead, but last `Result=success`/`ExecMainStatus=0` (EV003) — consistent with a oneshot service triggered by a timer, not a crash.
+- `quantbot-watchdog-slow.service`: inactive/dead, same success status (EV003).
+- Timers: `quantbot-watchdog-fast.timer` last fired 2026-08-19 04:00:03 UTC (4m32s before evidence generation), next fire 04:05:00 UTC. `quantbot-watchdog-slow.timer` last fired 04:03:03 UTC, next fire 05:03:00 UTC (EV003). Both timers are active/scheduled as of the evidence timestamp.
+
+## Cron
+
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode `0o100644` (world/group-readable, owner-writable), with mtimes in 2026-08-13 to 2026-08-15 range (EV004 — converting unix mtimes: 1786579568 ≈ 2026-08-14, 1786703985 ≈ 2026-08-15).
+- `recent_parser_error_lines` is an empty list (EV004) — no recent cron parser errors recorded.
+- Watchdog's own static checks (`cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`) all report `OK`, "parses cleanly, no recent journal parser errors" (EV005).
+
+## Watchdog self-status
+
+- Latest fast run (`b74f5c2311904929`) at `started_at=1787112006.5` (~2026-08-19T04:00:06Z by epoch conversion) completed in ~15.7ms with `final_runner_status: "ok"`, 11/11 checks completed (EV005).
+- Latest slow run (`bbb4578edb684d08`) at `started_at=1787112191.3` (~2026-08-19T04:03:11Z) completed in ~9.8ms with `final_runner_status: "ok"`, 10/10 checks completed (EV005).
+- Both runs report `boot_id: d0a4169b-96f4-4bb1-b365-92ca527627e6`, matching the host's current boot ID (EV001), so these are runs from the current boot, not stale/carried-over state.
+
+## Active incidents
+
+- Per `all_incidents` (EV005), there is exactly **one incident in `FIRING` state**: `claims.batch.v8_readiness`, severity WARN, first seen 1786585581 (~2026-08-08), still firing at last check 1787112191 (current run), with **173 consecutive failures** and last notified 1787097790.
+  - Corresponding check detail: `claims.batch.v8_readiness` = WARN, "4/7 item(s) PARTIAL (['N2','N4','N6','N7'])" — batch itself would report exit code 0 despite partial completion (EV005).
+- All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `funnel.v8`, `research.path_collection`) show `state: RECOVERED` with `consecutive_failures: 0` (EV005) — i.e., historically triggered but not currently active.
+
+## Research pipeline queue lag
+
+- EV005's `pipeline.research_queue_lag` check (evaluated at fast-run time, ts≈1787112006) reports `status: OK`, `queue_size: 775977`, `offset: 775977`, `gap_bytes: 0` — consumer caught up at that moment.
+- EV006 (a separate, undated pipeline snapshot) shows `queue_size: 776780`, `queue_offset: 776780` — also gap 0, but this snapshot has no timestamp of its own, so it cannot be precisely correlated to EV005's reading; the two are close in value (803 units apart) but I cannot confirm they are simultaneous — EV006 carries no `generated_at`/timestamp field.
+- `pipeline.research_spool`: OK, 0 failed inserts in the last 2 hours; 68 total historical lines on disk noted explicitly as "not itself evidence of an active problem" (EV005).
+
+## Other checks from watchdog runs
+
+- `funnel.v8`: OK — "all 4273 recent funnel events ... have a terminal disposition" (EV005).
+- `feed.telegram`: OK — last event 299s ago against a 7200s threshold (EV005).
+- `feed.pumpportal`: OK — last event was a successful connect logged at 2026-08-19 03:59:47 UTC; note reconnects every ~45-60s are stated as expected and "not evaluated" for pattern/frequency issues (EV005).
+- Test-collection drift checks (memecoin: 304 tests, research: 465 tests, watchdog: 103 tests, layer2: 39 tests, quant-bot root: 56 tests) all report clean collection with no drift (EV005).
+- `test_drift.stale_mocks`: OK, 130 resolvable patch targets checked; explicitly notes targets in third-party/stdlib modules are skipped and "not verified" (EV005).
+- `claims.batch.rc_closure`: OK, 3/3 GREEN, at commit `db32f53` (EV005) — note this commit hash does not match deployed HEAD `c106ee7...` (EV002); evidence does not explain the relationship between the two.
+- `layer2.staleness`: OK — last Layer 2 audit `audit-20260818T040316Z` ran 24.0h before this fast check, with 8 findings, 0 critical (EV005).
+- `research.path_collection`: OK for 2026-08-18 — 1 token scheduled, 1 path file produced (100% yield), budget 0/100000 used. Hourly breakdown shows all activity concentrated in UTC hour 23 (1 eligible, 1 admitted, 0 usable paths, 0% usable-path yield) with every other hour at zero (EV005). Evidence does not indicate whether this low, single-hour volume is expected or a degraded state — it's simply what's recorded.
+
+## Explicit gaps / ambiguities
+
+- No evidence given for what `p15_1_2_audit.py` (untracked, EV002) contains or does.
+- The mismatch between deployed HEAD SHA (`c106ee7...`) and the SHAs recorded in job receipts (`4e020b69f...`, `8d0c3b8ea...`) and in `claims.batch.rc_closure` (`db32f53`) is unexplained by the evidence — could reflect different checkout times, but no timestamps tie these SHAs to specific deploys.
+- EV006 lacks its own timestamp; its relation in time to EV005's `pipeline.research_queue_lag` reading is not established by the evidence.
+- EV007 (`receipts_tail`) provides only an mtime (1787103520.26 ≈ 2026-08-19T02:38:40Z) and byte length (220811) for some receipts file — no content, job names, or pass/fail status are given, so no functional claim can be made from it beyond "a file of this size was last modified at this time."
+- No evidence is provided of CPU/memory/disk resource state, network connectivity beyond the two feed checks, or database integrity beyond what's summarized in the funnel/queue checks.
