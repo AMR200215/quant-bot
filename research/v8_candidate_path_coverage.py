@@ -108,8 +108,17 @@ def compute_candidate_path_coverage(
 
         full_path = repo_root / path_file
         if not full_path.exists():
-            missing_or_empty += 1
-            continue
+            # research/peak_tracker.py gzips the previous UTC day's path
+            # files in place (daily rotation, by design) without updating
+            # research_tokens.path_file -- a path recorded as "*.csv" may
+            # now only exist on disk as "*.csv.gz". Check that sibling
+            # before concluding the file is genuinely missing.
+            gz_path = full_path.with_suffix(full_path.suffix + ".gz")
+            if gz_path.exists():
+                full_path = gz_path
+            else:
+                missing_or_empty += 1
+                continue
 
         rows, _warnings = load_path_file(full_path)
         if not rows:

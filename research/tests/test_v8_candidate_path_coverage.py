@@ -114,6 +114,37 @@ class TestComputeCandidatePathCoverage(unittest.TestCase):
         self.assertEqual(result.eligible_n, 0)
         self.assertEqual(result.coverage_pct, 0.0)
 
+    def test_gz_rotated_path_file_is_found_not_reported_missing(self):
+        """V8 forward-readiness health check incident finding: peak_tracker.py
+        gzips the previous UTC day's path files in place without updating
+        research_tokens.path_file. A path recorded as "*.csv" that only
+        exists on disk as "*.csv.gz" must still be found and read -- this
+        was previously misclassified as path_file_missing_or_empty_n,
+        which silently zeroed out coverage for every path older than the
+        current UTC day."""
+        import gzip
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            path_dir = root / "logs" / "research_paths" / "2026-08-19"
+            path_dir.mkdir(parents=True)
+            rel_path = "logs/research_paths/2026-08-19/MINT_A.csv"
+
+            # Write the plain CSV, then gzip it and remove the original --
+            # matches PeakTracker._gzip_directory's real behavior exactly.
+            plain = root / rel_path
+            _write_path_file(plain, [dict(_GOOD_ROW, ts_ms="0"), dict(_GOOD_ROW, ts_ms="1000")])
+            with open(plain, "rb") as f_in, gzip.open(str(plain) + ".gz", "wb") as f_out:
+                f_out.write(f_in.read())
+            plain.unlink()
+
+            events = [{"event_id": "e1", "token_address": "MINT_A", "alert_time": "1970-01-01T00:00:00+00:00",
+                       "path_file": rel_path}]
+            result = compute_candidate_path_coverage(events, events, _BASELINE, root)
+
+        self.assertEqual(result.usable_n, 1)
+        self.assertEqual(result.path_file_missing_or_empty_n, 0)
+        self.assertEqual(result.coverage_pct, 100.0)
+
 
 if __name__ == "__main__":
     unittest.main()
