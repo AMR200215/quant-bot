@@ -1,0 +1,49 @@
+# Audit Findings — audit-20260822T040203Z
+
+## Git state
+- Deployed HEAD SHA is `c931c9596655ccc626066d4f1d8cef0f47a7f22c` (EV002). This matches the `git_sha` recorded in the watchdog's latest fast run, latest slow run, and all recent job receipts (EV005), so the running code corresponds to this commit.
+- The working tree is **not clean**: there are 5 modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_positions.json`, `memecoin/data/memecoin_signals.json` — six listed, one with a leading space suggesting inconsistent `git status` porcelain formatting) plus at least 19 untracked files/directories, including two ad hoc scripts (`p15_1_2_audit.py`, `scratch_incident_check.py`) and several new log/data paths (EV002).
+
+## systemd services and timers
+- `quantbot.service`: active/running, last exec succeeded (EV003).
+- `quantbot-research.service`: active/running, last exec succeeded (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead**, but `Result=success` / `ExecMainStatus=0` — consistent with a oneshot service that exits after each run rather than a crash (EV003).
+- `quantbot-watchdog-slow.service`: **inactive/dead**, same success/exit-0 pattern as fast (EV003).
+- Both watchdog timers are listed as active and scheduled: `quantbot-watchdog-slow.timer` last fired 58 min ago (03:03:03 UTC), next due 04:03:00 UTC; `quantbot-watchdog-fast.timer` last fired ~2 min ago (04:00:03 UTC), next due 04:05:00 UTC (EV003). Given the timer cadence and the services' `Result=success`, the inactive/dead service state is consistent with oneshot-per-timer-tick behavior, not a failure — but I have no explicit unit-type evidence (e.g., `Type=oneshot`) confirming this; I am inferring it only from the success/exit-0 + timer-driven pattern.
+
+## Cron
+- Three cron files exist: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode `0644`, owned by root's crontab entries, each wrapped in `watchdog.exec_wrapper` with job IDs `epoch_daily`, `v8_vs_v7_daily`, `k5_nightly` respectively (EV004).
+- `recent_parser_error_lines` is an empty list — no recent cron parser errors recorded (EV004).
+- Watchdog's own static checks corroborate this: `cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily` all report `OK`, "parses cleanly, no recent journal parser errors" (EV005).
+
+## Watchdog's own most recent run status
+- Latest **fast** run (`ad30cfffa24e4391`) completed at Unix ts 1787371205, 11 of 11 checks completed, `final_runner_status: ok`, at git SHA matching deployed HEAD (EV005, EV002).
+- Latest **slow** run (`17f28d3a1a804dd8`) completed at Unix ts 1787367792 (~57 min before the fast run above, and prior to the bundle's stated `Generated` timestamp), 10 of 10 checks completed, `final_runner_status: ok`, same git SHA (EV005).
+- Both runs report all their individual checks as `OK` **except** `claims.batch.v8_readiness`, which is `WARN` in the slow run (EV005).
+
+## Active incidents
+- Per `all_incidents` (EV005), there is exactly **one incident currently in `FIRING` state**: `claims.batch.v8_readiness`, first seen 1786585581, still seen as of the latest slow run (1787367792), with `consecutive_failures: 255` and last notified 1787349791.8. The underlying detail (EV005, `claims.batch.v8_readiness` check) shows batch `v8_readiness` at 3/7 GREEN, 4/7 PARTIAL (items N2, N4, N6, N7), 0 FAIL — and the check's own text states the batch-verify CLI exit code would be 0 despite this, i.e., a PARTIAL state that wouldn't be caught by exit-code-only monitoring.
+- All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `funnel.v8`, `research.path_collection`, `feed.telegram`) show `state: RECOVERED` with `consecutive_failures: 0` (EV005). Their existence indicates each of these checks failed transiently at some point in the past (per `first_seen`), but all are currently resolved per this evidence.
+- I cannot independently verify what "PARTIAL" means for items N2/N4/N6/N7 beyond what the check text states — no underlying claim definitions are in evidence, so I cannot describe the substantive content of the readiness gap beyond citing the check's own summary.
+
+## Research pipeline queue lag
+- EV005 `pipeline.research_queue_lag`: status `OK`, "consumer caught up (gap=0 bytes)", `queue_size=1215234`, `offset=1215234`.
+- EV006 independently reports `queue_size: 1215234` and `queue_offset: "1215234"` (string-typed, unlike EV005's integer) — the two numeric values match, corroborating no lag at the time each was captured (EV005, EV006).
+- `pipeline.research_spool` check: `OK`, 0 failed inserts in the last 2.0 hours, but 68 total historical failed-insert lines on disk exist; the check text explicitly notes this total is "not itself evidence of an active problem" (EV005). I will not characterize this further than the check itself does.
+
+## Other evidence-supported observations
+- Host uptime is ~3,987,795.71 s (~46.2 days) as of 2026-08-22T04:02:01Z, boot_id `d0a4169b-96f4-4bb1-b365-92ca527627e6` (EV001), and this boot_id matches the boot_id recorded in both the fast and slow watchdog runs (EV005), so no reboot occurred between those runs and now.
+- `feed.telegram`: OK, last event 874s ago against a 7200s threshold (EV005). Note there was a `feed.telegram` incident with `first_seen`/`last_seen` timestamps (1787300101 / 1787359218) that recovered before the current run — meaning telegram feed staleness occurred and cleared prior to this audit snapshot (EV005).
+- `feed.pumpportal`: OK; most recent connect logged at 2026-08-22 03:59:48 UTC (EV005). The check explicitly disclaims evaluating reconnect frequency ("reconnects every ~45-60s are expected... not evaluated here") — so I cannot state anything about connection stability beyond "last connect succeeded."
+- Test collection checks (`memecoin`, `research`, `watchdog`, `layer2`, `quant-bot` test dirs) all report clean collection with specific test counts (304, 466, 103, 39, 56 respectively) as of the slow run (EV005). This only confirms pytest could collect these suites at that time — it says nothing about whether tests pass, since these are collection-only checks.
+- `test_drift.stale_mocks`: OK, 130 resolvable patch-target checks passed, but the check explicitly states third-party/stdlib-module targets are skipped and not verified (EV005) — so this is a partial guarantee only.
+- `layer2.staleness`: OK, last Layer 2 audit (`audit-20260821T040716Z`) was 22.9h old with 6 findings, 0 critical (EV005). I have no evidence of what those 6 findings were.
+- `research.path_collection`: OK for 2026-08-21, 26/26 scheduled tokens yielded path files (100%), 0/100000 message budget used (EV005). Hours 7–23 UTC show null admission-rate/yield fields with zero eligible tokens — evidence does not explain why collection activity stopped after hour 6; this could be by design (e.g., end of trading window) or a gap, and I cannot determine which from this evidence alone.
+- `receipts_tail` (EV007): `docs/RECEIPTS.md` had mtime 1787356681.21, matching the `v8_vs_v7_daily` job's `finished_at` (1787356681.2238011) in EV005 — consistent with that cron job being the last writer to this file. File length reported as 221086 (units not specified — presumably bytes; not confirmed by evidence).
+
+## Explicit gaps / ambiguities
+- No evidence was provided defining unit `Type=` for the watchdog services, so the "inactive/dead but success" state is explained only by inference from timer cadence, not confirmed directly.
+- No evidence explains the substantive meaning of `v8_readiness` items N2/N4/N6/N7 or why they are PARTIAL rather than GREEN — only the summary counts are available.
+- No evidence indicates *why* `research.path_collection` shows zero eligible tokens for hours 7–23 UTC on 2026-08-21 — cannot confirm if this is expected (scheduled downtime) or a gap.
+- EV005's `queue_size` is typed as integer, EV006's `queue_offset` is typed as a string; both values match numerically, but I note the inconsistent typing as-is rather than resolving it.
+- The dirty-tree file list in EV002 has inconsistent leading-space formatting on one line, suggesting it may be a raw, not fully sanitized, `git status --porcelain` capture — noted but not further interpreted.
