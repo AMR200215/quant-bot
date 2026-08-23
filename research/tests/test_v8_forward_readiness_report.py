@@ -14,7 +14,7 @@ from research.v8_forward_readiness_report import (
     _progress_bucket, _estimate_velocity, compute_accumulation_velocity,
     FORWARD_READINESS_REPORT_VERSION, ForwardReadinessReport,
     _MIN_DAYS_FOR_VELOCITY_ESTIMATE, _query_candidate_evidence, _candidate_selection_ready,
-    _compute_split_counts, _compute_diagnostics_feasibility,
+    _compute_split_counts, _compute_diagnostics_feasibility, _collection_yield_execution_proxy_ready,
 )
 from research.v8_candidate_registry import CANDIDATES
 from research.path_schema import PATH_HEADER
@@ -43,11 +43,33 @@ def _good_row(ts_ms):
     }
 
 
+def _write_admission_log(root: Path, events: list, probability: float = 1.0, admitted: bool = True):
+    """Synthetic logs/research_admission/admission_log.jsonl -- one
+    admitted row per event's mint, matching the real per-mint schema
+    research/peak_tracker.py writes (token_address, ts, path_admitted,
+    path_sampling_probability, admission_reason)."""
+    import json as _json
+    out_dir = root / "logs" / "research_admission"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "admission_log.jsonl", "w") as f:
+        for e in events:
+            from datetime import datetime
+            ts = datetime.fromisoformat(e["alert_time"].replace("Z", "+00:00")).timestamp()
+            f.write(_json.dumps({
+                "ts": ts, "token_address": e["token_address"], "utc_hour": 0,
+                "path_eligible": True, "path_admitted": admitted,
+                "path_sampling_probability": probability,
+                "admission_reason": "under_hourly_pace" if probability >= 1.0 else "sampled_admit",
+                "budget_used": 0, "budget_remaining": 100000,
+            }) + "\n")
+
+
 def _make_synthetic_events(n, n_days, progress=0.3, venue="CURVE_ACTIVE", start_day_str="2026-08-01"):
     """n distinct mints spread across n_days distinct calendar days --
     each mint alerts exactly once (no boundary-spanning ambiguity)."""
     from datetime import datetime, timedelta, timezone
-    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    y, m, d = (int(x) for x in start_day_str.split("-"))
+    start = datetime(y, m, d, tzinfo=timezone.utc)
     events = []
     for i in range(n):
         day_offset = i % n_days
@@ -189,50 +211,70 @@ class TestQueryCandidateEvidenceAndSelectionReady(unittest.TestCase):
         self.assertFalse(_candidate_selection_ready(evidence, requires_venue=True))
 
     def test_remains_false_with_paths_but_zero_execution_proxies(self):
-        events = _make_synthetic_events(n=300, n_days=30)
+        # start_day_str="2026-08-20" -- inside the trustworthy collection
+        # era (PRICE_CORRECTION_DEPLOY_UTC=2026-08-19) so this test
+        # exercises the intended scenario (paths+admission present,
+        # proxies missing) rather than accidentally passing because
+        # events fell outside the era.
+        events = _make_synthetic_events(n=300, n_days=30, start_day_str="2026-08-20")
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             for e in events:
-                rel = f"logs/research_paths/2026-08-01/{e['token_address']}.csv"
+                rel = f"logs/research_paths/2026-08-20/{e['token_address']}.csv"
                 e["path_file"] = rel
                 _write_path_file(root / rel, [_good_row(e["_alert_ts_ms"]), _good_row(e["_alert_ts_ms"] + 1000)])
+            _write_admission_log(root, events)
+            # A synthetic execution_proxy_log.jsonl entry (status != OK,
+            # so it never counts as observed) is enough to anchor
+            # pp_funded_era_start without an empty-log fallback scan.
+            proxy_dir = root / "logs" / "research_execution_proxy"
+            proxy_dir.mkdir(parents=True)
+            (proxy_dir / "execution_proxy_log.jsonl").write_text(
+                '{"token_address": "ANCHOR", "status": "UNAVAILABLE", "observed_at": "2026-08-20T00:00:00+00:00"}\n'
+            )
             evidence = _query_candidate_evidence(_BASELINE, events, [], root)
         self.assertGreater(evidence.path_coverage.usable_n, 0)
-        self.assertEqual(evidence.execution_proxy_coverage.observed_n, 0)
+        self.assertGreater(evidence.collection_yield.admitted_with_valid_usable_path_n, 0)
+        self.assertEqual(evidence.collection_yield.execution_proxy_observed_n, 0)
         self.assertFalse(_candidate_selection_ready(evidence, requires_venue=True))
 
     def test_one_execution_proxy_observation_cannot_make_it_ready(self):
-        events = _make_synthetic_events(n=300, n_days=30)
+        events = _make_synthetic_events(n=300, n_days=30, start_day_str="2026-08-20")
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             for e in events:
-                rel = f"logs/research_paths/2026-08-01/{e['token_address']}.csv"
+                rel = f"logs/research_paths/2026-08-20/{e['token_address']}.csv"
                 e["path_file"] = rel
                 _write_path_file(root / rel, [_good_row(e["_alert_ts_ms"]), _good_row(e["_alert_ts_ms"] + 1000)])
+            _write_admission_log(root, events)
             proxy_rows = [{"token_address": events[0]["token_address"], "status": "OK",
-                           "observed_at": "2026-08-01T00:00:00+00:00"}]
+                           "observed_at": "2026-08-20T00:00:00+00:00"}]
             evidence = _query_candidate_evidence(_BASELINE, events, proxy_rows, root)
-        self.assertEqual(evidence.execution_proxy_coverage.observed_n, 1)
-        self.assertFalse(evidence.execution_proxy_coverage.ready)
+        self.assertEqual(evidence.collection_yield.execution_proxy_observed_n, 1)
+        self.assertFalse(_collection_yield_execution_proxy_ready(evidence.collection_yield).ready)
         self.assertFalse(_candidate_selection_ready(evidence, requires_venue=True))
 
     def test_transitions_false_to_true_with_sufficiently_large_synthetic_dataset(self):
-        events = _make_synthetic_events(n=300, n_days=30, progress=0.3)
+        events = _make_synthetic_events(n=300, n_days=30, progress=0.3, start_day_str="2026-08-20")
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             proxy_rows = []
             for e in events:
-                rel = f"logs/research_paths/2026-08-01/{e['token_address']}.csv"
+                rel = f"logs/research_paths/2026-08-20/{e['token_address']}.csv"
                 e["path_file"] = rel
                 _write_path_file(root / rel, [_good_row(e["_alert_ts_ms"]), _good_row(e["_alert_ts_ms"] + 1000)])
                 proxy_rows.append({"token_address": e["token_address"], "status": "OK",
                                     "observed_at": e["alert_time"]})
+            _write_admission_log(root, events)
             evidence = _query_candidate_evidence(_BASELINE, events, proxy_rows, root)
 
         self.assertGreaterEqual(evidence.forward_venue_qualified_n, 100)
         self.assertGreaterEqual(evidence.venue_qualified_unique_days, 14)
-        self.assertTrue(evidence.path_coverage.coverage_pct >= 50.0)
-        self.assertTrue(evidence.execution_proxy_coverage.ready)
+        cy = evidence.collection_yield
+        self.assertFalse(cy.era_undetermined)
+        self.assertEqual(cy.path_admitted_n, 300)
+        self.assertTrue(cy.admitted_path_yield_pct >= 50.0)
+        self.assertTrue(_collection_yield_execution_proxy_ready(cy).ready)
         self.assertTrue(evidence.diagnostics_feasibility.computable)
         self.assertTrue(_candidate_selection_ready(evidence, requires_venue=True))
 

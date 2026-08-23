@@ -56,6 +56,7 @@ from research.v8_path_integrity import scan_corpus, CorpusIntegrityReport
 from research.v8_split import grouped_chronological_split
 from research.v8_candidate_path_coverage import compute_candidate_path_coverage, CandidatePathCoverage
 from research.v8_execution_proxy_readiness import assess_execution_proxy_readiness, ExecutionProxyCoverage
+from research.v8_collection_yield import compute_collection_yield, CollectionYield, load_admission_log_by_mint
 
 FORWARD_READINESS_REPORT_VERSION = 2
 
@@ -129,8 +130,9 @@ class CandidateForwardEvidence:
     venue_qualified_unique_days: int
     progress_distribution: dict
     split_counts: SplitCounts
-    path_coverage: CandidatePathCoverage
-    execution_proxy_coverage: ExecutionProxyCoverage
+    path_coverage: CandidatePathCoverage           # population-denominator, all history (context only)
+    execution_proxy_coverage: ExecutionProxyCoverage  # population-denominator, all history (context only)
+    collection_yield: CollectionYield              # era/admission-restricted -- feeds readiness gating
     diagnostics_feasibility: DiagnosticsFeasibility
 
 
@@ -269,8 +271,18 @@ def _read_jsonl(log_path: Path) -> list:
 
 
 def _compute_execution_proxy_coverage(venue_qualified_events: list, execution_proxy_rows: list) -> ExecutionProxyCoverage:
-    eligible_n = len(venue_qualified_events)
+    # READINESS DENOMINATOR AUDIT: eligible_n was event-count while
+    # observed_n (below) is mint-count -- not commensurate whenever a
+    # mint has more than one alert in the population. admission_log.jsonl
+    # and execution_proxy_log.jsonl are both keyed by token_address only
+    # (no event_id carried), so observed_n can only ever be mint-level;
+    # eligible_n is now made mint-level too so numerator and denominator
+    # are never mixed units. This is a population-level count (all
+    # history, unchanged in scope) -- see research/v8_collection_yield.py
+    # for the era/admission-restricted collector-yield view used for
+    # actual readiness gating.
     eligible_mints = {r["token_address"] for r in venue_qualified_events}
+    eligible_n = len(eligible_mints)
 
     # Dedup by (token_address) since the collector fires once per mint --
     # event_id isn't carried on every proxy row reliably yet, so mint is
@@ -289,7 +301,7 @@ def _compute_execution_proxy_coverage(venue_qualified_events: list, execution_pr
 
 
 def _query_candidate_evidence(candidate: dict, all_events: list, execution_proxy_rows: list,
-                               repo_root: Path) -> CandidateForwardEvidence:
+                               repo_root: Path, admission_log_by_mint: Optional[dict] = None) -> CandidateForwardEvidence:
     candidate_events = _filter_candidate_events(all_events, candidate)
 
     historical_entry_n = len(candidate_events)
@@ -308,6 +320,10 @@ def _query_candidate_evidence(candidate: dict, all_events: list, execution_proxy
     split_counts = _compute_split_counts(venue_qualified)
     path_coverage = compute_candidate_path_coverage(venue_qualified, all_events, candidate, repo_root)
     execution_proxy_coverage = _compute_execution_proxy_coverage(venue_qualified, execution_proxy_rows)
+    collection_yield = compute_collection_yield(
+        venue_qualified, all_events, candidate, repo_root,
+        admission_log_by_mint=admission_log_by_mint, execution_proxy_rows=execution_proxy_rows,
+    )
     diagnostics = _compute_diagnostics_feasibility(venue_qualified)
 
     return CandidateForwardEvidence(
@@ -318,7 +334,8 @@ def _query_candidate_evidence(candidate: dict, all_events: list, execution_proxy
         venue_qualified_unique_days=venue_qualified_unique_days,
         progress_distribution=dist,
         split_counts=split_counts, path_coverage=path_coverage,
-        execution_proxy_coverage=execution_proxy_coverage, diagnostics_feasibility=diagnostics,
+        execution_proxy_coverage=execution_proxy_coverage, collection_yield=collection_yield,
+        diagnostics_feasibility=diagnostics,
     )
 
 
@@ -391,9 +408,33 @@ def compute_accumulation_velocity(
     )
 
 
+def _collection_yield_execution_proxy_ready(cy: CollectionYield) -> ExecutionProxyCoverage:
+    """Re-evaluates the SAME, unmodified execution-proxy thresholds
+    (EXECUTION_PROXY_MIN_N / EXECUTION_PROXY_MIN_COVERAGE_PCT) against
+    the corrected, era/admission-restricted denominator instead of the
+    whole historical population."""
+    return assess_execution_proxy_readiness(
+        eligible_n=cy.execution_proxy_collection_eligible_n,
+        observed_n=cy.execution_proxy_observed_n,
+        unique_days=cy.unique_forward_days,
+    )
+
+
 def _candidate_selection_ready(evidence: CandidateForwardEvidence, requires_venue: bool) -> bool:
     """All gates item 5 requires, for ONE candidate (exit-independent --
-    none of these depend on which exit spec is paired with it)."""
+    none of these depend on which exit spec is paired with it).
+
+    READINESS DENOMINATOR AUDIT: representative_path_n/path_coverage_pct
+    and entry_slippage_measured now source from evidence.collection_yield
+    (the era/admission-restricted, collector-yield-fair denominator)
+    instead of evidence.path_coverage/execution_proxy_coverage (the
+    whole-historical-population denominator, kept only for population
+    context/reporting). The absolute thresholds themselves
+    (MIN_PATH_N, MIN_PATH_COVERAGE_PCT, EXECUTION_PROXY_MIN_N,
+    EXECUTION_PROXY_MIN_COVERAGE_PCT) are untouched."""
+    cy = evidence.collection_yield
+    proxy_ready = _collection_yield_execution_proxy_ready(cy)
+
     inputs = ReadinessInputs(
         candidate_id=evidence.candidate_id, exit_id="E0", requires_venue_state=requires_venue,
         historical_entry_n=evidence.historical_entry_n, unique_mints=evidence.unique_mints,
@@ -403,17 +444,17 @@ def _candidate_selection_ready(evidence: CandidateForwardEvidence, requires_venu
         venue_qualified_unique_days=evidence.venue_qualified_unique_days,
         train_n=evidence.split_counts.train_n, validation_n=evidence.split_counts.validation_n,
         holdout_n=evidence.split_counts.holdout_n, boundary_purged_n=evidence.split_counts.boundary_purged_n,
-        representative_path_n=evidence.path_coverage.usable_n,
-        path_coverage_pct=evidence.path_coverage.coverage_pct,
+        representative_path_n=cy.admitted_with_valid_usable_path_n,
+        path_coverage_pct=cy.admitted_path_yield_pct,
         cost_model_available=True,
-        entry_slippage_measured=evidence.execution_proxy_coverage.ready,
+        entry_slippage_measured=proxy_ready.ready,
     )
     engineering_report = assess_readiness(inputs)
 
     return (
         engineering_report.full_entry_rule_ready
         and engineering_report.path_data_ready
-        and evidence.execution_proxy_coverage.ready
+        and proxy_ready.ready
         and evidence.split_counts.train_n > 0
         and evidence.split_counts.validation_n > 0
         and evidence.split_counts.holdout_n > 0
@@ -426,8 +467,12 @@ def build_report(sb, repo_root: Optional[Path] = None) -> ForwardReadinessReport
 
     all_events = _fetch_all_clean_events(sb)
     execution_proxy_rows = _read_jsonl(root / "logs" / "research_execution_proxy" / "execution_proxy_log.jsonl")
+    admission_log_by_mint = load_admission_log_by_mint(root)
 
-    candidate_evidence = [_query_candidate_evidence(c, all_events, execution_proxy_rows, root) for c in CANDIDATES]
+    candidate_evidence = [
+        _query_candidate_evidence(c, all_events, execution_proxy_rows, root, admission_log_by_mint)
+        for c in CANDIDATES
+    ]
 
     path_report = scan_corpus(root / "logs" / "research_paths")
 
@@ -439,6 +484,8 @@ def build_report(sb, repo_root: Optional[Path] = None) -> ForwardReadinessReport
         if candidate_selection_ready:
             selection_ready_candidates.append(cev.candidate_id)
 
+        cy = cev.collection_yield
+        proxy_ready = _collection_yield_execution_proxy_ready(cy)
         for exit_c in EXIT_CANDIDATES:
             inputs = ReadinessInputs(
                 candidate_id=cev.candidate_id, exit_id=exit_c["exit_id"],
@@ -450,10 +497,10 @@ def build_report(sb, repo_root: Optional[Path] = None) -> ForwardReadinessReport
                 venue_qualified_unique_days=cev.venue_qualified_unique_days,
                 train_n=cev.split_counts.train_n, validation_n=cev.split_counts.validation_n,
                 holdout_n=cev.split_counts.holdout_n, boundary_purged_n=cev.split_counts.boundary_purged_n,
-                representative_path_n=cev.path_coverage.usable_n,
-                path_coverage_pct=cev.path_coverage.coverage_pct,
+                representative_path_n=cy.admitted_with_valid_usable_path_n,
+                path_coverage_pct=cy.admitted_path_yield_pct,
                 cost_model_available=True,
-                entry_slippage_measured=cev.execution_proxy_coverage.ready,
+                entry_slippage_measured=proxy_ready.ready,
             )
             readiness_matrix.append(assess_readiness(inputs))
 
@@ -502,10 +549,29 @@ def print_report(report: ForwardReadinessReport) -> None:
               f"no_path_file={pc.no_path_file_n} missing={pc.path_file_missing_or_empty_n} "
               f"alignment_excluded={pc.alignment_excluded_n} integrity_bad={pc.integrity_invalid_or_unknown_n})")
         ec = e.execution_proxy_coverage
-        print(f"    execution_proxy: eligible_n={ec.eligible_n} observed_n={ec.observed_n} "
+        print(f"    execution_proxy (population): eligible_n={ec.eligible_n} observed_n={ec.observed_n} "
               f"coverage_pct={ec.coverage_pct} unique_days={ec.unique_days} ready={ec.ready}")
         if ec.reasons:
             print(f"      reasons: {ec.reasons}")
+
+        cy = e.collection_yield
+        if cy.era_undetermined:
+            print(f"    collection_yield: era UNDETERMINED (no funded-collector output observed yet)")
+        else:
+            print(f"    collection_yield: era_start={cy.era_start}")
+            print(f"      candidate_venue_qualified_n={cy.candidate_venue_qualified_n}  "
+                  f"ambiguous_excluded_mints_n={cy.ambiguous_excluded_mints_n}  "
+                  f"path_collection_eligible_n={cy.path_collection_eligible_n}  "
+                  f"no_admission_record_n={cy.no_admission_record_n}")
+            print(f"      path_admitted_n={cy.path_admitted_n}  admitted_with_tick_n={cy.admitted_with_tick_n}  "
+                  f"admitted_with_valid_usable_path_n={cy.admitted_with_valid_usable_path_n}  "
+                  f"admitted_path_yield_pct={cy.admitted_path_yield_pct}  ipw_effective_n={cy.ipw_effective_n}")
+            proxy_ready = _collection_yield_execution_proxy_ready(cy)
+            print(f"      execution_proxy (collector-yield): eligible_n={cy.execution_proxy_collection_eligible_n} "
+                  f"observed_n={cy.execution_proxy_observed_n} coverage_pct={cy.execution_proxy_coverage_pct} "
+                  f"unique_forward_days={cy.unique_forward_days} ready={proxy_ready.ready}")
+            if proxy_ready.reasons:
+                print(f"        reasons: {proxy_ready.reasons}")
         df = e.diagnostics_feasibility
         print(f"    diagnostics_feasibility: computable={df.computable} "
               f"train_validation_outcome_n={df.train_validation_outcome_n} "
