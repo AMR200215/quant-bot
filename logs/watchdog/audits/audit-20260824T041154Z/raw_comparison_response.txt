@@ -1,0 +1,88 @@
+```json
+[
+  {
+    "finding_id": "F1",
+    "severity": "CRITICAL",
+    "component": "claims.batch.v8_readiness vs SELECTION_DATA_READY claim",
+    "claim": "SELECTION_DATA_READY = FALSE (real blocker: candidate-specific path coverage is 0% for every candidate -- path_file entries are recorded but the files don't exist on disk; execution-proxy collector has 0 observations so far)",
+    "observed_ground_truth": "Ground truth shows an active FIRING incident `claims.batch.v8_readiness` with 312 consecutive failures since 1786585581, and the latest slow check shows 3/7 GREEN, 4/7 PARTIAL (N2, N4, N6, N7), 0 FAIL for this batch, explicitly flagged as a case where CLI exit code could read 'success' despite incompleteness.",
+    "expected_ground_truth": "The claim frames SELECTION_DATA_READY=FALSE as a clean, understood, single-cause diagnostic result, but ground truth shows this readiness batch has been failing for a very long time (312 checks) with no resolution and unexplained PARTIAL items.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "The narrative in the claim may understate an ongoing, persistent readiness failure that the watchdog treats as a live incident, not merely an expected/explained intermediate state.",
+    "suggested_next_step": "Inspect watchdog incident detail for claims.batch.v8_readiness items N2, N4, N6, N7 and correlate their failure reasons with the claimed path-coverage/execution-proxy blockers.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "FORWARD_DATA_PIPELINE_HEALTHY claim vs research.path_collection incident",
+    "claim": "FORWARD_DATA_PIPELINE_HEALTHY = UNKNOWN (3 of 5 components UNKNOWN from low natural yield; the 2 checkable components are both HEALTHY) ... live_pp_paths_flow=UNKNOWN (0 recent rows)",
+    "observed_ground_truth": "Ground truth shows a separate FIRING incident `research.path_collection` (6 consecutive failures, re-fired after a prior recovery), corroborated by a WARN status for 'PP daily message budget exceeded' and zero paths admitted for 7 consecutive hours (17-23 UTC on 2026-08-23).",
+    "expected_ground_truth": "The claim attributes the 0 recent path rows purely to 'low natural yield' (a benign, expected condition), but ground truth's watchdog incident suggests this may instead be an active WARN-level pipeline problem (message budget exceeded, sustained zero admission) rather than simple low yield.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "If the zero-path condition is actually a budget/admission problem rather than benign low yield, the claim's characterization could mask a real data pipeline degradation feeding into SELECTION_DATA_READY.",
+    "suggested_next_step": "Review path_collection admission logs/hourly breakdown for 2026-08-23 17:00-23:00 UTC to determine whether zero admission was caused by budget exhaustion versus genuinely low incoming volume.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F3",
+    "severity": "INFO",
+    "component": "Git SHA reference (final git SHA vs HEAD)",
+    "claim": "Final git SHA: `f2d7c75`, pushed to `origin/main`, pulled and verified on the VPS.",
+    "observed_ground_truth": "Ground truth's HEAD is `c427cd97ca8187ed2349984c87b6562eaf7e7d07`, matching all watchdog runs and job receipts (EV002, EV005).",
+    "expected_ground_truth": "The claim's short SHA `f2d7c75` cannot be matched or ruled out against the full HEAD SHA from the evidence bundle; there is no direct evidence confirming f2d7c75 is an ancestor or equal to c427cd9.",
+    "evidence_ids": ["EV002", "EV005"],
+    "operational_impact": "Cannot independently verify that the deployed/running system reflects the code state described by the claim; if f2d7c75 is not actually on HEAD's history, the claimed 'verified on VPS' status is unconfirmed.",
+    "suggested_next_step": "Run `git log --oneline | grep f2d7c75` or `git merge-base --is-ancestor f2d7c75 HEAD` on the VPS to confirm the claimed SHA is part of current history.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F4",
+    "severity": "WARN",
+    "component": "Working tree cleanliness vs claim of committed/pushed state",
+    "claim": "Final git SHA: f2d7c75, pushed to origin/main, pulled and verified on the VPS ... frozen registries and holdout lock verified unchanged via git status (only the two report/state modules + two new supporting modules touched)",
+    "observed_ground_truth": "Ground truth shows the working tree is NOT clean at HEAD c427cd9 -- numerous modified tracked files and many untracked files/directories are present (EV002), with no evidence explaining whether these are expected runtime artifacts or unreviewed code.",
+    "expected_ground_truth": "The claim implies a clean, verified git state ('git status' checked, only specific modules touched) consistent with a fully committed and pushed change set, but the ground truth working tree shows broader uncommitted changes than described.",
+    "evidence_ids": ["EV002"],
+    "operational_impact": "If untracked/modified files beyond the claimed 'two report/state modules + two new supporting modules' exist, the audit trail for what was actually verified/pushed is incomplete or inconsistent.",
+    "suggested_next_step": "Run `git status --porcelain` and `git diff --stat HEAD` on the VPS and compare the file list against the four modules named in the claim.",
+    "confidence": "low"
+  },
+  {
+    "finding_id": "F5",
+    "severity": "INFO",
+    "component": "Test suite counts",
+    "claim": "Full suite on the VPS's real environment: 872 passed, zero regressions.",
+    "observed_ground_truth": "Ground truth's EV005 reports test collection (not full pass/fail run) for five suites totaling 304+484+103+39+56 = 986 collected tests, all collecting cleanly; it does not report a full run's pass count of 872.",
+    "expected_ground_truth": "The claim's specific pass count (872) cannot be corroborated or refuted by the ground truth evidence, which only confirms clean collection, not execution/pass results, and the totals don't obviously reconcile.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "Cannot confirm the claimed full-suite pass count independently; discrepancy between collected-test totals and claimed passed count is unexplained.",
+    "suggested_next_step": "Run the full test suite on the VPS and capture pass/fail/skip counts to reconcile against both the claimed 872 and the collected totals in EV005.",
+    "confidence": "low"
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "rc_closure commit mismatch (unrelated to this claim set but relevant context)",
+    "claim": "",
+    "observed_ground_truth": "Ground truth notes claims.batch.rc_closure references commit db32f53, which differs from current HEAD c427cd9, with no evidence explaining the discrepancy.",
+    "expected_ground_truth": "Not directly addressed by this claim set, but relevant since the new claim also asserts a distinct short SHA (f2d7c75) for this specific change -- raising the same class of concern about which commit various claims/checks are actually validated against.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "Multiple distinct SHAs referenced across claims/checks (db32f53, f2d7c75, c427cd9) with no evidence tying them together increases risk that claims are validated against a different code state than what is currently deployed.",
+    "suggested_next_step": "Build a commit graph (`git log --graph --oneline -20`) on the VPS to establish the relationship between db32f53, f2d7c75, and c427cd9.",
+    "confidence": "low"
+  },
+  {
+    "finding_id": "F7",
+    "severity": "INFO",
+    "component": "ENGINE_READY claim",
+    "claim": "ENGINE_READY = TRUE",
+    "observed_ground_truth": "No evidence item in the ground-truth summary directly reports an 'ENGINE_READY' status field; the closest related check (claims.batch.v8_readiness) is FIRING with PARTIAL items.",
+    "expected_ground_truth": "The claim asserts ENGINE_READY is TRUE, but this cannot be corroborated or contradicted directly from the evidence bundle since no matching field/check was captured in ground truth.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "Inability to verify ENGINE_READY independently means this specific claim rests solely on the documentation's own assertion.",
+    "suggested_next_step": "Query the readiness monitor's current state file/API directly for the ENGINE_READY field and timestamp of last evaluation.",
+    "confidence": "low"
+  }
+]
+```

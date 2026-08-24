@@ -1,0 +1,50 @@
+# Audit Summary — audit-20260824T041154Z
+
+## Deployed Git SHA / Working Tree
+- HEAD is at `c427cd97ca8187ed2349984c87b6562eaf7e7d07` (EV002). This matches the SHA recorded by both the latest watchdog fast run and slow run (EV005: `latest_fast_run.git_sha`, `latest_slow_run.git_sha`), and the SHA embedded in the most recent job receipts for `k5_nightly`, `epoch_daily`, and `v8_vs_v7_daily` (EV005 `latest_fast_check_results`).
+- The working tree is **not clean**. EV002 lists numerous modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, several CSV/JSON logs, memecoin position/signal files) and a large number of untracked files/directories (e.g. `logs/epoch_daily.jsonl`, `research/data/`, `p15_1_2_audit.py`, `scratch_incident_check.py`, `research/spool/dropped_fields.jsonl`, `research/spool/failed_inserts.jsonl`). I cannot determine intent behind these changes (e.g., whether they are expected runtime output vs. uncommitted code) — only that the tree differs from HEAD.
+
+## systemd services / timers
+- `quantbot.service`: active/running, last exec result success (EV003).
+- `quantbot-research.service`: active/running, last exec result success (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead**, but `Result=success`/`ExecMainStatus=0`, meaning its last invocation exited cleanly rather than crashing (EV003). This is a oneshot-style unit driven by a timer, not a persistent daemon — inactive/dead between timer firings appears to be its normal state.
+- `quantbot-watchdog-slow.service`: same pattern — inactive/dead, last result success (EV003).
+- Timer state (EV003): `quantbot-watchdog-fast.timer` last fired 2026-08-24 04:10:02 UTC (~1m50s before the snapshot), next fire 04:15:00 UTC. `quantbot-watchdog-slow.timer` last fired 04:03:03 UTC, next fire 05:03:00 UTC. Both timers are scheduled and recently fired — no evidence of a stalled/dead timer.
+
+## Cron
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode `0o100644` (world/group-readable, owner-writable) (EV004).
+- `recent_parser_error_lines` is an empty list (EV004) — no parser errors recorded at time of collection.
+- Watchdog's own `cron_static.*` checks for all three jobs report status `OK`, "parses cleanly, no recent journal parser errors" (EV005). Note: `cron_static.epoch_daily` and `cron_static.v8_vs_v7_daily` each show a prior FIRING→RECOVERED incident history (EV005 `all_incidents`), meaning these checks did fail at some point in the past (first_seen ~1786578303, recovered by 1786704004 / 1786578901 respectively) but are currently recovered/OK.
+
+## Watchdog's own most recent run status
+- Latest fast run (`fce3edbc160e4654`, started/finished at 1787544603.70/.71, duration ~11.5ms): `final_runner_status: "ok"`, 11/11 checks completed (EV005).
+- Latest slow run (`7e623fac8edd4064`, started/finished 1787544192.23/.25, duration ~17.7ms): `final_runner_status: "ok"`, 10/10 checks completed (EV005).
+- Both runs report `git_sha: c427cd97ca8187ed2349984c87b6562eaf7e7d07`, matching the deployed HEAD (EV002, EV005).
+
+### Active incidents (EV005 `all_incidents`)
+Two incidents are currently in state `FIRING` (not recovered), both severity WARN:
+1. **`claims.batch.v8_readiness`** — firing since `first_seen 1786585581.22`, `last_seen 1787544192.25`, with **312 consecutive failures**, last notified 1787536991.28, `recovered_at: null`. Corroborated by the latest slow check result (EV005 `latest_slow_check_results`): batch `v8_readiness` shows 3/7 GREEN, 4/7 PARTIAL (items N2, N4, N6, N7), 0 FAIL — explicitly flagged as a case where the CLI exit code would read "success" despite incompleteness.
+2. **`research.path_collection`** — state `FIRING`, `first_seen 1786917790.54`, `last_seen 1787544192.25`, `consecutive_failures: 6`, last notified 1787533391.76. It did recover once (`recovered_at: 1787097790.37`) before re-firing later. Corroborated by the latest slow check (EV005): status WARN for 2026-08-23, "PP daily message budget exceeded (114148/100000, 32 token(s) dropped)". The hourly breakdown in the same evidence shows `path_admitted: 0` and `admission_rate_pct: 0.0` for UTC hours 17–23 on 2026-08-23, i.e., zero paths admitted for the last 7 hours of that day.
+
+All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `funnel.v8`, `feed.telegram`) are in state `RECOVERED` with `consecutive_failures: 0` (EV005).
+
+## Research pipeline queue lag
+- Latest fast check `pipeline.research_queue_lag`: status OK, `queue_size: 1374299`, `offset: 1374299`, `gap_bytes: 0` — consumer reported caught up (EV005).
+- EV006 independently reports `queue_size: 1374299` and `queue_offset: "1374299"`, consistent with EV005's figures (matching values, though EV006 gives no timestamp of its own to confirm simultaneity beyond being in the same bundle).
+- `pipeline.research_spool` check: OK, 0 failed inserts in the last 2.0h, though 68 total historical failed-insert lines exist on disk cumulatively — the check explicitly notes this total is "not itself evidence of an active problem" (EV005).
+
+## Other notable findings
+- **Cron job execution receipts** (EV005 `recent_job_receipts` and `cron_execution.*` checks) show `k5_nightly`, `v8_vs_v7_daily`, and `epoch_daily` all completing with `exit_code: 0` across the last several days of runs (most recent: 1787530501, 1787529481, 1787529301 respectively), all tagged with the current HEAD SHA.
+- **Test collection**: all five test suites (`tests_memecoin` 304 tests, `tests_research` 484 tests, `tests_watchdog` 103 tests, `tests_layer2` 39 tests, `tests_quant-bot` 56 tests) collect cleanly per the latest slow run (EV005). `test_drift.stale_mocks` also OK (130 resolvable patch targets checked; third-party/stdlib targets explicitly not verified).
+- **`claims.batch.rc_closure`**: 3/3 GREEN, commit `db32f53` (EV005) — note this commit differs from the current HEAD SHA `c427cd97...` (EV002); the evidence does not explain this discrepancy, so I cannot say whether `rc_closure`'s claims are still valid against current HEAD.
+- **`layer2.staleness`**: OK, last Layer 2 audit was `audit-20260823T040658Z`, 23.9h old at check time, with 8 findings and 0 critical (EV005). The content of those 8 findings is not in this evidence bundle.
+- **Feed checks**: `feed.telegram` OK, last event 1848s ago against a 7200s threshold (EV005), though this check has a past FIRING→RECOVERED incident (recovered at 1787359218.56). `feed.pumpportal` OK, last connect logged at 2026-08-24 04:09:59 UTC (EV005); it also has a past FIRING→RECOVERED incident (recovered 1787499604.99).
+- **Funnel check** (`funnel.v8`): OK, "all 7446 recent funnel events... have a terminal disposition" (EV005); this check also shows a past RECOVERED incident.
+- **Host uptime**: EV001 reports `uptime_s: 4161186.08` (~48.2 days) with `boot_id d0a4169b-96f4-4bb1-b365-92ca527627e6`, matching the boot_id recorded in both watchdog runs (EV005) — no evidence of an unexpected reboot between the watchdog runs and this snapshot.
+
+## Explicit gaps / ambiguities
+- The evidence does not state what the 4 PARTIAL items (N2, N4, N6, N7) in `v8_readiness` actually require to become GREEN, nor why they've been failing for 312 consecutive checks — only that they are PARTIAL and that this has persisted since 1786585581.
+- No evidence bundle item explains the mismatch between `claims.batch.rc_closure`'s recorded commit `db32f53` and the current HEAD `c427cd9...`.
+- No content/detail of the 8 Layer 2 audit findings is provided — only the count and staleness age.
+- The dirty working tree (EV002) is not explained by any evidence item as to whether these are expected runtime artifacts or unreviewed code changes; I make no assumption either way.
+- EV007 provides only an mtime and length for a receipts file tail, with no content — cannot corroborate or refute anything about `docs/RECEIPTS.md` contents from this alone, only that it was last modified at 1787529481.74, which aligns with the `v8_vs_v7_daily` receipt's `finished_at` (1787529481.75) in EV005.
