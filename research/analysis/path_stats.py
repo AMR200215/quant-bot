@@ -214,6 +214,49 @@ def _insufficient(label: str, n: int, min_n: int):
 
 # ── Analysis A: Shakeout depth ────────────────────────────────────────────────
 
+def _target_hit_index(rows: list[dict], entry: float, target_pct: float) -> int | None:
+    """Index of the first row whose price_usd >= entry * (1 + target_pct/100),
+    or None if the target is never reached."""
+    target_price = entry * (1 + target_pct / 100)
+    return next((i for i, r in enumerate(rows) if r["price_usd"] >= target_price), None)
+
+
+def _shakeout_depth_for_target(rows: list[dict], target_pct: float) -> float | None:
+    """
+    Max drawdown FROM ENTRY up until price first reaches target_pct, as a
+    positive percentage (e.g. 13.2 means a 13.2% pullback). None if the
+    token's first tick has price_usd <= 0 or the target is never reached
+    in this path -- both are "not applicable", not a depth of 0.
+    """
+    if not rows:
+        return None
+    entry = rows[0]["price_usd"]
+    if entry <= 0:
+        return None
+    target_hit_idx = _target_hit_index(rows, entry, target_pct)
+    if target_hit_idx is None:
+        return None
+    window = rows[:target_hit_idx + 1]
+    min_price = min(r["price_usd"] for r in window)
+    return (entry - min_price) / entry * 100
+
+
+def _time_to_target_minutes(rows: list[dict], target_pct: float) -> float | None:
+    """
+    Minutes from the first tick to the first tick that reaches target_pct
+    gain. None if the target is never reached in this path.
+    """
+    if not rows:
+        return None
+    entry = rows[0]["price_usd"]
+    if entry <= 0:
+        return None
+    target_hit_idx = _target_hit_index(rows, entry, target_pct)
+    if target_hit_idx is None:
+        return None
+    return (rows[target_hit_idx]["ts_ms"] - rows[0]["ts_ms"]) / 1000 / 60
+
+
 def _analyse_shakeout(
     path_meta: list[tuple],   # [(rows, progress_at_signal), ...]
     min_n: int,
@@ -240,20 +283,9 @@ def _analyse_shakeout(
             # path_meta directly.
             if progress is None:
                 continue
-            entry = rows[0]["price_usd"]
-            if entry <= 0:
+            drawdown = _shakeout_depth_for_target(rows, target)
+            if drawdown is None:
                 continue
-            target_price  = entry * (1 + target / 100)
-            target_hit_idx = next(
-                (i for i, r in enumerate(rows) if r["price_usd"] >= target_price),
-                None,
-            )
-            if target_hit_idx is None:
-                continue   # never reached target
-            # Max drawdown from entry up to (and including) target hit
-            window = rows[:target_hit_idx + 1]
-            min_price  = min(r["price_usd"] for r in window)
-            drawdown   = (entry - min_price) / entry * 100
             bkt = _bucket_index(progress)
             bucket_vals[bkt].append(drawdown)
 

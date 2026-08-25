@@ -23,6 +23,8 @@ from research.analysis.path_stats import (
     _TROUGH_MIN_DEPTH_PCT,
     _integrity_gate,
     _load_path,
+    _shakeout_depth_for_target,
+    _time_to_target_minutes,
 )
 
 
@@ -199,6 +201,47 @@ class TestIntegrityGate(unittest.TestCase):
             typed = _load_path(p, raw_rows=raw_rows)
         self.assertEqual(len(typed), 2)
         self.assertEqual(typed[0]["price_usd"], 0.00005)
+
+
+class TestShakeoutDepthForTarget(unittest.TestCase):
+    """Extracted from _analyse_shakeout (Analysis A) -- E3's hard_stop was
+    derived from this exact function, so it must be independently correct."""
+
+    def test_never_reaches_target_returns_none(self):
+        rows = [_row(0, 100), _row(1000, 105)]
+        self.assertIsNone(_shakeout_depth_for_target(rows, 30))
+
+    def test_computes_max_drawdown_before_target_hit(self):
+        rows = [_row(0, 100), _row(1000, 70), _row(2000, 130)]  # +30% target = 130
+        depth = _shakeout_depth_for_target(rows, 30)
+        self.assertAlmostEqual(depth, 30.0, places=1)  # (100-70)/100
+
+    def test_drawdown_after_target_hit_is_not_counted(self):
+        # Deep drop happens AFTER the target is already reached -- must be excluded.
+        rows = [_row(0, 100), _row(1000, 130), _row(2000, 10)]
+        depth = _shakeout_depth_for_target(rows, 30)
+        self.assertAlmostEqual(depth, 0.0, places=1)
+
+    def test_zero_or_negative_entry_price_returns_none(self):
+        rows = [_row(0, 0), _row(1000, 130)]
+        self.assertIsNone(_shakeout_depth_for_target(rows, 30))
+
+    def test_empty_rows_returns_none(self):
+        self.assertIsNone(_shakeout_depth_for_target([], 30))
+
+
+class TestTimeToTargetMinutes(unittest.TestCase):
+
+    def test_never_reaches_target_returns_none(self):
+        rows = [_row(0, 100), _row(1000, 105)]
+        self.assertIsNone(_time_to_target_minutes(rows, 30))
+
+    def test_computes_minutes_to_first_target_hit(self):
+        rows = [_row(0, 100), _row(60_000, 110), _row(120_000, 130)]  # +30% at t=120s
+        self.assertAlmostEqual(_time_to_target_minutes(rows, 30), 2.0, places=2)
+
+    def test_empty_rows_returns_none(self):
+        self.assertIsNone(_time_to_target_minutes([], 30))
 
 
 if __name__ == "__main__":
