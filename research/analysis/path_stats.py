@@ -46,6 +46,7 @@ from statistics import mean, median, quantiles, stdev
 
 from research.path_schema import load_path_file
 from research.config import GRAD_SOL_UI
+from research.v8_path_integrity import assess_path_integrity, PathIntegrityStatus
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -75,15 +76,23 @@ _BUCKET_LABELS      = ["0–25%", "25–50%", "50–75%", "75–90%", "90%+"]
 
 # ── Path file loader (RF5: delegates to canonical load_path_file) ──────────────
 
-def _load_path(p: Path) -> list[dict]:
+def _load_path(p: Path, raw_rows: list[dict] | None = None) -> list[dict]:
     """
     Load a path CSV into a list of row dicts using the canonical schema loader.
     Returns only rows with data_status != 'partial' (complete rows only).
     Partial-row warnings are counted and logged but rows are not omitted entirely
     from caller — consumers still receive them; analysis functions decide further.
     Sorted by ts_ms ascending (done by load_path_file).
+
+    raw_rows: if the caller already loaded this file via load_path_file()
+        (e.g. to run assess_path_integrity() before deciding whether to
+        include it at all), pass those rows here to avoid reading the
+        file twice.
     """
-    rows, warnings = load_path_file(p)
+    if raw_rows is not None:
+        rows, warnings = raw_rows, []
+    else:
+        rows, warnings = load_path_file(p)
     if warnings:
         partial_count = sum(1 for w in warnings if "partial" in w or "missing" in w)
         log.debug("load_path_file %s: %d warnings (%d partial-row)",
@@ -107,6 +116,25 @@ def _load_path(p: Path) -> list[dict]:
         except (ValueError, KeyError):
             pass
     return typed
+
+
+def _integrity_gate(path: Path, valid_only: bool) -> tuple[bool, list[dict] | None]:
+    """
+    Returns (included, raw_rows). If valid_only is False, always
+    (True, None) -- no integrity check performed, no rows pre-loaded.
+    If valid_only is True, loads the file once via load_path_file() and
+    runs research/v8_path_integrity.py's assess_path_integrity() --
+    returns (False, None) if not VALID (the file is excluded), or
+    (True, raw_rows) so the caller can reuse the same rows in
+    _load_path() instead of reading the file a second time.
+    """
+    if not valid_only:
+        return True, None
+    raw_rows, _warnings = load_path_file(path)
+    integrity = assess_path_integrity(raw_rows)
+    if integrity.status != PathIntegrityStatus.VALID.value:
+        return False, None
+    return True, raw_rows
 
 
 def _discover_paths(research_paths_dir: Path, live_only: bool) -> dict[str, Path]:
@@ -718,6 +746,11 @@ def main():
                         help="exclude backfill paths")
     parser.add_argument("--no-db",      action="store_true",
                         help="don't query Supabase; all tokens treated as progress=None")
+    parser.add_argument("--valid-only", action="store_true",
+                        help="exclude paths research/v8_path_integrity.py flags as not VALID "
+                             "(e.g. the pre-2026-08-19 live_pp price-corruption pattern) before "
+                             "any analysis runs -- the price-outlier-cleaning pass analyses B and "
+                             "F were documented as blocked on (research/v8_exit_registry.py)")
     args = parser.parse_args()
 
     from research.config import SUPABASE_URL, SUPABASE_KEY, RESEARCH_PATHS_DIR
@@ -748,8 +781,14 @@ def main():
     joined = 0             # PF11: paths that matched a research_tokens row at all
     source_counts: "Counter" = defaultdict(int)   # PF11: progress_source breakdown
     capture_lags_ms: list[float] = []             # PF11: for p50/p95
+    integrity_excluded = 0
     for mint, path in mint_to_path.items():
-        rows = _load_path(path)
+        included, raw_rows = _integrity_gate(path, args.valid_only)
+        if not included:
+            integrity_excluded += 1
+            skipped += 1
+            continue
+        rows = _load_path(path, raw_rows=raw_rows)
         if not rows:
             skipped += 1
             continue
@@ -770,6 +809,9 @@ def main():
 
     print(f"\n{'=' * 72}")
     print(f"  TRADE-PATH STATISTICS  —  {loaded} tokens  —  min_n={args.min_n}")
+    if args.valid_only:
+        print(f"  --valid-only: {integrity_excluded} path(s) excluded by "
+              f"research/v8_path_integrity.py (not VALID)")
     print(f"{'=' * 72}")
 
     # Filter to paths with progress_at_signal set for bucket analyses

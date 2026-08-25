@@ -21,6 +21,8 @@ from research.analysis.path_stats import (
     _has_trader_pk_data,
     _MCAP_ZONES,
     _TROUGH_MIN_DEPTH_PCT,
+    _integrity_gate,
+    _load_path,
 )
 
 
@@ -115,6 +117,88 @@ class TestBuyerFeatures(unittest.TestCase):
     def test_has_trader_pk_data_false_for_pre_n7a_path(self):
         rows = [_row(0, 1.0, trader_pk=""), _row(1000, 1.0, trader_pk="")]
         self.assertFalse(_has_trader_pk_data(rows))
+
+
+class TestIntegrityGate(unittest.TestCase):
+    """--valid-only: the price-outlier-cleaning pass research/
+    v8_exit_registry.py's audit said analyses B and F were blocked on,
+    now available by reusing the already-tested v8_path_integrity.py
+    classifier (not a new heuristic)."""
+
+    def _write_csv(self, path, rows):
+        import csv
+        from research.path_schema import PATH_HEADER
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=PATH_HEADER)
+            w.writeheader()
+            for r in rows:
+                full = {k: "" for k in PATH_HEADER}
+                full.update(r)
+                w.writerow(full)
+
+    def _clean_row(self, ts_ms):
+        return {
+            "schema_version": "3", "ts_ms": str(ts_ms), "price_usd": "0.00005",
+            "price_sol": "0.0000003", "vsol": "50.0", "vtok": "1000000000",
+            "venue_state": "CURVE_ACTIVE", "source": "live_pp", "backfilled": "false",
+            "data_status": "ok",
+        }
+
+    def _corrupted_row(self, ts_ms):
+        # Same VSOL_EXCEEDS_GRADUATION_WHILE_CURVE_ACTIVE fixture pattern
+        # used in research/tests/test_v8_final_state.py -- vsol implies
+        # the token graduated while venue_state still claims CURVE_ACTIVE.
+        return {
+            "schema_version": "3", "ts_ms": str(ts_ms), "price_usd": "73.49",
+            "price_sol": "0.42", "vsol": "116.27", "vtok": "279900000",
+            "venue_state": "CURVE_ACTIVE", "source": "live_pp", "backfilled": "false",
+            "data_status": "ok",
+        }
+
+    def test_valid_only_false_never_gates_or_preloads(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "MINT_A.csv"
+            self._write_csv(p, [self._corrupted_row(0), self._corrupted_row(1000)])
+            included, raw_rows = _integrity_gate(p, valid_only=False)
+        self.assertTrue(included)
+        self.assertIsNone(raw_rows)
+
+    def test_valid_only_excludes_corrupted_path(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "MINT_BAD.csv"
+            self._write_csv(p, [self._clean_row(0), self._corrupted_row(1000),
+                                 self._clean_row(2000)])
+            included, raw_rows = _integrity_gate(p, valid_only=True)
+        self.assertFalse(included)
+        self.assertIsNone(raw_rows)
+
+    def test_valid_only_includes_clean_path_and_returns_reusable_rows(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "MINT_GOOD.csv"
+            self._write_csv(p, [self._clean_row(0), self._clean_row(1000)])
+            included, raw_rows = _integrity_gate(p, valid_only=True)
+        self.assertTrue(included)
+        self.assertEqual(len(raw_rows), 2)
+
+    def test_load_path_reuses_preloaded_raw_rows_without_rereading(self):
+        """_load_path(path, raw_rows=...) must produce the same typed
+        output as a normal load, without needing the file to be
+        re-readable (proves it never re-opens the path when raw_rows is
+        given -- deleting the file after preloading must not matter)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "MINT_C.csv"
+            self._write_csv(p, [self._clean_row(0), self._clean_row(1000)])
+            from research.path_schema import load_path_file
+            raw_rows, _w = load_path_file(p)
+            p.unlink()  # gone -- _load_path must not try to reopen it
+            typed = _load_path(p, raw_rows=raw_rows)
+        self.assertEqual(len(typed), 2)
+        self.assertEqual(typed[0]["price_usd"], 0.00005)
 
 
 if __name__ == "__main__":
