@@ -4151,3 +4151,80 @@ and readiness monitor are left running. If `SELECTION_DATA_READY`
 later becomes `True`, the correct next step is to report it and wait
 for explicit user approval to open holdout — not to open it
 automatically.
+
+## PumpPortal funding + readiness denominator audit + EXPERIMENT V2 (E3)
+
+**2026-08-22 through 2026-08-26.** Three separate pieces of work,
+summarized together since they're causally linked (funding unblocked
+real data → the denominator bug became visible and worth fixing → the
+resulting clean corpus made a real exit-registry derivation possible).
+
+### PumpPortal funding (2026-08-22)
+
+User funded the PumpPortal API key's linked account (≥0.02 SOL
+minimum). Verified live end-to-end, real production traffic, not
+synthesized: `subscribeTokenTrade` accepted (no more "Minimum balance
+not met"), real trade ticks received, corrected reserve price, v3 path
+CSV written and on disk, `research_tokens.path_file` linked correctly,
+path integrity VALID, $2/$5 execution-proxy observation written. No
+code changes needed — the pipeline built in the prior batch was already
+correct; it was purely blocked on funding.
+
+### Readiness denominator audit/correction (git SHA `2c2ab8c`)
+
+Real bug found: `path_coverage`/`execution_proxy_coverage` used the
+ENTIRE historical venue-qualified population as the denominator,
+including events that could never have produced a path (pre-schema-v3,
+pre-price-fix, pre-funding, or never admitted by the probabilistic
+sampler). New `research/v8_collection_yield.py` separates population
+counts (preserved, unchanged) from collector-yield counts (era +
+admission-restricted). Trustworthy era boundary derived from real
+evidence, never guessed: `max(price-correction/v3-schema deploy
+2026-08-19, earliest real observation the funded collector ever
+produced)`. Also fixed a real units-mismatch bug (event-count
+denominator vs mint-count numerator in execution-proxy coverage).
+Absolute thresholds untouched. 18 new tests, 488/488 total green.
+
+### `path_stats.py --valid-only` (git SHA `7d2e319`, refactor `333dbfb`)
+
+The price-outlier-cleaning pass `v8_exit_registry.py`'s original audit
+said analyses B and F were blocked on now exists — reuses the
+already-tested `assess_path_integrity()` classifier, excludes anything
+not VALID before any analysis runs. Re-running Analysis F (find the
+first ≥10% trough, measure the bounce after it) on the clean 374-token
+corpus: 257/374 (69%) show a qualifying reversal, positive median
+bounce in the $10-100k mcap bands (+14% to +20%), but the <$10k band's
+number (+19,848% median) is thin-liquidity noise, not signal — flagged,
+not used for anything.
+
+### EXPERIMENT V2 — E3 exit candidate added (git SHA pending this commit)
+
+User asked for the reversal/timing data to actually inform exit-rule
+design. `research/v8_exit_registry.py`'s own frozen-registry mechanism
+(`assert_registry_frozen`) exists exactly for this: allows an explicit,
+visible "experiment v2" rather than a silent in-place edit.
+
+Derivation: `_shakeout_depth_for_target`/`_time_to_target_minutes`
+(newly extracted, pure, tested, from Analysis A) run against every
+clean token that ever reached +30% (n=106, same +30% threshold E0/E1/E2
+already use as `time_stop_min_gain` — not a new number invented for
+this). Depth p90 (81.74%) was **not used** — wider than E2's existing
+-50% stop, almost certainly dominated by thin-liquidity outliers (same
+failure mode as the <$10k mcap band above); freezing a hard_stop from
+it would be outlier noise dressed as derivation. Time-to-target p90
+(7.29min, rounded to 7) showed no such distortion and **was used**: E3
+keeps E0's hard_stop/trail_tiers verbatim and only changes
+`time_stop_min` to 7 (vs 90/45/120 for E0/E1/E2) — a large, deliberate,
+explicitly-flagged departure, not a quiet tweak.
+
+`EXIT_REGISTRY_VERSION` 1→2, `EXIT_REGISTRY_FROZEN_EXIT_COUNT` 3→4,
+frozen SHA256 recomputed and verified (`assert_registry_frozen()`
+passes), `ENGINE_READY` reconfirmed True after the change. 2 new tests
+verifying E3 isolates only `time_stop_min` vs E0 and is the shortest
+timeout of all four. Full suite 498/498 green.
+
+**Not done, deliberately:** no data-derived hard_stop (outlier problem
+above). E3 has not been evaluated against E0/E1/E2 — it is a new,
+equally-unproven candidate that now enters the same readiness/replay
+pipeline as the other three, on train/validation only, once
+`SELECTION_DATA_READY`. Holdout untouched throughout.

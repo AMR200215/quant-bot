@@ -148,10 +148,12 @@ class TestReplayExitsWrapperUnchanged(unittest.TestCase):
 
 class TestExitRegistry(unittest.TestCase):
 
-    def test_three_exit_candidates(self):
-        self.assertEqual(len(EXIT_CANDIDATES), 3)
+    def test_four_exit_candidates(self):
+        # Experiment v2 (2026-08-26): E3 added, see research/v8_exit_registry.py's
+        # EXPERIMENT V2 docstring for the derivation.
+        self.assertEqual(len(EXIT_CANDIDATES), 4)
         ids = {c["exit_id"] for c in EXIT_CANDIDATES}
-        self.assertEqual(ids, {"E0", "E1", "E2"})
+        self.assertEqual(ids, {"E0", "E1", "E2", "E3"})
 
     def test_no_midtrade_rule_is_explicit_valid_status(self):
         self.assertEqual(MIDTRADE_CANDIDATES, [])
@@ -179,6 +181,27 @@ class TestExitRegistry(unittest.TestCase):
         e0 = next(c for c in EXIT_CANDIDATES if c["exit_id"] == "E0")
         self.assertEqual(e0["spec"]["hard_stop"], _V7_SPEC["hard_stop"])
         self.assertEqual(e0["spec"]["trail_tiers"], _V7_SPEC["trail_tiers"])
+
+    def test_e3_isolates_only_time_stop_min_vs_e0(self):
+        """E3's hard_stop/trail_tiers/tp_levels/profit_lock params must be
+        identical to E0 -- the depth-based derivation was outlier-dominated
+        and deliberately not used (see EXPERIMENT V2 docstring), so only
+        time_stop_min should differ."""
+        e0 = next(c for c in EXIT_CANDIDATES if c["exit_id"] == "E0")["spec"]
+        e3 = next(c for c in EXIT_CANDIDATES if c["exit_id"] == "E3")["spec"]
+        self.assertEqual(e3["hard_stop"], e0["hard_stop"])
+        self.assertEqual(e3["trail_tiers"], e0["trail_tiers"])
+        self.assertEqual(e3["tp_levels"], e0["tp_levels"])
+        self.assertEqual(e3["time_stop_min_gain"], e0["time_stop_min_gain"])
+        self.assertEqual(e3["profit_lock_min_gain"], e0["profit_lock_min_gain"])
+        self.assertEqual(e3["profit_lock_max_gain"], e0["profit_lock_max_gain"])
+        self.assertEqual(e3["profit_lock_stall_sec"], e0["profit_lock_stall_sec"])
+        self.assertNotEqual(e3["time_stop_min"], e0["time_stop_min"])
+        self.assertEqual(e3["time_stop_min"], 7)
+
+    def test_e3_time_stop_is_shortest_of_all_candidates(self):
+        stops = {c["exit_id"]: c["spec"]["time_stop_min"] for c in EXIT_CANDIDATES}
+        self.assertEqual(min(stops, key=stops.get), "E3")
 
 
 if __name__ == "__main__":
