@@ -1,9 +1,9 @@
 {
-  "last_audit_id": "audit-20260825T040557Z",
-  "last_audit_completed_at": 1787630822.0776045,
+  "last_audit_id": "audit-20260826T040821Z",
+  "last_audit_completed_at": 1787717372.6651344,
   "status": "ok",
-  "findings_count": 7,
+  "findings_count": 6,
   "critical_count": 0,
-  "warn_count": 2,
-  "evidence_sha256": "328e0f7b7234c9df593b39897b75b4cb807fdb99ac30a07c562a3e25af7b1ffe"
+  "warn_count": 3,
+  "evidence_sha256": "780c2cf43d6fd6316393c7cd33efe35572334d223727dca2de94c6151133c1c5"
 }
