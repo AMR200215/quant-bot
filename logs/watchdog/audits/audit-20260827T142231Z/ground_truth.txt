@@ -1,0 +1,45 @@
+# Audit Summary — audit-20260827T142231Z
+
+## Deployed SHA / working tree
+- Deployed HEAD SHA: `3b0aa7264f18fa845635cdc775b3d10e4542d953` (EV002, and confirmed as the `git_sha` recorded by both the latest fast and slow watchdog runs — EV005 `latest_fast_run`, `latest_slow_run`).
+- Working tree is **not clean**. EV002 lists modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, several logs, memecoin data files) and a substantial number of untracked files/directories (new logs, `research/data/`, `research/spool/dropped_fields.jsonl`, `research/spool/failed_inserts.jsonl`, two ad hoc scripts `p15_1_2_audit.py` and `scratch_incident_check.py`). No evidence characterizes whether these are expected runtime outputs vs. uncommitted work — only that the tree is dirty (EV002).
+- Note: job receipts under `recent_job_receipts` (EV005) show a different SHA, `b5b7908b7a8455b469323fea923ac9ed35b8d25a`, for the three most recent cron job executions (k5_nightly, v8_vs_v7_daily, epoch_daily at ~1787788–1787790). This means the currently-deployed SHA (`3b0aa72...`) differs from the SHA that was checked out when the last nightly cron jobs actually ran. Evidence does not explain when or why the SHA changed between those runs and now.
+
+## systemd services / timers
+- `quantbot.service`: active/running, last exec success (EV003).
+- `quantbot-research.service`: active/running, last exec success (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead** (EV003) — but this is expected-looking because it is timer-activated (see below), not a standalone daemon.
+- `quantbot-watchdog-slow.service`: **inactive/dead** (EV003) — same caveat.
+- Timers: `quantbot-watchdog-fast.timer` last fired 2026-08-27T14:20:17Z, next due 14:25:00Z (EV003). `quantbot-watchdog-slow.timer` last fired 14:03:03Z, next due 15:03:00Z (EV003). Both timers appear to be firing on schedule as of the evidence snapshot.
+
+## Cron file validity
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, each mode `0644`, each with a single well-formed line invoking `watchdog.exec_wrapper` (EV004).
+- `recent_parser_error_lines` is an empty list (EV004) — no parser errors reported in the window covered.
+- The watchdog's own static cron checks (`cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`) all report `OK`, "parses cleanly, no recent journal parser errors" (EV005).
+- Historical incident log shows `cron_static.epoch_daily` and `cron_static.v8_vs_v7_daily` each had a WARN incident that later reached `RECOVERED` state (EV005 `all_incidents`), meaning these cron files were flagged unhealthy at some point in the past but are not currently in a firing state.
+
+## Watchdog's own most recent run status
+- **Fast profile**: run_id `73b7cd78857e48af`, started/finished at `1787840418.667…`/`1787840418.678…` (duration ~11ms), SHA `3b0aa72...`, `checks_due=11`, `checks_completed=11`, `final_runner_status="ok"` (EV005). All 11 checks completed; results include one CRITICAL (`funnel.v8`) and one UNKNOWN (`feed.pumpportal`), rest OK.
+- **Slow profile**: run_id `29c0134969634ba9`, started/finished at `1787839391.31…`/`1787839391.62…` (duration ~308ms), SHA `3b0aa72...`, `checks_due=10`, `checks_completed=10`, `final_runner_status="ok"` (EV005). Results include two WARN (`claims.batch.v8_readiness`, `layer2.staleness`), one WARN (`research.path_collection`), rest OK.
+- The watchdog itself completed both its due check sets successfully (no runner-level failure), but several of the checks it ran are reporting active problems (below).
+
+## Active incidents (from EV005 `all_incidents`, state as recorded)
+- **`funnel.v8` — CRITICAL, FIRING** (440 consecutive failures, first_seen 1786748706, last_seen 1787840418). Latest check evidence: one candidate (`event_id bd6003380054eb57`, mint `AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump`) entered `telegram_received` at ts `1787710096.66` and has no recorded terminal disposition — flagged by the watchdog as the "silent-disappearance" failure class. This is the only CRITICAL-severity item in the evidence and is currently unresolved.
+- **`claims.batch.v8_readiness` — WARN, FIRING** (407 consecutive failures). Latest result: 3/7 GREEN, 4/7 PARTIAL (`N2`, `N4`, `N6`, `N7`), 0 FAIL (EV005). Explicitly noted by the check itself that CLI exit code would read 0/success despite the PARTIAL items.
+- **`layer2.staleness` — WARN, FIRING** (5 consecutive failures). Last successful Layer 2 audit was `audit-20260826T040821Z`, age ~33.9h at check time, exceeding the 30h threshold (EV005). Evidence states the external Layer 2 audit agent "appears to have stopped running."
+- **`research.path_collection` — WARN, FIRING** (101 consecutive failures). For 2026-08-26: path yield 37.8% (below the 50% floor) and PumpPortal daily message budget exceeded (105,387 vs 100,000 budget, 49 tokens dropped) (EV005).
+- **`feed.pumpportal` — WARN, state SUSPECT** (0 consecutive failures currently, last_seen matches latest fast run timestamp). The corresponding live check result is `UNKNOWN`: "no PumpPortal connect/error/deadman evidence found in lookback window" (EV005). The incident record shows an earlier recovery (`recovered_at 1787745005`) but the current state is `SUSPECT`, not `RECOVERED` or `OK` — i.e. the evidence does not establish that PumpPortal feed health is currently confirmed good or bad.
+- **`feed.telegram` — RECOVERED.** Current check is OK: last `telegram_received` event 353.6s ago against a 7200s threshold (EV005).
+- Several other incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`) are all in `RECOVERED` state with 0 consecutive failures (EV005) — historical, not currently active.
+
+## Research pipeline queue lag
+- `pipeline.research_queue_lag` check: **OK**, "consumer caught up (gap=0 bytes)", `queue_size=1728084`, `offset=1728084`, `gap_bytes=0` (EV005).
+- EV006 independently reports `queue_size: 1728084`, `queue_offset: "1728084"` — consistent with EV005, confirming zero lag at the time of the snapshot.
+- `pipeline.research_spool` check: OK, 0 failed inserts in the last 2.0h; 68 total historical lines on disk noted explicitly as "not itself evidence of an active problem" (EV005). Note EV002 also shows `research/spool/dropped_fields.jsonl` and `research/spool/failed_inserts.jsonl` as untracked files present in the tree — their existence is confirmed, but no content/count for them is given beyond the spool check's own 0-recent-failures figure.
+
+## Other observations
+- Cron job execution receipts (EV005 `recent_job_receipts`) show a clean run history for `k5_nightly`, `v8_vs_v7_daily`, and `epoch_daily` going back through 20 entries, all with `exit_code: 0`.
+- `receipts_tail` (EV007): `docs/RECEIPTS.md` file mtime `1787788681.32` matches the `v8_vs_v7_daily` job's `finished_at` (EV005 evidence for `cron_execution.v8_vs_v7_daily`), consistent with that job being the most recent writer of the file. File length is 225,761 bytes; no content is provided to assess correctness of the row written.
+- Host uptime is ~4,457,024s (~51.6 days) as of `2026-08-27T14:22:30Z` (EV001), and the `boot_id` matches the boot_id recorded in the latest watchdog fast run (EV005) — no evidence of an intervening reboot between that run and the audit snapshot.
+- Test-collection checks (memecoin, research, watchdog, layer2, top-level tests) all report clean collection with specific counts (304, 498, 103, 39, 56 tests respectively) and no collection errors (EV005). This confirms test suites currently import/collect without error; it says nothing about pass/fail status of the tests themselves, which is not in evidence.
+- No evidence was provided for CPU/memory/disk resource usage, network connectivity beyond the feed checks, database schema/contents beyond the receipts referenced, or the content of the two ad hoc scripts (`p15_1_2_audit.py`, `scratch_incident_check.py`) shown as untracked in EV002 — these gaps are not filled by inference.

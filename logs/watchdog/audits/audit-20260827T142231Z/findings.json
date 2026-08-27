@@ -1,0 +1,115 @@
+[
+  {
+    "finding_id": "F1",
+    "severity": "INFO",
+    "component": "receipts_tail narrative vs test counts",
+    "claim": "Full suite 498/498 green (EXPERIMENT V2 \u2014 E3 exit candidate section).",
+    "observed_ground_truth": "EV005 test-collection checks report 498 tests collected for the research suite with no collection errors, but no pass/fail execution results are in evidence.",
+    "expected_ground_truth": "Claim asserts the full suite actually passed 498/498, i.e. was executed and green, not merely collected.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "Cannot confirm test suite is actually passing; only that it imports/collects cleanly, so a claim of '498/498 green' is unverified by available evidence.",
+    "suggested_next_step": "Run the research test suite directly (e.g. `pytest research/ -q`) and capture pass/fail counts to corroborate the claim.",
+    "confidence": "high",
+    "audit_id": "audit-20260827T142231Z",
+    "timestamp": 1787840624.8607066
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "research.path_collection health vs claimed pipeline correctness",
+    "claim": "PumpPortal funding section asserts pipeline is verified live end-to-end and correct, no code changes needed, with a validated path integrity and execution-proxy observation written.",
+    "observed_ground_truth": "EV005 shows `research.path_collection` is WARN/FIRING with 101 consecutive failures: 2026-08-26 path yield 37.8% (below 50% floor) and PumpPortal daily message budget exceeded (105,387 vs 100,000, 49 tokens dropped).",
+    "expected_ground_truth": "If the pipeline were fully healthy as the claim implies, path yield and message-budget checks should not be in an active FIRING WARN state.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The claimed 'verified live end-to-end' funding/pipeline fix does not preclude ongoing yield/budget problems; downstream path collection is still degraded in production as of the audit snapshot.",
+    "suggested_next_step": "Inspect `research.path_collection` check history and recent path-yield logs for 2026-08-26/27 to determine if the low yield is a residual/expected effect or a regression.",
+    "confidence": "medium",
+    "audit_id": "audit-20260827T142231Z",
+    "timestamp": 1787840624.8607147
+  },
+  {
+    "finding_id": "F3",
+    "severity": "WARN",
+    "component": "readiness denominator correction vs claims.batch.v8_readiness health",
+    "claim": "Readiness denominator audit/correction (SHA 2c2ab8c) fixed real bugs in path_coverage/execution_proxy_coverage denominators; 18 new tests, 488/488 total green.",
+    "observed_ground_truth": "EV005 shows `claims.batch.v8_readiness` is WARN/FIRING with 407 consecutive failures, 3/7 GREEN and 4/7 PARTIAL (N2, N4, N6, N7), and the check itself notes CLI exit code would read success despite PARTIAL items.",
+    "expected_ground_truth": "If the denominator fix fully resolved the readiness measurement issue, the batch readiness check would be expected to show fewer PARTIAL/FIRING results, not a long-running (407-failure) WARN incident.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The claimed correctness fix may be real but does not appear to have resolved (or was not intended to resolve) the ongoing readiness PARTIAL states; risk of overstating pipeline health from the narrative alone.",
+    "suggested_next_step": "Diff `claims.batch.v8_readiness` PARTIAL item definitions (N2, N4, N6, N7) against the new v8_collection_yield.py logic to see if they are the same metrics referenced in the claimed fix.",
+    "confidence": "medium",
+    "audit_id": "audit-20260827T142231Z",
+    "timestamp": 1787840624.860719
+  },
+  {
+    "finding_id": "F4",
+    "severity": "CRITICAL",
+    "component": "funnel.v8 CRITICAL incident vs claims of pipeline correctness",
+    "claim": "Narrative repeatedly asserts the v8/exit-registry/path pipeline is correct, funded, and verified end-to-end with no code changes needed.",
+    "observed_ground_truth": "EV005 shows `funnel.v8` is the sole CRITICAL, FIRING incident (440 consecutive failures) \u2014 a candidate entered `telegram_received` with no terminal disposition, the 'silent-disappearance' failure class, still unresolved as of the audit.",
+    "expected_ground_truth": "Claims of a verified, correct, end-to-end pipeline would imply no unresolved CRITICAL funnel failures of this kind.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "A live, unresolved CRITICAL funnel defect coexists with documentation asserting the pipeline is fixed/verified; this is the most severe unresolved discrepancy and should not be considered closed by the narrative.",
+    "suggested_next_step": "Trace event_id bd6003380054eb57 / mint AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump through the v8 funnel logs to find where the terminal disposition is being lost.",
+    "confidence": "high",
+    "audit_id": "audit-20260827T142231Z",
+    "timestamp": 1787840624.8607213
+  },
+  {
+    "finding_id": "F5",
+    "severity": "INFO",
+    "component": "EXIT_REGISTRY_VERSION / experiment freezing mechanism",
+    "claim": "EXIT_REGISTRY_VERSION 1\u21922, FROZEN_EXIT_COUNT 3\u21924, frozen SHA256 recomputed and verified, ENGINE_READY reconfirmed True, 2 new tests for E3.",
+    "observed_ground_truth": "No evidence in the ground-truth summary (EV001-EV007) directly inspects EXIT_REGISTRY_VERSION, FROZEN_EXIT_COUNT, ENGINE_READY state, or the specific new tests referenced.",
+    "expected_ground_truth": "Claim asserts specific internal state values and test additions that would require direct inspection of the exit-registry module/config to confirm.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "Cannot corroborate or refute this specific registry/versioning claim from available evidence; it is an assertion outside the audited evidence surface.",
+    "suggested_next_step": "Inspect research/v8_exit_registry.py directly (grep EXIT_REGISTRY_VERSION, EXIT_REGISTRY_FROZEN_EXIT_COUNT, ENGINE_READY) and run assert_registry_frozen() to confirm.",
+    "confidence": "low",
+    "audit_id": "audit-20260827T142231Z",
+    "timestamp": 1787840624.8607235
+  },
+  {
+    "finding_id": "F6",
+    "severity": "WARN",
+    "component": "layer2.staleness vs receipts narrative",
+    "claim": "Narrative implies an active, currently-progressing research/audit workflow (multiple recent SHAs, ongoing experiments) as of 2026-08-22 through pending commit.",
+    "observed_ground_truth": "EV005 shows `layer2.staleness` WARN/FIRING (5 consecutive failures): last successful Layer 2 audit was audit-20260826T040821Z, ~33.9h stale, exceeding the 30h threshold, with the external Layer 2 audit agent 'appears to have stopped running.'",
+    "expected_ground_truth": "An actively maintained pipeline as narrated would be expected to have Layer 2 audits running on schedule, not stalled beyond threshold.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "A supporting audit agent referenced by the broader research workflow is stalled, which could affect validation of claims like path integrity checks going forward.",
+    "suggested_next_step": "Check process/systemd status of the Layer 2 audit agent and its last invocation logs to determine why it stopped running after audit-20260826T040821Z.",
+    "confidence": "medium",
+    "audit_id": "audit-20260827T142231Z",
+    "timestamp": 1787840624.8607256
+  },
+  {
+    "finding_id": "F7",
+    "severity": "INFO",
+    "component": "SHA drift vs receipts commit narrative",
+    "claim": "Narrative references specific git SHAs for each stage of work (2c2ab8c, 7d2e319/333dbfb, and 'SHA pending this commit' for E3), implying a linear progression of committed, deployed work.",
+    "observed_ground_truth": "EV002/EV005 show the currently deployed HEAD SHA (3b0aa7264...) differs from the SHA recorded in the three most recent cron job executions (b5b7908b...), and the working tree is dirty with modified/untracked files including scratch scripts and new data/log/spool files.",
+    "expected_ground_truth": "A clean linear narrative of committed SHAs would imply a clean working tree and consistent SHA across deployment and recent job runs.",
+    "evidence_ids": [
+      "EV002",
+      "EV005"
+    ],
+    "operational_impact": "It is unclear whether the E3 experiment (marked 'SHA pending this commit') or other narrated work is actually reflected in the currently deployed/running code, given the SHA mismatch and dirty tree.",
+    "suggested_next_step": "Run `git status` and `git diff HEAD b5b7908` to determine what changed between the last-run cron SHA and current deployed HEAD, and confirm whether E3 changes are committed and deployed.",
+    "confidence": "medium",
+    "audit_id": "audit-20260827T142231Z",
+    "timestamp": 1787840624.8607275
+  }
+]
