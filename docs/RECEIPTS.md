@@ -4228,3 +4228,60 @@ above). E3 has not been evaluated against E0/E1/E2 — it is a new,
 equally-unproven candidate that now enters the same readiness/replay
 pipeline as the other three, on train/validation only, once
 `SELECTION_DATA_READY`. Holdout untouched throughout.
+
+## YD-BATCH — path-yield predictability, execution-proxy trend, readiness rescope proposal
+
+**2026-08-29.** Three items. Read-only analysis + one proposal document;
+no frozen registry touched, no threshold changed, holdout untouched.
+
+**YD1** (`research/v8_path_predictability.py`): does anything knowable
+at alert time predict `admitted_with_valid_usable_path`? Live run,
+funded-era admitted population n=411: overall usable-path rate 15.82%.
+Logistic model (progress/vsol/velocity/realert/hour) AUC=0.763 — a real,
+moderate-to-good signal. Best single pre-registerable condition
+(`vsol_at_signal` in 60-100, n=212, 21.7% vs 15.82% baseline, +5.88pp)
+did **not** clear the stated material-lift bar (+15pp, n>=30) — no
+candidate drafted, correctly, per the stated rule. `top10_holder_pct`
+present=394/411 (95.9%, unexpectedly high vs the registry's stale 7.5%
+figure — flagged, not investigated further, out of scope);
+`creator_holds_pct` present=0/411 (known gap, confirmed still true).
+26 new tests, full suite green.
+
+**YD3** (`research/v8_execution_proxy_trend.py`): day-by-day
+execution-proxy coverage on the funded-era denominator. 97-98%
+2026-08-23→08-26, then **collapsed**: 72.76% (08-27) → 47.58% (08-28) →
+45.50% (08-29). `cumulative_observed_n` frozen at exactly 187 since
+2026-08-27 15:19 UTC.
+
+**Root-caused live, not left as "thin yield":** direct WebSocket test
+against PumpPortal, 2026-08-29, returned the identical rejection as
+before the account was first funded — `"Minimum balance not met for
+PumpSwap websocket data."` The funded account ran out of balance again
+from real metered usage around 2026-08-27 15:19-15:30 UTC. Confirmed via
+`systemctl status quantbot-research` (service auto-restarted 2026-08-28
+06:21:51, unrelated to any deploy this session), `path_collection_
+daily.json` (`ticks=0, pp_messages=0` for all of 2026-08-28), and a
+per-mint trace showing 0/127 mints admitted in the Aug27-15:30→Aug28-12:00
+window ever got a single real tick. **Not a code defect** — same
+external root cause as the original pre-funding incident, just drawn
+down by real usage this time. Flagged directly to the user; no code
+change made or possible here. User acknowledged, will re-fund.
+
+**YD2** (`docs/READINESS_RESCOPE_PROPOSAL.md`): proposal only, nothing
+implemented. Core finding: on the same 427-token funded-era population,
+path coverage is ~16% but poll-based outcome coverage
+(`research/outcome_poller.py`, independent of PumpPortal ticks entirely)
+is 97-99.8%. Per-candidate, train+validation only (holdout untouched):
+V8-P0 pct_change_peak-present n=768/994 (77.3%), V8-P3 n=305/405
+(75.3%) — both would already clear a poll-outcome-keyed SELECTION gate
+at the SAME existing floors (100 abs / 50%), pending the rest of the
+gate, if this proposal is adopted (not adopted yet). Proposes splitting
+the one overloaded `path_data_ready` gate into SELECTION (poll-keyed,
+path coverage removed since entry EV never reads a path file) and
+EXIT-derivation (path-keyed, unchanged floor, plus a mandatory
+representativeness table — real divergence found, e.g. `vsol_at_signal`
+60-100 vs 100+: 21.7% vs 9.3% usable-path rate — and a pessimistic-
+imputation sensitivity column using the real -1.99% round-trip cost
+already measured from live execution-proxy observations, and the
+frozen E0-E3 hard_stop values, for the no-path mass). Awaiting user
+sign-off before any implementation.
