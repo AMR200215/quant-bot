@@ -138,8 +138,8 @@ class TestComputeAccumulationVelocity(unittest.TestCase):
 
 
 class TestReportVersioning(unittest.TestCase):
-    def test_version_is_2(self):
-        self.assertEqual(FORWARD_READINESS_REPORT_VERSION, 2)
+    def test_version_is_3(self):
+        self.assertEqual(FORWARD_READINESS_REPORT_VERSION, 3)
 
     def test_report_structurally_never_claims_holdout_evaluated(self):
         import inspect
@@ -201,21 +201,26 @@ class TestDiagnosticsFeasibility(unittest.TestCase):
 class TestQueryCandidateEvidenceAndSelectionReady(unittest.TestCase):
     """Self-audit scenarios (item 7)."""
 
-    def test_remains_false_with_many_venue_rows_but_zero_usable_paths(self):
+    def test_selection_ready_independent_of_paths_zero_usable_paths(self):
+        """YD2: SELECTION (entry-EV) never reads a path file at all --
+        zero usable paths must NOT block it, since these synthetic
+        events carry full poll-outcome coverage (pct_change_peak=50.0
+        by default). This is the exact behavior change YD2 was for."""
         events = _make_synthetic_events(n=300, n_days=30)
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             # No path files written at all -- zero usable paths.
             evidence = _query_candidate_evidence(_BASELINE, events, [], root)
         self.assertEqual(evidence.path_coverage.usable_n, 0)
-        self.assertFalse(_candidate_selection_ready(evidence, requires_venue=True))
+        self.assertEqual(evidence.collection_yield.admitted_with_valid_usable_path_n, 0)
+        self.assertTrue(evidence.poll_outcome_coverage.ready)
+        self.assertTrue(_candidate_selection_ready(evidence, requires_venue=True))
 
-    def test_remains_false_with_paths_but_zero_execution_proxies(self):
-        # start_day_str="2026-08-20" -- inside the trustworthy collection
-        # era (PRICE_CORRECTION_DEPLOY_UTC=2026-08-19) so this test
-        # exercises the intended scenario (paths+admission present,
-        # proxies missing) rather than accidentally passing because
-        # events fell outside the era.
+    def test_selection_ready_independent_of_execution_proxy_coverage(self):
+        """YD2: SELECTION never depends on execution-proxy coverage
+        either (that only matters for exit_derivation_data_ready via
+        entry_slippage_measured's confidence label, never for
+        selection_data_ready itself)."""
         events = _make_synthetic_events(n=300, n_days=30, start_day_str="2026-08-20")
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -236,9 +241,13 @@ class TestQueryCandidateEvidenceAndSelectionReady(unittest.TestCase):
         self.assertGreater(evidence.path_coverage.usable_n, 0)
         self.assertGreater(evidence.collection_yield.admitted_with_valid_usable_path_n, 0)
         self.assertEqual(evidence.collection_yield.execution_proxy_observed_n, 0)
-        self.assertFalse(_candidate_selection_ready(evidence, requires_venue=True))
+        self.assertFalse(_collection_yield_execution_proxy_ready(evidence.collection_yield).ready)
+        self.assertTrue(_candidate_selection_ready(evidence, requires_venue=True))
 
-    def test_one_execution_proxy_observation_cannot_make_it_ready(self):
+    def test_one_execution_proxy_observation_still_insufficient_for_exit_derivation(self):
+        """Execution-proxy readiness itself (feeding exit-derivation's
+        confidence, not selection) must still never become ready from a
+        single observation -- this behavior is unchanged by YD2."""
         events = _make_synthetic_events(n=300, n_days=30, start_day_str="2026-08-20")
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -252,6 +261,22 @@ class TestQueryCandidateEvidenceAndSelectionReady(unittest.TestCase):
             evidence = _query_candidate_evidence(_BASELINE, events, proxy_rows, root)
         self.assertEqual(evidence.collection_yield.execution_proxy_observed_n, 1)
         self.assertFalse(_collection_yield_execution_proxy_ready(evidence.collection_yield).ready)
+        # SELECTION is unaffected by this (YD2) -- still ready on poll-outcome data alone.
+        self.assertTrue(_candidate_selection_ready(evidence, requires_venue=True))
+
+    def test_selection_not_ready_without_poll_outcome_data(self):
+        """The genuine negative case for the NEW gate: strip
+        pct_change_peak from every event -- SELECTION must now be
+        False, since it has nothing else to stand on."""
+        events = _make_synthetic_events(n=300, n_days=30, start_day_str="2026-08-20")
+        for e in events:
+            e["pct_change_peak"] = None
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _write_admission_log(root, events)
+            evidence = _query_candidate_evidence(_BASELINE, events, [], root)
+        self.assertEqual(evidence.poll_outcome_coverage.observed_n, 0)
+        self.assertFalse(evidence.poll_outcome_coverage.ready)
         self.assertFalse(_candidate_selection_ready(evidence, requires_venue=True))
 
     def test_transitions_false_to_true_with_sufficiently_large_synthetic_dataset(self):

@@ -68,6 +68,19 @@ MIN_PATH_N = 100
 MIN_PATH_COVERAGE_PCT = 50.0
 MIN_SPLIT_BUCKET_N = 20
 
+# YD-BATCH item YD2 (docs/READINESS_RESCOPE_PROPOSAL.md, 2026-08-29):
+# SELECTION (entry-EV) readiness is keyed to poll-outcome coverage
+# (research/outcome_poller.py -- polls price via Helius curve-account
+# reads / DexScreener on a fixed T+1m/3m/.../20m schedule, independent
+# of whether the token ever trades on PumpPortal at all), NOT path
+# coverage -- entry EV never reads a path file. These are the SAME
+# numeric floors already established for path coverage, reused
+# verbatim, not re-derived: entry EV and exit-tuning both need "more
+# than half of a real (>=100) sample", the specific data source
+# differs, the bar does not.
+MIN_POLL_OUTCOME_N = MIN_PATH_N
+MIN_POLL_OUTCOME_COVERAGE_PCT = MIN_PATH_COVERAGE_PCT
+
 READINESS_KIND = "ENGINEERING_SANITY_FLOOR"  # applies to every threshold below -- NOT "STATISTICAL_SUFFICIENCY"
 
 THRESHOLD_PROVENANCE = {
@@ -77,6 +90,8 @@ THRESHOLD_PROVENANCE = {
     "MIN_PATH_N": "research/analysis/path_stats.py --min-n default (100)",
     "MIN_PATH_COVERAGE_PCT": "design choice (more than half) -- NOT independently data-derived, unlike the others",
     "MIN_SPLIT_BUCKET_N": "the --min-n=20 quick-check threshold used live during the P2-5 audit query",
+    "MIN_POLL_OUTCOME_N": "== MIN_PATH_N, reused verbatim (YD2) -- not independently re-derived",
+    "MIN_POLL_OUTCOME_COVERAGE_PCT": "== MIN_PATH_COVERAGE_PCT, reused verbatim (YD2) -- not independently re-derived",
 }
 
 # Phase-3 statistical-sufficiency criteria this engine does NOT yet
@@ -117,6 +132,12 @@ class ReadinessInputs:
     boundary_purged_n: int
     representative_path_n: int
     path_coverage_pct: float
+    # YD2: entry-EV outcome coverage from research/outcome_poller.py --
+    # never a path file. poll_outcome_n/pct must be computed on
+    # train+validation rows ONLY (holdout never touched), same
+    # discipline as every other count in this module.
+    poll_outcome_n: int
+    poll_outcome_coverage_pct: float
     cost_model_available: bool
     entry_slippage_measured: bool        # False while ENTRY_SLIPPAGE_STATUS=UNMEASURED (P2-9)
 
@@ -127,7 +148,8 @@ class ReadinessReport:
     exit_id: str
     progress_evidence_ready: bool
     full_entry_rule_ready: bool
-    path_data_ready: bool
+    selection_data_ready: bool        # YD2: full_entry_rule_ready + poll-outcome coverage + non-degenerate split
+    exit_derivation_data_ready: bool  # YD2 rename of the old path_data_ready -- still path-keyed, unchanged floor
     execution_model_ready: bool
     full_eval_ready: bool
     reasons: list       # human-readable reasons for whichever flags are False
@@ -171,15 +193,29 @@ def assess_readiness(inputs: ReadinessInputs) -> ReadinessReport:
     else:
         full_entry_ready = progress_ready
 
-    path_ready = (
+    exit_derivation_ready = (
         inputs.representative_path_n >= MIN_PATH_N
         and inputs.path_coverage_pct >= MIN_PATH_COVERAGE_PCT
     )
-    if not path_ready:
+    if not exit_derivation_ready:
         if inputs.representative_path_n < MIN_PATH_N:
             reasons.append(f"representative_path_n={inputs.representative_path_n} < MIN_PATH_N={MIN_PATH_N}")
         if inputs.path_coverage_pct < MIN_PATH_COVERAGE_PCT:
             reasons.append(f"path_coverage_pct={inputs.path_coverage_pct} < MIN_PATH_COVERAGE_PCT={MIN_PATH_COVERAGE_PCT}")
+
+    # YD2: SELECTION (entry-EV) readiness -- poll-outcome coverage,
+    # never a path file. Same floors as exit_derivation_ready, different
+    # data source (research/outcome_poller.py).
+    poll_outcome_ready = (
+        inputs.poll_outcome_n >= MIN_POLL_OUTCOME_N
+        and inputs.poll_outcome_coverage_pct >= MIN_POLL_OUTCOME_COVERAGE_PCT
+    )
+    if not poll_outcome_ready:
+        if inputs.poll_outcome_n < MIN_POLL_OUTCOME_N:
+            reasons.append(f"poll_outcome_n={inputs.poll_outcome_n} < MIN_POLL_OUTCOME_N={MIN_POLL_OUTCOME_N}")
+        if inputs.poll_outcome_coverage_pct < MIN_POLL_OUTCOME_COVERAGE_PCT:
+            reasons.append(f"poll_outcome_coverage_pct={inputs.poll_outcome_coverage_pct} "
+                            f"< MIN_POLL_OUTCOME_COVERAGE_PCT={MIN_POLL_OUTCOME_COVERAGE_PCT}")
 
     execution_ready = inputs.cost_model_available
     confidence = "MEASURED" if (inputs.cost_model_available and inputs.entry_slippage_measured) else "CONSERVATIVE_ONLY"
@@ -197,16 +233,27 @@ def assess_readiness(inputs: ReadinessInputs) -> ReadinessReport:
             f"(train={inputs.train_n}, validation={inputs.validation_n}, holdout={inputs.holdout_n})"
         )
 
+    # SELECTION (entry-EV) never depends on path data at all -- gated on
+    # full_entry_rule_ready + poll_outcome_ready + a non-degenerate split.
+    selection_ready = full_entry_ready and poll_outcome_ready and split_not_degenerate
+
     # full_eval_ready is gated on FULL_ENTRY_RULE_READY, never on
-    # progress_ready alone -- this is the load-bearing fix.
-    full_ready = full_entry_ready and path_ready and execution_ready and split_not_degenerate
+    # progress_ready alone -- this is the load-bearing fix. It now also
+    # requires BOTH the selection and exit-derivation gates, since a
+    # complete exit-registry evaluation needs both entry EV and
+    # tick-level exit-tuning data.
+    full_ready = (
+        full_entry_ready and selection_ready and exit_derivation_ready
+        and execution_ready and split_not_degenerate
+    )
 
     return ReadinessReport(
         candidate_id=inputs.candidate_id,
         exit_id=inputs.exit_id,
         progress_evidence_ready=progress_ready,
         full_entry_rule_ready=full_entry_ready,
-        path_data_ready=path_ready,
+        selection_data_ready=selection_ready,
+        exit_derivation_data_ready=exit_derivation_ready,
         execution_model_ready=execution_ready,
         full_eval_ready=full_ready,
         reasons=reasons,
@@ -245,6 +292,8 @@ def current_baseline0_e0_readiness() -> ReadinessReport:
         train_n=0, validation_n=0, holdout_n=0, boundary_purged_n=0,
         representative_path_n=0,
         path_coverage_pct=0.0,
+        poll_outcome_n=0,          # not yet computed by any live query in this codebase
+        poll_outcome_coverage_pct=0.0,
         cost_model_available=True,
         entry_slippage_measured=False,
     )

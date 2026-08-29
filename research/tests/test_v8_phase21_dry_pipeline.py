@@ -100,6 +100,7 @@ class TestDryPipeline(unittest.TestCase):
             forward_venue_qualified_n=0, venue_qualified_unique_mints=0, venue_qualified_unique_days=0,
             train_n=100, validation_n=100, holdout_n=100, boundary_purged_n=0,
             representative_path_n=100, path_coverage_pct=80.0,
+            poll_outcome_n=100, poll_outcome_coverage_pct=80.0,
             cost_model_available=True, entry_slippage_measured=False,
         )
         report = assess_readiness(inputs)
@@ -151,6 +152,7 @@ class TestDryPipeline(unittest.TestCase):
             forward_venue_qualified_n=0, venue_qualified_unique_mints=0, venue_qualified_unique_days=0,
             train_n=200, validation_n=200, holdout_n=200, boundary_purged_n=0,
             representative_path_n=200, path_coverage_pct=90.0,
+            poll_outcome_n=200, poll_outcome_coverage_pct=90.0,
             cost_model_available=True, entry_slippage_measured=False,
         ))
         self.assertFalse(readiness.full_eval_ready)

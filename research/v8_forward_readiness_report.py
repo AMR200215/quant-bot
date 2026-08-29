@@ -51,14 +51,17 @@ from typing import Optional
 
 from research.v8_candidate_registry import CANDIDATES
 from research.v8_exit_registry import EXIT_CANDIDATES
-from research.v8_readiness_engine import ReadinessInputs, ReadinessReport, assess_readiness
+from research.v8_readiness_engine import (
+    ReadinessInputs, ReadinessReport, assess_readiness,
+    MIN_POLL_OUTCOME_N, MIN_POLL_OUTCOME_COVERAGE_PCT,
+)
 from research.v8_path_integrity import scan_corpus, CorpusIntegrityReport
 from research.v8_split import grouped_chronological_split
 from research.v8_candidate_path_coverage import compute_candidate_path_coverage, CandidatePathCoverage
 from research.v8_execution_proxy_readiness import assess_execution_proxy_readiness, ExecutionProxyCoverage
 from research.v8_collection_yield import compute_collection_yield, CollectionYield, load_admission_log_by_mint
 
-FORWARD_READINESS_REPORT_VERSION = 2
+FORWARD_READINESS_REPORT_VERSION = 3
 
 _ACCUMULATION_WINDOW_DAYS = 7
 _MIN_DAYS_FOR_VELOCITY_ESTIMATE = 2
@@ -132,7 +135,8 @@ class CandidateForwardEvidence:
     split_counts: SplitCounts
     path_coverage: CandidatePathCoverage           # population-denominator, all history (context only)
     execution_proxy_coverage: ExecutionProxyCoverage  # population-denominator, all history (context only)
-    collection_yield: CollectionYield              # era/admission-restricted -- feeds readiness gating
+    collection_yield: CollectionYield              # era/admission-restricted -- feeds exit-derivation gating
+    poll_outcome_coverage: PollOutcomeCoverage     # YD2: train+val only -- feeds SELECTION gating
     diagnostics_feasibility: DiagnosticsFeasibility
 
 
@@ -255,6 +259,56 @@ def _compute_diagnostics_feasibility(venue_qualified_events: list) -> Diagnostic
     )
 
 
+@dataclass(frozen=True)
+class PollOutcomeCoverage:
+    """YD2 (docs/READINESS_RESCOPE_PROPOSAL.md): SELECTION (entry-EV)
+    readiness evidence -- research/outcome_poller.py's poll-based
+    pct_change_peak, never a path file. Computed on train+validation
+    rows ONLY (holdout never touched), same discipline as
+    _compute_diagnostics_feasibility."""
+    eligible_n: int      # train+validation venue-qualified rows
+    observed_n: int       # of those, pct_change_peak IS NOT NULL
+    coverage_pct: float
+    ready: bool
+    reasons: list
+
+
+def _compute_poll_outcome_coverage(venue_qualified_events: list) -> PollOutcomeCoverage:
+    events_with_time = [r for r in venue_qualified_events if r.get("alert_time")]
+    rows_for_split = [
+        {"token_address": r["token_address"], "_epoch": _alert_time_to_epoch(r["alert_time"]), "_orig": r}
+        for r in events_with_time
+    ]
+    rows_for_split = [r for r in rows_for_split if r["_epoch"] is not None]
+
+    if len(rows_for_split) < 2:
+        return PollOutcomeCoverage(eligible_n=0, observed_n=0, coverage_pct=0.0, ready=False,
+                                    reasons=["fewer than 2 venue-qualified events with parseable alert_time"])
+
+    try:
+        result = grouped_chronological_split(
+            rows_for_split, lambda r: r["token_address"], lambda r: r["_epoch"],
+        )
+    except ValueError as e:
+        return PollOutcomeCoverage(eligible_n=0, observed_n=0, coverage_pct=0.0, ready=False, reasons=[str(e)])
+
+    train_validation_rows = [r["_orig"] for r in (result.train + result.validation)]
+    eligible_n = len(train_validation_rows)
+    observed_n = sum(1 for r in train_validation_rows if r.get("pct_change_peak") is not None)
+    coverage_pct = round(100 * observed_n / eligible_n, 2) if eligible_n else 0.0
+
+    reasons = []
+    if observed_n < MIN_POLL_OUTCOME_N:
+        reasons.append(f"poll_outcome_n={observed_n} < MIN_POLL_OUTCOME_N={MIN_POLL_OUTCOME_N}")
+    if coverage_pct < MIN_POLL_OUTCOME_COVERAGE_PCT:
+        reasons.append(f"poll_outcome_coverage_pct={coverage_pct} < MIN_POLL_OUTCOME_COVERAGE_PCT={MIN_POLL_OUTCOME_COVERAGE_PCT}")
+
+    return PollOutcomeCoverage(
+        eligible_n=eligible_n, observed_n=observed_n, coverage_pct=coverage_pct,
+        ready=not reasons, reasons=reasons,
+    )
+
+
 def _read_jsonl(log_path: Path) -> list:
     if not log_path.exists():
         return []
@@ -324,6 +378,7 @@ def _query_candidate_evidence(candidate: dict, all_events: list, execution_proxy
         venue_qualified, all_events, candidate, repo_root,
         admission_log_by_mint=admission_log_by_mint, execution_proxy_rows=execution_proxy_rows,
     )
+    poll_outcome_coverage = _compute_poll_outcome_coverage(venue_qualified)
     diagnostics = _compute_diagnostics_feasibility(venue_qualified)
 
     return CandidateForwardEvidence(
@@ -335,6 +390,7 @@ def _query_candidate_evidence(candidate: dict, all_events: list, execution_proxy
         progress_distribution=dist,
         split_counts=split_counts, path_coverage=path_coverage,
         execution_proxy_coverage=execution_proxy_coverage, collection_yield=collection_yield,
+        poll_outcome_coverage=poll_outcome_coverage,
         diagnostics_feasibility=diagnostics,
     )
 
@@ -421,19 +477,20 @@ def _collection_yield_execution_proxy_ready(cy: CollectionYield) -> ExecutionPro
 
 
 def _candidate_selection_ready(evidence: CandidateForwardEvidence, requires_venue: bool) -> bool:
-    """All gates item 5 requires, for ONE candidate (exit-independent --
-    none of these depend on which exit spec is paired with it).
-
-    READINESS DENOMINATOR AUDIT: representative_path_n/path_coverage_pct
-    and entry_slippage_measured now source from evidence.collection_yield
-    (the era/admission-restricted, collector-yield-fair denominator)
-    instead of evidence.path_coverage/execution_proxy_coverage (the
-    whole-historical-population denominator, kept only for population
-    context/reporting). The absolute thresholds themselves
-    (MIN_PATH_N, MIN_PATH_COVERAGE_PCT, EXECUTION_PROXY_MIN_N,
-    EXECUTION_PROXY_MIN_COVERAGE_PCT) are untouched."""
+    """YD2 (docs/READINESS_RESCOPE_PROPOSAL.md): SELECTION (entry-EV)
+    readiness now comes directly from the engine's own
+    selection_data_ready flag -- poll-outcome-keyed
+    (evidence.poll_outcome_coverage, train+validation only), never
+    path-keyed. representative_path_n/path_coverage_pct are still
+    passed through (still needed for exit_derivation_data_ready, kept
+    for context/downstream use) but no longer gate SELECTION at all.
+    diagnostics_feasibility.computable is kept as an additional
+    requirement since it is ALSO poll/outcome-based (train+validation
+    pct_change_peak spread across enough day-blocks for research/
+    v8_statistical_selection.py), not path-based -- it belongs on the
+    SELECTION side, not the exit-derivation side."""
     cy = evidence.collection_yield
-    proxy_ready = _collection_yield_execution_proxy_ready(cy)
+    poc = evidence.poll_outcome_coverage
 
     inputs = ReadinessInputs(
         candidate_id=evidence.candidate_id, exit_id="E0", requires_venue_state=requires_venue,
@@ -446,20 +503,14 @@ def _candidate_selection_ready(evidence: CandidateForwardEvidence, requires_venu
         holdout_n=evidence.split_counts.holdout_n, boundary_purged_n=evidence.split_counts.boundary_purged_n,
         representative_path_n=cy.admitted_with_valid_usable_path_n,
         path_coverage_pct=cy.admitted_path_yield_pct,
+        poll_outcome_n=poc.observed_n,
+        poll_outcome_coverage_pct=poc.coverage_pct,
         cost_model_available=True,
-        entry_slippage_measured=proxy_ready.ready,
+        entry_slippage_measured=_collection_yield_execution_proxy_ready(cy).ready,
     )
     engineering_report = assess_readiness(inputs)
 
-    return (
-        engineering_report.full_entry_rule_ready
-        and engineering_report.path_data_ready
-        and proxy_ready.ready
-        and evidence.split_counts.train_n > 0
-        and evidence.split_counts.validation_n > 0
-        and evidence.split_counts.holdout_n > 0
-        and evidence.diagnostics_feasibility.computable
-    )
+    return engineering_report.selection_data_ready and evidence.diagnostics_feasibility.computable
 
 
 def build_report(sb, repo_root: Optional[Path] = None) -> ForwardReadinessReport:
@@ -499,6 +550,8 @@ def build_report(sb, repo_root: Optional[Path] = None) -> ForwardReadinessReport
                 holdout_n=cev.split_counts.holdout_n, boundary_purged_n=cev.split_counts.boundary_purged_n,
                 representative_path_n=cy.admitted_with_valid_usable_path_n,
                 path_coverage_pct=cy.admitted_path_yield_pct,
+                poll_outcome_n=cev.poll_outcome_coverage.observed_n,
+                poll_outcome_coverage_pct=cev.poll_outcome_coverage.coverage_pct,
                 cost_model_available=True,
                 entry_slippage_measured=proxy_ready.ready,
             )
@@ -572,6 +625,12 @@ def print_report(report: ForwardReadinessReport) -> None:
                   f"unique_forward_days={cy.unique_forward_days} ready={proxy_ready.ready}")
             if proxy_ready.reasons:
                 print(f"        reasons: {proxy_ready.reasons}")
+        poc = e.poll_outcome_coverage
+        print(f"    poll_outcome (SELECTION, train+val only): eligible_n={poc.eligible_n} "
+              f"observed_n={poc.observed_n} coverage_pct={poc.coverage_pct} ready={poc.ready}")
+        if poc.reasons:
+            print(f"      reasons: {poc.reasons}")
+
         df = e.diagnostics_feasibility
         print(f"    diagnostics_feasibility: computable={df.computable} "
               f"train_validation_outcome_n={df.train_validation_outcome_n} "
@@ -593,7 +652,9 @@ def print_report(report: ForwardReadinessReport) -> None:
     print(f"\n{'─' * 72}\n  Readiness matrix ({len(report.readiness_matrix)} candidate x exit pairs)\n{'─' * 72}")
     for r in report.readiness_matrix:
         print(f"  {r.candidate_id:<12} x {r.exit_id:<4}  progress_ready={r.progress_evidence_ready}  "
-              f"full_entry_rule_ready={r.full_entry_rule_ready}  path_data_ready={r.path_data_ready}  "
+              f"full_entry_rule_ready={r.full_entry_rule_ready}  "
+              f"selection_data_ready={r.selection_data_ready}  "
+              f"exit_derivation_data_ready={r.exit_derivation_data_ready}  "
               f"full_eval_ready={r.full_eval_ready}")
 
     print(f"\n{'=' * 72}")

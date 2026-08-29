@@ -13,6 +13,7 @@ from research.v8_readiness_engine import (
     MIN_ENTRY_N, MIN_UNIQUE_MINTS, MIN_UNIQUE_DAYS, MIN_PATH_N,
     MIN_PATH_COVERAGE_PCT, MIN_SPLIT_BUCKET_N, THRESHOLD_PROVENANCE,
     READINESS_KIND, FUTURE_STATISTICAL_READINESS_CRITERIA,
+    MIN_POLL_OUTCOME_N, MIN_POLL_OUTCOME_COVERAGE_PCT,
 )
 
 
@@ -26,6 +27,7 @@ def _abundant_inputs(**overrides) -> ReadinessInputs:
         train_n=MIN_SPLIT_BUCKET_N, validation_n=MIN_SPLIT_BUCKET_N, holdout_n=MIN_SPLIT_BUCKET_N,
         boundary_purged_n=0,
         representative_path_n=MIN_PATH_N, path_coverage_pct=MIN_PATH_COVERAGE_PCT,
+        poll_outcome_n=MIN_POLL_OUTCOME_N, poll_outcome_coverage_pct=MIN_POLL_OUTCOME_COVERAGE_PCT,
         cost_model_available=True, entry_slippage_measured=True,
     )
     base.update(overrides)
@@ -36,9 +38,16 @@ class TestThresholdsCited(unittest.TestCase):
 
     def test_every_threshold_has_a_provenance_note(self):
         for name in ("MIN_ENTRY_N", "MIN_UNIQUE_MINTS", "MIN_UNIQUE_DAYS",
-                     "MIN_PATH_N", "MIN_PATH_COVERAGE_PCT", "MIN_SPLIT_BUCKET_N"):
+                     "MIN_PATH_N", "MIN_PATH_COVERAGE_PCT", "MIN_SPLIT_BUCKET_N",
+                     "MIN_POLL_OUTCOME_N", "MIN_POLL_OUTCOME_COVERAGE_PCT"):
             self.assertIn(name, THRESHOLD_PROVENANCE)
             self.assertTrue(THRESHOLD_PROVENANCE[name])
+
+    def test_poll_outcome_floors_reuse_path_floors_verbatim(self):
+        """YD2: no new number invented -- the poll-outcome floors must be
+        literally identical to the path floors, not independently set."""
+        self.assertEqual(MIN_POLL_OUTCOME_N, MIN_PATH_N)
+        self.assertEqual(MIN_POLL_OUTCOME_COVERAGE_PCT, MIN_PATH_COVERAGE_PCT)
 
     def test_readiness_kind_is_sanity_floor_not_statistical_sufficiency(self):
         """Phase 2.1 item 4: these thresholds must never be presented as
@@ -113,7 +122,8 @@ class TestAssessReadiness(unittest.TestCase):
         r = assess_readiness(_abundant_inputs())
         self.assertTrue(r.progress_evidence_ready)
         self.assertTrue(r.full_entry_rule_ready)
-        self.assertTrue(r.path_data_ready)
+        self.assertTrue(r.selection_data_ready)
+        self.assertTrue(r.exit_derivation_data_ready)
         self.assertTrue(r.execution_model_ready)
         self.assertTrue(r.full_eval_ready)
         self.assertEqual(r.reasons, [])
@@ -133,12 +143,42 @@ class TestAssessReadiness(unittest.TestCase):
 
     def test_path_not_ready_below_min_path_n(self):
         r = assess_readiness(_abundant_inputs(representative_path_n=MIN_PATH_N - 1))
-        self.assertFalse(r.path_data_ready)
+        self.assertFalse(r.exit_derivation_data_ready)
         self.assertFalse(r.full_eval_ready)
 
     def test_path_not_ready_below_coverage_floor(self):
         r = assess_readiness(_abundant_inputs(path_coverage_pct=MIN_PATH_COVERAGE_PCT - 0.1))
-        self.assertFalse(r.path_data_ready)
+        self.assertFalse(r.exit_derivation_data_ready)
+
+    def test_selection_ready_independent_of_path_coverage(self):
+        """YD2's core requirement: SELECTION must be able to become True
+        even when path coverage (exit-derivation) is nowhere close --
+        the whole point of splitting the gate."""
+        r = assess_readiness(_abundant_inputs(representative_path_n=0, path_coverage_pct=0.0))
+        self.assertFalse(r.exit_derivation_data_ready)
+        self.assertTrue(r.selection_data_ready)
+        self.assertFalse(r.full_eval_ready)   # still blocked overall by exit-derivation
+
+    def test_selection_not_ready_below_min_poll_outcome_n(self):
+        r = assess_readiness(_abundant_inputs(poll_outcome_n=MIN_POLL_OUTCOME_N - 1))
+        self.assertFalse(r.selection_data_ready)
+        self.assertTrue(any("poll_outcome_n" in reason for reason in r.reasons))
+
+    def test_selection_not_ready_below_poll_outcome_coverage_floor(self):
+        r = assess_readiness(_abundant_inputs(poll_outcome_coverage_pct=MIN_POLL_OUTCOME_COVERAGE_PCT - 0.1))
+        self.assertFalse(r.selection_data_ready)
+
+    def test_selection_not_ready_without_full_entry_rule_ready(self):
+        r = assess_readiness(_abundant_inputs(
+            requires_venue_state=True,
+            forward_venue_qualified_n=0, venue_qualified_unique_mints=0, venue_qualified_unique_days=0,
+        ))
+        self.assertFalse(r.full_entry_rule_ready)
+        self.assertFalse(r.selection_data_ready)
+
+    def test_selection_not_ready_with_degenerate_split(self):
+        r = assess_readiness(_abundant_inputs(train_n=1))
+        self.assertFalse(r.selection_data_ready)
 
     def test_execution_model_not_ready_when_unavailable(self):
         r = assess_readiness(_abundant_inputs(cost_model_available=False))
@@ -157,7 +197,7 @@ class TestAssessReadiness(unittest.TestCase):
     def test_degenerate_split_blocks_full_eval_even_if_entry_and_path_ready(self):
         r = assess_readiness(_abundant_inputs(train_n=1))
         self.assertTrue(r.progress_evidence_ready)
-        self.assertTrue(r.path_data_ready)
+        self.assertTrue(r.exit_derivation_data_ready)
         self.assertFalse(r.full_eval_ready)
 
     def test_not_a_single_universal_gate_thresholds_differ_per_dimension(self):
