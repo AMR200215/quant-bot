@@ -1,0 +1,52 @@
+# Audit Summary — audit-20260901T084727Z
+
+## Deployed SHA / working tree
+- Deployed git SHA: `e3f1b0872dba5545956620e101cbf2d452d23d44` — reported consistently by EV002, and independently confirmed as the SHA under which both the latest fast watchdog run and latest slow watchdog run executed (EV005 `latest_fast_run.git_sha`, `latest_slow_run.git_sha`), as well as in the individual cron job receipts (EV005 `recent_job_receipts` / check evidence blocks).
+- Working tree is **not clean**. EV002 lists numerous modified (`M`) and untracked (`??`) files, including modified docs (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`), modified logs/data files, and a large number of untracked files under `logs/`, `research/`, and `memecoin/data/`, plus two untracked ad hoc scripts (`p15_1_2_audit.py`, `scratch_incident_check.py`). No claim can be made about *why* the tree is dirty — only that it is (EV002).
+
+## systemd services / timers
+- `quantbot.service`: active/running, last exec exit 0 (EV003).
+- `quantbot-research.service`: active/running, last exec exit 0 (EV003).
+- `quantbot-watchdog-fast.service`: `inactive`/`dead`, but `Result=success`/`ExecMainStatus=0` — consistent with a oneshot service that ran successfully and exited (EV003). This is corroborated by the timer table showing it last fired at 08:45:17 UTC, 2m8s before the snapshot, and is scheduled again for 08:50:00 UTC (EV003).
+- `quantbot-watchdog-slow.service`: same pattern — `inactive`/`dead`, `Result=success` — last fired 08:03:03 UTC (44 min ago at snapshot time), next scheduled 09:03:00 UTC (EV003).
+- No failed services or timers are present in the evidence (EV003).
+
+## Cron
+- Three cron files exist: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode `0o100644`, with defined mtimes (EV004).
+- `recent_parser_error_lines` is an empty list — no recorded parser errors (EV004).
+- All three jobs are also independently confirmed to "parse cleanly, no recent journal parser errors" by the watchdog's own static checks (`cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, all status OK) (EV005).
+- All three jobs have corresponding successful executions recorded via `cron_execution.*` checks, each showing `exit_code: 0` for their most recent scheduled run (EV005), and this is further corroborated by the `recent_job_receipts` list showing an unbroken string of `exit_code: 0` entries for `k5_nightly`, `v8_vs_v7_daily`, and `epoch_daily` going back several days (EV005).
+
+## Watchdog's own most recent run status
+- Latest **fast** run: `run_id 59e7659cae734ed6`, started/finished essentially instantly (~12.5ms), `checks_due: 11`, `checks_completed: 11`, `final_runner_status: ok` (EV005). All 11 checks completed; results are individually itemized below.
+- Latest **slow** run: `run_id 7279ea471d514c83`, ~9.4ms duration, `checks_due: 10`, `checks_completed: 10`, `final_runner_status: ok` (EV005).
+- Both runs occurred under boot_id `d0a4169b-96f4-4bb1-b365-92ca527627e6`, matching the host's current boot_id (EV001, EV005) — i.e., no reboot has invalidated these run records relative to the current session.
+
+## Active incidents
+Per EV005 `all_incidents`, two incidents are currently in `FIRING` state (not recovered):
+1. **`funnel.v8`** — severity **CRITICAL**. First seen 1786748706 (long-running), still firing as of the latest fast check (`last_seen: 1788252318.96`), with `consecutive_failures: 1832`. The most recent check detail (EV005 `funnel.v8` in `latest_fast_check_results`) reports one candidate (`event_id bd6003380054eb57`, mint `AFf278av...pump`) that entered `telegram_received` at ts 1787710096 and has no recorded terminal disposition, described explicitly as matching "the exact V8-TWIN-FIX failure class." Note there is one prior `recovered_at` timestamp (1786810203) inside this same incident record that predates the current `last_seen`, meaning the incident recovered once and then resumed firing — the record does not show it as currently recovered.
+2. **`claims.batch.v8_readiness`** — severity **WARN**, `state: FIRING`, `consecutive_failures: 538`, still active as of `last_seen: 1788249791.68` (matches the slow-run timestamp). Detail from the slow check: batch `v8_readiness` shows 3 GREEN / 4 PARTIAL (`N2, N4, N6, N7`) / 0 FAIL out of 7 items (EV005).
+
+All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `research.path_collection`, `feed.telegram`) are marked `state: RECOVERED` with `consecutive_failures: 0` (EV005) — i.e., they fired historically but are not currently active problems.
+
+## Research pipeline queue lag
+- Latest fast-check result `pipeline.research_queue_lag`: status OK, `queue_size: 2350064`, `offset: 2350064`, `gap_bytes: 0` — consumer caught up at the time of that check (EV005).
+- EV006, timestamped as a separate/later observation, shows `queue_size: 2350112`, `queue_offset: "2350112"` — also zero gap (offset equals size), consistent with the consumer remaining caught up. EV006 carries no timestamp of its own, so its exact position relative to EV005's check cannot be fixed precisely, only that the values are higher, consistent with time having passed and the queue continuing to be drained in lockstep.
+
+## Other evidence-supported observations
+- **Research spool**: 0 failed inserts in the last 2 hours; 68 total historical failed-insert lines on disk noted explicitly as not itself indicating an active problem (EV005, `pipeline.research_spool`).
+- **Telegram feed**: last event 118s before the fast check, well under the 7200s threshold (EV005, `feed.telegram`).
+- **PumpPortal feed**: most recent event was a successful connect log line at 08:44:55 UTC (EV005, `feed.pumpportal`).
+- **Test collection**: all four test suites (`tests_memecoin` 304 tests, `tests_research` 531 tests, `tests_watchdog` 103 tests, `tests_layer2` 39 tests, `tests_quant-bot` 56 tests) collected cleanly with no errors (EV005).
+- **Stale mocks**: no stale `patch()` targets found among 130 resolvable targets; targets in third-party/stdlib modules explicitly excluded from verification (EV005, `test_drift.stale_mocks`).
+- **Layer 2 audit staleness**: last Layer 2 audit was `audit-20260831T095644Z`, ~22.1 hours before the slow check, with 7 findings recorded, of which 1 is flagged critical in this staleness-check's own evidence field (EV005, `layer2.staleness`). The content of those 7 findings is not included in this bundle.
+- **Research path collection** (2026-08-31): 120 tokens scheduled, 111 path files produced (92.5% yield), PumpPortal message budget usage 47,524/100,000 (not exceeded) (EV005, `research.path_collection`). This is a claim about 2026-08-31 only; no same-day (09-01) figure is present in evidence.
+- **claims.batch.rc_closure**: 3/3 items GREEN under commit `db32f53` (EV005) — note this commit hash differs from the deployed HEAD SHA `e3f1b0872...` (EV002); the evidence does not explain this discrepancy (e.g., whether `db32f53` is a short-SHA ancestor or an unrelated ref), so no conclusion can be drawn about consistency between the two beyond noting they are literally different values.
+- **Receipts file** (EV007): `docs/RECEIPTS.md`-related receipts data has `mtime 1788220681.66` and length 229,620 bytes — timestamp matches the `v8_vs_v7_daily` job's `finished_at` (1788220681.67, EV005), consistent with that job having written to it at that time. No content of the receipts file itself is in evidence.
+
+## Explicit gaps / ambiguities (not filled with assumption)
+- The reason the git working tree is dirty (EV002) is not evidenced — no commit messages or diffs are provided.
+- The content/nature of the 7 Layer 2 audit findings (1 critical) referenced by `layer2.staleness` (EV005) is not in evidence.
+- The relationship between commit `db32f53` (EV005 `claims.batch.rc_closure`) and HEAD `e3f1b0872...` (EV002) is not evidenced.
+- EV006 has no explicit timestamp, so its exact temporal relationship to the EV005 fast-check queue-lag snapshot is inferred only from value ordering, not directly evidenced.
+- Whether the currently-firing `funnel.v8` CRITICAL incident and `claims.batch.v8_readiness` WARN incident have any operator acknowledgment, ticket, or remediation in progress is not addressed anywhere in this evidence bundle.

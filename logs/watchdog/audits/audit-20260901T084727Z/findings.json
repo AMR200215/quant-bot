@@ -1,0 +1,102 @@
+[
+  {
+    "finding_id": "F1",
+    "severity": "INFO",
+    "component": "receipts_tail content vs receipts file evidence",
+    "claim": "EV007 receipts_tail.tail describes E3 hard_stop candidate work, YD-BATCH analysis (YD1/YD2/YD3), full suite 498/498 green, 26 new tests, etc.",
+    "observed_ground_truth": "Ground truth EV007 only established mtime (1788220681.66) and length (229,620 bytes) of the receipts file, matching the v8_vs_v7_daily job finished_at. No content of the receipts file was in the original evidence bundle.",
+    "expected_ground_truth": "The claim supplies detailed narrative content allegedly from that same receipts file/tail.",
+    "evidence_ids": [
+      "EV007",
+      "EV005"
+    ],
+    "operational_impact": "The narrative content of the receipts tail cannot be independently verified against ground-truth evidence; it is asserted, not proven, so downstream conclusions drawn solely from this text should be treated as unverified.",
+    "suggested_next_step": "Fetch and diff the actual docs/RECEIPTS.md content (e.g. tail -c 5000 docs/RECEIPTS.md) and compare against this claimed text for consistency.",
+    "confidence": "high",
+    "audit_id": "audit-20260901T084727Z",
+    "timestamp": 1788252517.1254876
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "funnel.v8 CRITICAL incident vs claimed 'root-caused' PumpPortal balance issue",
+    "claim": "YD3: execution-proxy coverage collapse root-caused to PumpPortal account running out of balance again ('Minimum balance not met for PumpSwap websocket data'), described as 'Not a code defect' and 'User acknowledged, will re-fund' \u2014 implying the issue is understood/handled, not an open unresolved incident.",
+    "observed_ground_truth": "Ground truth shows funnel.v8 is CRITICAL and FIRING with consecutive_failures=1832, still firing as of the latest fast check, matching 'V8-TWIN-FIX failure class' with no terminal disposition for at least one candidate. claims.batch.v8_readiness is also WARN/FIRING with 538 consecutive failures. Evidence bundle contains no operator acknowledgment, ticket, or remediation status for either incident.",
+    "expected_ground_truth": "If the claim's narrative is accurate and the balance issue is the root cause with user acknowledgment/re-funding pending, one might expect the funnel.v8 and v8_readiness incidents to reflect a known, being-addressed state rather than appearing as raw ongoing CRITICAL/WARN firings with no annotation.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The documentation claims the issue is understood and being remediated by the user, but the watchdog evidence shows it as an unacknowledged, still-firing, escalating-failure-count incident; operators relying on the doc claim alone might under-prioritize an actually active critical incident.",
+    "suggested_next_step": "Query PumpPortal account balance/status directly and cross-check watchdog incident annotations or ticket system for any linkage to the YD3 root-cause narrative.",
+    "confidence": "medium",
+    "audit_id": "audit-20260901T084727Z",
+    "timestamp": 1788252517.1254966
+  },
+  {
+    "finding_id": "F3",
+    "severity": "INFO",
+    "component": "Full test suite count discrepancy",
+    "claim": "Receipts tail claims 'Full suite 498/498 green' after E3 addition, and YD1 claims '26 new tests, full suite green.'",
+    "observed_ground_truth": "Ground truth EV005 test collection shows 5 separate suites: tests_memecoin (304), tests_research (531), tests_watchdog (103), tests_layer2 (39), tests_quant-bot (56) \u2014 none matching 498, and no single 'full suite' total of 498 is present in evidence.",
+    "expected_ground_truth": "If claim is accurate, some suite or aggregate should total 498 tests matching evidence-based collection counts.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "Without reconciling test suite naming/counts, the claimed '498/498 green' figure cannot be corroborated against the actual test collection evidence, leaving test-health claims unverifiable.",
+    "suggested_next_step": "Run the full test suite locally (e.g. pytest --collect-only -q) and sum reported counts to check against both the 498 figure and EV005's per-suite breakdown.",
+    "confidence": "medium",
+    "audit_id": "audit-20260901T084727Z",
+    "timestamp": 1788252517.125501
+  },
+  {
+    "finding_id": "F4",
+    "severity": "INFO",
+    "component": "Commit/SHA reference ambiguity",
+    "claim": "Receipts narrative describes dated work (2026-08-29 YD-BATCH, frozen registry changes, E3 addition) but does not state a commit SHA.",
+    "observed_ground_truth": "Ground truth notes deployed HEAD SHA is e3f1b0872dba5545956620e101cbf2d452d23d44, while claims.batch.rc_closure in EV005 references a different commit db32f53, with no evidenced relationship between the two, and working tree is dirty with untracked/modified files including docs/RECEIPTS.md itself.",
+    "expected_ground_truth": "For claimed work (frozen registry changes, new tests) to be considered 'landed' and reflected in the current deployed state, one would expect it to correspond to a specific commit consistent with or ancestor to HEAD.",
+    "evidence_ids": [
+      "EV002",
+      "EV005"
+    ],
+    "operational_impact": "Since docs/RECEIPTS.md is itself listed as modified in the dirty working tree, the claimed narrative may not correspond to any committed, deployed state, making it impossible to confirm the claimed changes are actually live.",
+    "suggested_next_step": "Run git log --oneline -- docs/RECEIPTS.md and git diff HEAD -- docs/RECEIPTS.md to determine whether the claimed content is committed or only staged/uncommitted.",
+    "confidence": "medium",
+    "audit_id": "audit-20260901T084727Z",
+    "timestamp": 1788252517.1255035
+  },
+  {
+    "finding_id": "F5",
+    "severity": "INFO",
+    "component": "path_collection yield vs YD-BATCH population figures",
+    "claim": "YD1/YD2 reference a 'funded-era admitted population' of n=411 and n=427/994/405, tied to path/outcome coverage analysis dated 2026-08-29.",
+    "observed_ground_truth": "Ground truth EV005 research.path_collection reports a different, specific figure: 2026-08-31, 120 tokens scheduled, 111 path files produced (92.5% yield), PumpPortal budget 47,524/100,000 \u2014 explicitly a single-day metric, not a cumulative funded-era population count.",
+    "expected_ground_truth": "The claim's larger cumulative population figures (411, 427, 994, 405) are a different metric scope than the single-day figure in ground truth; no evidence confirms or contradicts the cumulative figures directly.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The cumulative funded-era statistics in the claims cannot be cross-checked against the only population-level evidence available (a single day's yield), so their accuracy is unverified.",
+    "suggested_next_step": "Query the research population dataset directly (e.g. the source used by v8_path_predictability.py) to confirm n=411/427 figures independently of the single-day path_collection metric.",
+    "confidence": "low",
+    "audit_id": "audit-20260901T084727Z",
+    "timestamp": 1788252517.1255054
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "No contradiction found on core deployed SHA and dirty tree",
+    "claim": "N/A - general consistency check",
+    "observed_ground_truth": "Ground truth deployed SHA e3f1b087... and dirty working tree (including docs/RECEIPTS.md as modified) are consistent with EV007's receipts file having a recent mtime matching a cron job's finished_at, and with the claims text plausibly being the freshly-written/edited content of that dirty file.",
+    "expected_ground_truth": "No contradiction; this is simply confirming plausible consistency between file mtime timing and claim content being recently authored.",
+    "evidence_ids": [
+      "EV002",
+      "EV007",
+      "EV005"
+    ],
+    "operational_impact": "No corrective action needed for this specific point; it supports (without proving) that the claims text is recently written material, consistent with the dirty tree state.",
+    "suggested_next_step": "No action required; retain as supporting context only.",
+    "confidence": "medium",
+    "audit_id": "audit-20260901T084727Z",
+    "timestamp": 1788252517.1255078
+  }
+]
