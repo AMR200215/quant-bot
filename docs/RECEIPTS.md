@@ -4285,3 +4285,49 @@ imputation sensitivity column using the real -1.99% round-trip cost
 already measured from live execution-proxy observations, and the
 frozen E0-E3 hard_stop values, for the no-path mass). Awaiting user
 sign-off before any implementation.
+
+**YD2 IMPLEMENTED** (user approved): `research/v8_readiness_engine.py`
++ `research/v8_forward_readiness_report.py` (v3) split the single
+`path_data_ready` gate into independent `selection_data_ready`
+(poll-outcome-keyed, reuses `MIN_PATH_N`/`MIN_PATH_COVERAGE_PCT` as
+`MIN_POLL_OUTCOME_N`/`MIN_POLL_OUTCOME_COVERAGE_PCT` verbatim, does not
+require path coverage) and `exit_derivation_data_ready` (renamed from
+`path_data_ready`, unchanged path-keyed computation). Live-verified on
+the VPS: `SELECTION_DATA_READY = True` for V8-P0 and V8-P3 for the
+first time in the project. Full local + VPS suites green. Holdout
+untouched.
+
+**Funding-drain re-confirmed live** before proceeding: direct
+WebSocket test against PumpPortal succeeded (5 real trade messages in
+20s), 3,739 real ticks already written for one mint in-session,
+8,811 real tick rows written in the prior 24h. User's "account is
+funded" claim independently proven, not taken on trust.
+
+### V8 entry-EV (SELECTION) report — first read of real outcome values
+
+`research/v8_entry_ev_report.py` — first module in the project to read
+`pct_change_peak` VALUES (not just counts). Train+validation only,
+holdout structurally never read (grep-level test on the function
+source, same pattern as `_compute_diagnostics_feasibility`). Winner
+threshold (pct_change_peak >= 50%) reused verbatim from
+`research/analysis/path_stats.py`'s `_WINNER_THRESHOLD_PCT` — not
+invented. 12 new tests, full local (543) + VPS suite green.
+
+Live run on the VPS, 2026-09-02 (train+validation rows, holdout never
+touched):
+
+| candidate | n | win_rate | mean | median | p25 | p75 | p90 |
+|---|---|---|---|---|---|---|---|
+| V8-P0 | 1145 | 67.1% | +178.0% | +82.3% | +37.8% | +186.1% | +375.8% |
+| V8-P3 | 458 | 62.2% | +158.7% | +71.2% | +31.3% | +179.5% | +354.1% |
+| BASELINE-0 | 17 | 70.6% | +115.5% | +87.8% | +49.0% | +207.6% | +275.6% (BELOW FLOOR, informational only) |
+| V8-P1 | 8 | 62.5% | +121.9% | +119.7% | +22.6% | +243.2% | +275.9% (BELOW FLOOR, informational only) |
+
+V8-P0 and V8-P3 clear `SELECTION_DATA_READY` (floor-clearing sample,
+not below-floor informational). **Caveat that must travel with these
+numbers**: `pct_change_peak` is peak price reached during the poll
+window, not a realized exit price — no execution costs, slippage, or
+exit-timing logic are applied here. This is an unbounded upper-bound
+distribution on entry quality, not a backtest of any exit strategy.
+Read-only; no frozen registry touched, no threshold changed, no code
+change to entry/exit logic.
