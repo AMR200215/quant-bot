@@ -1,0 +1,58 @@
+# Layer 2 Audit: audit-20260902T080054Z
+Generated: 2026-09-02T08:00:53Z
+Evidence SHA-256: `7ce24a4ec9fd59f0a80bfe1b8bf56fa4a40702f45753c359cd14d945deb2acb0`
+Status: ok
+
+## [WARN] F1: funnel.v8 incident vs claims of SELECTION_DATA_READY progress
+- **Claim**: SELECTION_DATA_READY = True for V8-P0 and V8-P3 for the first time in the project; full local + VPS suites green.
+- **Observed**: EV005 shows funnel.v8 in FIRING state, CRITICAL severity, consecutive_failures: 2115, described as 'the exact V8-TWIN-FIX failure class' with a stuck telegram_received candidate; this is an active unresolved incident as of the latest watchdog run.
+- **Expected**: If YD2 implementation and SELECTION_DATA_READY progress were fully live-verified and stable as claimed, one would expect no unrelated CRITICAL funnel incident actively firing at the same evidence snapshot, or at least some indication the two are understood as unrelated.
+- **Evidence**: EV005
+- **Impact**: The claimed progress on V8 readiness gating does not resolve or address the currently firing funnel.v8 CRITICAL incident, which represents ongoing pipeline dysfunction independent of the readiness-engine work.
+- **Next step**: Check whether funnel.v8's stuck candidates correlate with any of the V8-P0/V8-P3 candidate set referenced in the entry-EV report; run `journalctl -u quantbot-watchdog-fast -n 200` around the funnel.v8 first_seen timestamp.
+- **Confidence**: medium
+
+## [WARN] F2: claims.batch.v8_readiness FIRING vs claim of readiness gate split success
+- **Claim**: YD2 IMPLEMENTED: split path_data_ready into selection_data_ready and exit_derivation_data_ready; SELECTION_DATA_READY = True for V8-P0 and V8-P3, live-verified on VPS.
+- **Observed**: EV005 shows claims.batch.v8_readiness in FIRING state (WARN severity, consecutive_failures: 565), with 4 of 7 items (N2, N4, N6, N7) in PARTIAL state, only 3 GREEN, 0 FAIL — the check's own reason notes the batch's CLI exit code would misleadingly report success despite PARTIAL items.
+- **Expected**: If the readiness-engine split fully resolved the V8 selection/exit readiness picture as the claim implies ('first time... SELECTION_DATA_READY = True'), one might expect fewer PARTIAL items in this specific batch, or documentation reconciling why 4/7 items remain PARTIAL despite the claimed live-verified pass.
+- **Evidence**: EV005
+- **Impact**: The v8_readiness batch check is currently WARN/FIRING with more than half its items PARTIAL, so the claimed 'ready' status for V8-P0/P3 does not translate into a fully green readiness batch — downstream automation gating on this batch's exit code would silently proceed despite partial readiness.
+- **Next step**: Inspect which of the 7 items in claims.batch.v8_readiness map to N2/N4/N6/N7 and cross-reference against selection_data_ready/exit_derivation_data_ready outputs in research/v8_readiness_engine.py output logs.
+- **Confidence**: medium
+
+## [WARN] F6: Unexplained commit hash discrepancy relevant to claim provenance
+- **Claim**: Live-verified on the VPS... Read-only; no frozen registry touched, no threshold changed, no code change to entry/exit logic.
+- **Observed**: EV005 claims.batch.rc_closure reports commit db32f53, which differs from the deployed HEAD SHA 3114356... (EV002); no evidence explains this discrepancy, raising uncertainty about which commit the claimed 'live-verified on VPS' results actually correspond to.
+- **Expected**: If the claimed live-verification work was performed at current HEAD, the readiness/rc_closure commit references should align with the deployed SHA, or documentation should clarify the historical commit relationship.
+- **Evidence**: EV002, EV005
+- **Impact**: Uncertainty about which commit the 'live-verified' claims correspond to undermines confidence in tying the RECEIPTS.md narrative precisely to the currently deployed code.
+- **Next step**: Run `git log --oneline db32f53..HEAD` to see what changed between the rc_closure-verified commit and current deployed HEAD, including whether v8_readiness_engine.py changes are included.
+- **Confidence**: medium
+
+## [INFO] F3: Working tree dirtiness vs claimed code changes
+- **Claim**: research/v8_readiness_engine.py + research/v8_forward_readiness_report.py (v3) split the gate... research/v8_entry_ev_report.py — first module in the project to read pct_change_peak VALUES.
+- **Observed**: EV002 shows the working tree is dirty with modifications to several tracked files and numerous untracked files, but the specific files named in the claim (v8_readiness_engine.py, v8_forward_readiness_report.py, v8_entry_ev_report.py) are not enumerated in the ground-truth summary's list of dirty/untracked files.
+- **Expected**: If these modules were newly created/modified as part of the claimed implementation work, they would likely appear among the untracked or modified files in EV002's git status output.
+- **Evidence**: EV002
+- **Impact**: Cannot independently confirm from evidence alone that the specific claimed new modules exist in the working tree or are committed, versus being aspirational/planned.
+- **Next step**: Run `git status --porcelain` and `git log --oneline -- research/v8_readiness_engine.py research/v8_entry_ev_report.py` to confirm these files exist and their commit/tracked status.
+- **Confidence**: low
+
+## [INFO] F4: Funding-drain re-confirmation claim vs feed health evidence
+- **Claim**: Funding-drain re-confirmed live before proceeding: direct WebSocket test against PumpPortal succeeded (5 real trade messages in 20s), 3,739 real ticks written for one mint in-session, 8,811 real tick rows written in the prior 24h.
+- **Observed**: EV005 shows feed.pumpportal OK with most recent event a successful WS connect logged at 2026-09-02 08:00:02, and a prior incident recovered; ground truth does not independently confirm the specific tick counts (3,739 / 8,811) or the 20s/5-message WebSocket test claimed in the receipts text.
+- **Expected**: The claim provides specific granular tick-count figures that go beyond what the watchdog's own feed.pumpportal check reports (which only confirms connectivity, not volume).
+- **Evidence**: EV005
+- **Impact**: The specific tick-volume figures in the claim are unverifiable from the audited evidence bundle alone; feed connectivity is corroborated but not the granular usage statistics.
+- **Next step**: Query the tick storage backend directly (e.g., `wc -l` on the relevant tick log file or a DB count query) for the specific mint and 24h window cited in the claim.
+- **Confidence**: medium
+
+## [INFO] F5: Test suite counts consistency
+- **Claim**: 12 new tests, full local (543) + VPS suite green.
+- **Observed**: EV005 slow run reports the research test suite collecting 543 tests cleanly with no collection errors — this matches the '543' figure cited in the claim.
+- **Expected**: Consistent — the claimed test count aligns with ground-truth evidence.
+- **Evidence**: EV005
+- **Impact**: This portion of the claim is corroborated by independent evidence and increases confidence in the surrounding narrative, though it does not itself confirm the functional correctness of the new readiness-engine logic.
+- **Next step**: No action needed; note as corroborated for cross-referencing other claims in the same document.
+- **Confidence**: high
