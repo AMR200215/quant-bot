@@ -1,0 +1,99 @@
+[
+  {
+    "finding_id": "F1",
+    "severity": "INFO",
+    "component": "receipts_tail content vs raw evidence",
+    "claim": "docs/RECEIPTS.md tail describes YD2 implementation, SELECTION_DATA_READY=True live-verified, and V8 entry-EV report details",
+    "observed_ground_truth": "EV007 in the ground-truth summary only recorded metadata about the receipts tail file (mtime 1788393481.62, length 232321 bytes) and inferred it was written by the v8_vs_v7_daily job; the actual textual content shown now (YD2, v8_readiness_engine.py, entry-EV report table) was not part of the evidence reviewed to produce the ground truth.",
+    "expected_ground_truth": "The claim asserts specific narrative content (proposal adoption, live verification of SELECTION_DATA_READY, entry-EV numbers) that cannot be corroborated against raw evidence beyond file metadata.",
+    "evidence_ids": [
+      "EV007"
+    ],
+    "operational_impact": "Cannot independently confirm the substantive engineering narrative (gate split, live verification) actually occurred as described; only that a file of matching size/mtime exists.",
+    "suggested_next_step": "Diff docs/RECEIPTS.md against git history / VPS-side test run logs to confirm the YD2 implementation and live verification claims are backed by actual code and test artifacts, not just prose.",
+    "confidence": "medium",
+    "audit_id": "audit-20260903T081055Z",
+    "timestamp": 1788423126.594921
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "claims.batch.v8_readiness vs RECEIPTS narrative",
+    "claim": "\"SELECTION_DATA_READY = True for V8-P0 and V8-P3 for the first time in the project\" and \"V8-P0 and V8-P3 clear SELECTION_DATA_READY\"",
+    "observed_ground_truth": "EV005 shows the claims.batch.v8_readiness check is in WARN/FIRING state with consecutive_failures: 593, and the underlying batch shows 3/7 GREEN, 4/7 PARTIAL (items N2, N4, N6, N7), 0 FAIL -- with no item-level detail confirming which specific items correspond to V8-P0/V8-P3 SELECTION_DATA_READY.",
+    "expected_ground_truth": "If SELECTION_DATA_READY were fully live-verified True as claimed, one might expect the v8_readiness claims batch to show a GREEN status for the relevant items rather than an ongoing WARN/FIRING incident with hundreds of consecutive failures.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The claimed readiness milestone may be true at the code/report level but the aggregate monitored readiness batch is still failing checks, so downstream automation gated on this batch's health would not treat V8 as ready.",
+    "suggested_next_step": "Inspect the v8_readiness claims batch item-level output (N2, N4, N6, N7) to determine whether PARTIAL states are unrelated to SELECTION_DATA_READY or whether they contradict the 'live-verified True' claim.",
+    "confidence": "medium",
+    "audit_id": "audit-20260903T081055Z",
+    "timestamp": 1788423126.5949292
+  },
+  {
+    "finding_id": "F3",
+    "severity": "INFO",
+    "component": "funnel.v8 CRITICAL incident vs RECEIPTS silence",
+    "claim": "RECEIPTS narrative describes progress on V8 readiness/selection gates with no mention of an active funnel/pipeline blocking incident",
+    "observed_ground_truth": "EV005 shows funnel.v8 is CRITICAL/FIRING with consecutive_failures: 2409, a candidate stuck at telegram_received stage for >120s (mint AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump, event bd6003380054eb57) -- an ongoing, unresolved critical incident.",
+    "expected_ground_truth": "The claims text focuses on readiness/selection-gate engineering progress and funding-drain re-confirmation, giving no indication that the live funnel is currently critically broken for real-time candidate processing.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "A live, critical pipeline stall (funnel.v8) is not surfaced in the documentation narrative, so a reader of RECEIPTS.md alone would be unaware production funnel processing is currently failing.",
+    "suggested_next_step": "Correlate the funnel.v8 CRITICAL incident timeline with the RECEIPTS.md YD2/entry-EV work timestamps to determine if they are unrelated concerns or if the funnel issue affects the reported readiness numbers.",
+    "confidence": "medium",
+    "audit_id": "audit-20260903T081055Z",
+    "timestamp": 1788423126.5949333
+  },
+  {
+    "finding_id": "F4",
+    "severity": "INFO",
+    "component": "funding-drain re-confirmation claim vs feed evidence",
+    "claim": "\"direct WebSocket test against PumpPortal succeeded (5 real trade messages in 20s), 3,739 real ticks already written for one mint in-session, 8,811 real tick rows written in the prior 24h\"",
+    "observed_ground_truth": "EV005 confirms feed.pumpportal is OK based on most recent WS connect log line at 2026-09-03 08:09:32, consistent with a functioning feed, but the ground-truth evidence bundle contains no tick-count data (3,739 / 8,811) to corroborate the specific volumes claimed.",
+    "expected_ground_truth": "The claim's specific tick counts and message-in-20s test are plausible given feed.pumpportal's OK status but are not independently verifiable from the evidence reviewed.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "The qualitative feed-health signal aligns with the claim, but the precise quantitative figures in the receipts narrative are unverified assertions layered on top of a general OK status.",
+    "suggested_next_step": "Query the raw tick log / database for the cited mint's row count in-session and total rows in the prior 24h to confirm the 3,739 and 8,811 figures.",
+    "confidence": "low",
+    "audit_id": "audit-20260903T081055Z",
+    "timestamp": 1788423126.594936
+  },
+  {
+    "finding_id": "F5",
+    "severity": "INFO",
+    "component": "commit hash discrepancy vs claimed live-verified work",
+    "claim": "\"Live-verified on the VPS\" and \"Full local + VPS suites green\" implying current deployed code reflects this work",
+    "observed_ground_truth": "Ground truth notes rc_closure claims batch reports commit db32f53 (EV005), which differs from the deployed HEAD SHA fcb0220b... (EV002), and the working tree is not clean with modifications to multiple tracked files including docs/RECEIPTS.md itself (EV002).",
+    "expected_ground_truth": "If the YD2 implementation and live verification were fully committed and deployed, one might expect the claims-batch commit hash to match the deployed HEAD SHA, and RECEIPTS.md to be committed rather than a locally modified/uncommitted file.",
+    "evidence_ids": [
+      "EV002",
+      "EV005"
+    ],
+    "operational_impact": "The exact provenance of the 'live-verified' work relative to the currently deployed commit is unclear, raising a risk that the narrative describes uncommitted or divergent work relative to what is actually running.",
+    "suggested_next_step": "Run `git log --oneline db32f53..fcb0220b` (or reverse) and `git diff HEAD -- docs/RECEIPTS.md` to establish whether db32f53 is an ancestor of the deployed HEAD and whether RECEIPTS.md's uncommitted changes match the claimed narrative.",
+    "confidence": "medium",
+    "audit_id": "audit-20260903T081055Z",
+    "timestamp": 1788423126.594938
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "test suite claims vs ground truth",
+    "claim": "\"12 new tests, full local (543) + VPS suite green\"",
+    "observed_ground_truth": "EV005 confirms tests_research collects with 543 tests cleanly with no errors, consistent with the '543' figure cited; however, EV005 evidence is about test collection (no errors) rather than test execution/pass results, and does not confirm '12 new tests' specifically or VPS-side pass status.",
+    "expected_ground_truth": "The claim implies full test execution passed both locally and on VPS; ground truth only confirms clean collection, not pass/fail execution outcomes.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "Test collection succeeding is a weaker guarantee than tests passing; the claim's 'green' assertion for execution is not directly verifiable from the reviewed evidence.",
+    "suggested_next_step": "Run the tests_research suite explicitly and capture pass/fail counts rather than relying on collection-only evidence to confirm the 'green' claim.",
+    "confidence": "medium",
+    "audit_id": "audit-20260903T081055Z",
+    "timestamp": 1788423126.5949404
+  }
+]
