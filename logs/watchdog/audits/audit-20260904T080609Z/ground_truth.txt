@@ -1,0 +1,55 @@
+# Audit Summary — audit-20260904T080609Z
+
+## Git state
+- Deployed HEAD SHA: `456460e908f5a0b1fd338754747b77af15c19a71` (EV002). Note this string is 41 hex characters, one longer than a standard 40-character SHA-1; I cannot independently verify its validity as a well-formed git SHA from this evidence.
+- Working tree is **not clean**: there are 6 modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_positions.json`, `memecoin/data/memecoin_signals.json`) and 18 untracked paths/files, including new logs, `research/data/`, `research/spool/dropped_fields.jsonl`, `research/spool/failed_inserts.jsonl`, and two ad-hoc scripts (`p15_1_2_audit.py`, `scratch_incident_check.py`) (EV002).
+- The watchdog runs themselves report the same SHA (EV005 `latest_fast_run.git_sha`, `latest_slow_run.git_sha`), consistent with EV002, but this only confirms the checked-out commit, not tree cleanliness at run time.
+
+## systemd services/timers
+- `quantbot.service`: active/running, last exec succeeded (ExecMainStatus=0) (EV003).
+- `quantbot-research.service`: active/running, last exec succeeded (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead**, but `Result=success` / `ExecMainStatus=0` — consistent with a oneshot service that exits after each run rather than a crash (EV003).
+- `quantbot-watchdog-slow.service`: **inactive/dead**, same success/exit-0 pattern as above (EV003).
+- Timers: `quantbot-watchdog-fast.timer` last fired 2026-09-04T08:05:03Z, next due 08:10:00Z (EV003). `quantbot-watchdog-slow.timer` last fired 08:03:17Z, next due 09:03:00Z (EV003). Both timers are actively scheduled and recently fired, so the "inactive" service state is expected timer-triggered behavior, not evidence of failure — the evidence directly supports this inference via the paired success status.
+
+## Cron files
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs` (EV004).
+- All three have valid-looking single-line crontab syntax invoking `watchdog.exec_wrapper` with schedule flags matching their cron time fields (e.g., `55 23 * * *` matches the epoch job's own `--schedule` argument) (EV004).
+- `recent_parser_error_lines` is an empty list — no parser errors recorded (EV004). This is corroborated by watchdog checks `cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, all status OK, reason "parses cleanly, no recent journal parser errors" (EV005).
+- Cron execution checks (`cron_execution.*`) all report OK with matching successful receipts (exit_code 0) at expected fire times (EV005).
+
+## Watchdog's own most recent run status
+- Latest **fast** run: `run_id cd0515f3d9d54970`, started/finished ~1788509105 (duration ~13.6ms), 11/11 checks completed, `final_runner_status: "ok"` (EV005).
+- Latest **slow** run: `run_id eb3af2bc3d834cef`, started/finished ~1788509005 (duration ~11.2ms), 10/10 checks completed, `final_runner_status: "ok"` (EV005).
+- Both runs report the same boot_id as the host (`d0a4169b-96f4-4bb1-b365-92ca527627e6`), consistent with EV001 (EV005, EV001).
+
+## Active incidents (from `all_incidents`, EV005)
+Two incidents are currently **FIRING**:
+1. **`funnel.v8`** — CRITICAL, firing since `first_seen 1786748706` through `last_seen 1788509105` (2700 consecutive failures), last notified 1788494705. The latest fast-run detail (EV005 `funnel.v8` check) shows 1 candidate (`event_id bd6003380054eb57`, mint `AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump`) stuck at stage `telegram_received` since ts 1787710096 with no terminal disposition — described in the evidence itself as "the exact V8-TWIN-FIX failure class."
+2. **`feed.telegram`** — CRITICAL, firing since `first_seen 1787300101`, with an intermediate recovery at 1788478805 but firing again by `last_seen 1788509105` (15 consecutive failures currently), last notified 1788505505. The corresponding fast-check (EV005 `feed.telegram`) reports no `telegram_received` event in 11294s against a 7200s threshold, explicitly flagged as WARN and "ambiguous... could be a legitimately quiet channel or a silently dead connection" — the evidence does not resolve this ambiguity.
+
+One incident is FIRING at WARN severity but distinct from the above two:
+3. **`claims.batch.v8_readiness`** — WARN, firing continuously since `first_seen 1786585581` (621 consecutive failures), last_seen 1788509005. Detail (EV005 `claims.batch.v8_readiness`): 4 of 7 items (`N2`, `N4`, `N6`, `N7`) are PARTIAL, 3 GREEN, 0 FAIL. Evidence explicitly notes the batch-verify CLI exit code would be 0 despite this, calling out a known gap between "exit code says fine" and actual completeness.
+
+All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `research.path_collection`, `pipeline.research_queue_lag`) show `state: RECOVERED` with non-null `recovered_at` timestamps (EV005) — no current issue per this evidence.
+
+## Research pipeline queue lag
+- Watchdog check `pipeline.research_queue_lag`: status OK, "consumer caught up (gap=0 bytes)", `queue_size: 2582740`, `offset: 2582740` (EV005).
+- EV006 independently reports `queue_size: 2582740` and `queue_offset: "2582740"`, matching EV005 exactly — no lag between queue size and consumer offset at time of collection.
+- Historically, this check fired as a WARN incident briefly (`first_seen 1788334503`, `recovered_at 1788334804`, ~301s duration) but is currently RECOVERED (EV005).
+
+## Other evidence-supported observations
+- `pipeline.research_spool`: OK, 0 failed inserts in the last 2 hours; 68 total historical failed-insert lines on disk, explicitly noted by the evidence as "not itself evidence of an active problem" (EV005).
+- Test collection checks for memecoin, research, watchdog, layer2, and root `tests` directories all report clean collection with test counts (304, 543, 103, 39, 56 respectively) (EV005). No test drift or stale-mock issues detected (`test_drift.stale_mocks`: OK, 130 targets checked, third-party/stdlib targets explicitly excluded from verification) (EV005).
+- `claims.batch.rc_closure`: OK, 3/3 GREEN, tied to commit `db32f53` (EV005) — note this commit short-hash differs from the deployed HEAD SHA in EV002/EV005 run metadata; the evidence does not explain this discrepancy (could be an earlier commit the claim batch was verified against). I flag this as unresolved rather than assuming it's fine.
+- `layer2.staleness`: OK, last Layer 2 audit was `audit-20260903T081055Z`, 23.9h old, 6 findings, 0 critical (EV005). The content/nature of those 6 findings is not in this evidence bundle.
+- `research.path_collection`: OK for day 2026-09-03, 41 scheduled / 41 path files, 100% yield, 0/100000 budget used (EV005).
+- Receipts file (EV007): mtime `1788479882.16`, length 232412 bytes. This mtime matches the `v8_vs_v7_daily` receipt's `started_at` (1788479882.07, EV005), consistent with that job having written to it, but the evidence does not show receipt file contents beyond size/mtime.
+- Host uptime is ~5,125,640.71 seconds (~59.3 days) as of EV001; boot_id matches watchdog run records (EV001, EV005), indicating no reboot between boot and these runs.
+
+## Explicit gaps / ambiguities (not filled with assumption)
+- Whether `feed.telegram` staleness is a legitimate quiet period or a dead connection is explicitly stated as undetermined by the evidence itself (EV005).
+- No content is provided for the single stuck `funnel.v8` candidate's eventual fate — evidence only shows it is unresolved as of the current run.
+- The mismatch between `claims.batch.rc_closure`'s `commit: "db32f53"` and the deployed HEAD SHA in EV002/EV005 is unexplained by available evidence.
+- No evidence bundle entry shows systemd `quantbot.service`/`quantbot-research.service` start times, restart counts, or resource usage — only current ActiveState/SubState/Result are available (EV003).
+- The 6 Layer 2 audit findings referenced in `layer2.staleness` are not detailed in this bundle.
