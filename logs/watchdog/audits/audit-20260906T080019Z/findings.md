@@ -1,0 +1,58 @@
+# Layer 2 Audit: audit-20260906T080019Z
+Generated: 2026-09-06T08:00:17Z
+Evidence SHA-256: `dc91cc4972d75119384c1292646299ba83f502c13f589303c56f3c16d4e50fb7`
+Status: ok
+
+## [WARN] F2: claims.batch.v8_readiness vs YD2 claim of SELECTION_DATA_READY=True
+- **Claim**: SELECTION_DATA_READY = True for V8-P0 and V8-P3 for the first time in the project.
+- **Observed**: EV005 shows claims.batch.v8_readiness is currently WARN/FIRING with 4/7 items (N2, N4, N6, N7) in PARTIAL state, 3/7 GREEN, 0 FAIL, consecutive_failures: 675, first_seen 1786585581.22, still unresolved (recovered_at: null).
+- **Expected**: If SELECTION_DATA_READY were fully True and the gate split fully implemented/live-verified as claimed, the v8_readiness batch would be expected to show a clean/GREEN or at least improved state, not an actively firing WARN incident with 4 PARTIAL items.
+- **Evidence**: EV005
+- **Impact**: The narrative claim of a successful, live-verified readiness milestone is not reflected in the current live incident state of the exact check it should have fixed, suggesting either partial completion, regression, or that PARTIAL items are unrelated to the claimed fix.
+- **Next step**: Inspect the v8_readiness batch item breakdown (N2, N4, N6, N7) to determine whether these PARTIAL items correspond to selection_data_ready or exit_derivation_data_ready specifically, and whether the claimed fix only addressed a subset.
+- **Confidence**: medium
+
+## [INFO] F1: receipts_tail narrative vs ground truth
+- **Claim**: YD2 IMPLEMENTED: split of path_data_ready gate into selection_data_ready and exit_derivation_data_ready, live-verified on VPS, full local+VPS suites green.
+- **Observed**: Ground truth confirms test collection counts (memecoin 304, research 543, watchdog 103, layer2 39, root 56) collect cleanly (EV005), but has no evidence of test *execution* or pass/fail results, and no visibility into research/v8_readiness_engine.py, v8_forward_readiness_report.py, or v8_entry_ev_report.py existing or running as described.
+- **Expected**: The claim implies these new modules exist, were run, and all suites passed green on both local and VPS.
+- **Evidence**: EV005, EV007
+- **Impact**: Cannot verify from evidence alone that the described gate-splitting implementation is real, deployed, or tested beyond the assertion itself.
+- **Next step**: Check git log/diff for research/v8_readiness_engine.py and research/v8_forward_readiness_report.py against the deployed HEAD SHA, and inspect CI/test run logs (not just collection) for pass/fail status.
+- **Confidence**: medium
+
+## [INFO] F3: Funding-drain re-confirmation claim vs funnel.v8 incident
+- **Claim**: Funding-drain re-confirmed live: direct WebSocket test succeeded, 3,739 real ticks written for one mint in-session, 8,811 real tick rows in prior 24h; user's funded-account claim independently proven.
+- **Observed**: Ground truth shows funnel.v8 CRITICAL incident actively FIRING with consecutive_failures: 3283, citing a candidate stuck in telegram_received stage >120s with no terminal disposition, and feed.pumpportal reporting OK with last successful WS connect at 2026-09-06 07:59:09 (EV005).
+- **Expected**: If funding-drain were fully resolved and ticks were flowing normally as claimed, the funnel.v8 CRITICAL incident (a downstream symptom of exactly this kind of data-flow gap) would likely show improvement or recovery, not a still-firing, high-repeat-count state at the same snapshot.
+- **Evidence**: EV005
+- **Impact**: The claimed funding/tick-flow fix may be real for the WebSocket layer but does not appear to have resolved the pipeline-level symptom (funnel.v8) that would corroborate full recovery, or the two issues are unrelated and the claim's framing overstates system health.
+- **Next step**: Correlate funnel.v8's example mint (AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump) and its event timestamp against the WebSocket tick-write logs cited in the claim to see if they are contemporaneous or from different time windows.
+- **Confidence**: low
+
+## [INFO] F4: Working tree dirtiness vs claimed new modules
+- **Claim**: New files research/v8_readiness_engine.py, research/v8_forward_readiness_report.py (v3), research/v8_entry_ev_report.py were added/modified as part of implemented work.
+- **Observed**: EV002 lists 5 modified tracked files (docs/RECEIPTS.md, docs/V8_INPUTS.md, logs/memecoin_social_journal.csv, logs/trade_telemetry_summary.csv, memecoin/data/memecoin_positions.json, memecoin/data/memecoin_signals.json) plus 20 untracked paths including two ad-hoc scripts, but ground truth does not confirm the presence of the three specific research/*.py files named in the claim.
+- **Expected**: If these modules were implemented and live-verified as claimed, they would be expected to appear as tracked (committed) or at least untracked new files in the working tree diff.
+- **Evidence**: EV002
+- **Impact**: Cannot confirm from evidence alone that the specific implementation files described in the claim are present in the current working tree or repository state.
+- **Next step**: Run git status --porcelain and git log --stat on the deployed SHA to check for the presence and commit history of research/v8_readiness_engine.py, research/v8_forward_readiness_report.py, and research/v8_entry_ev_report.py.
+- **Confidence**: medium
+
+## [INFO] F5: V8 entry-EV report table statistics
+- **Claim**: Live run on VPS 2026-09-02 produced specific win_rate/mean/median statistics for V8-P0, V8-P3, BASELINE-0, V8-P1 candidates, described as train+validation only with holdout untouched.
+- **Observed**: No evidence in the ground-truth bundle (EV001-EV007) references v8_entry_ev_report.py, its output table, or any pct_change_peak win-rate statistics; this is a narrative claim with no corroborating check result, incident, or artifact in the audited evidence.
+- **Expected**: A claim of this specificity (exact percentages, sample sizes) would ideally be corroborated by an artifact reference, log entry, or check result in the evidence bundle.
+- **Evidence**: EV005
+- **Impact**: This statistical claim cannot be independently verified or refuted from the evidence available; it is accepted or rejected purely on the basis of documentation assertion.
+- **Next step**: Locate and inspect the actual output artifact of research/v8_entry_ev_report.py on the VPS (or its logged run) to confirm the reported statistics match a real execution.
+- **Confidence**: low
+
+## [INFO] F6: rc_closure commit mismatch vs claims narrative
+- **Claim**: Implicit in claims: current work (YD2 implementation, funding-drain re-confirmation) is part of the currently deployed and verified system state.
+- **Observed**: claims.batch.rc_closure is tied to commit db32f53, which does not match the deployed HEAD SHA 1c009d737e4e91ef47ab00e6df2e0d21e0e47375 (EV002/EV005), and no evidence explains this discrepancy.
+- **Expected**: If all claimed work were fully integrated into the currently running/deployed system, the rc_closure batch's referenced commit would be expected to align with the deployed HEAD SHA.
+- **Evidence**: EV002, EV005
+- **Impact**: Raises the possibility that some verified/claimed work is tied to a different commit than what's actually running, complicating trust in claims of live-verified status.
+- **Next step**: Run git log --oneline to locate commit db32f53 relative to HEAD and determine whether it is an ancestor, descendant, or divergent branch.
+- **Confidence**: low
