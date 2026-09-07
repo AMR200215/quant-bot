@@ -1,0 +1,88 @@
+```json
+[
+  {
+    "finding_id": "F1",
+    "severity": "INFO",
+    "component": "PumpPortal feed / funding drain narrative",
+    "claim": "Funding-drain re-confirmed live before proceeding: direct WebSocket test against PumpPortal succeeded (5 real trade messages in 20s), 3,739 real ticks already written for one mint in-session, 8,811 real tick rows written in the prior 24h.",
+    "observed_ground_truth": "EV005 shows feed.pumpportal OK with most recent event a successful WebSocket connect at 08:29:14 UTC, ~1 min before snapshot. No evidence in the ground-truth bundle covers tick-row counts, per-mint tick volumes, or a funding-drain incident history.",
+    "expected_ground_truth": "The claim implies a specific, recently-resolved funding/ticks-drought incident with quantified tick counts that should be independently visible in feed telemetry.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "The feed health check corroborates the feed is currently connected and receiving events, but the specific funding-drain narrative and tick counts cannot be verified from the audited evidence, so this claim is unconfirmed rather than corroborated.",
+    "suggested_next_step": "Query raw tick log/table for the named mint and compare row counts against the claimed 3,739 and 8,811 figures over the stated windows.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F2",
+    "severity": "INFO",
+    "component": "V8 readiness gate split (YD2 IMPLEMENTED)",
+    "claim": "SELECTION_DATA_READY = True for V8-P0 and V8-P3 for the first time in the project, via research/v8_readiness_engine.py and research/v8_forward_readiness_report.py (v3), live-verified on the VPS.",
+    "observed_ground_truth": "Ground-truth summary's claims.batch.v8_readiness incident shows 4/7 items in PARTIAL state (N2, N4, N6, N7), 3/7 GREEN, 0 FAIL, ongoing (FIRING) since first_seen 1786585581 with consecutive_failures: 704, still firing as of last_seen 1788768192 (EV005).",
+    "expected_ground_truth": "If SELECTION_DATA_READY were newly True and the gate split fully implemented and green, the v8_readiness batch check would be expected to show improvement or resolution rather than a still-FIRING WARN state with the same partial pattern.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "The documentation claims a readiness milestone was achieved, but the batch-verify incident tracked in the watchdog is still actively firing as WARN with partial items — the two pictures are not clearly reconciled, so the claimed fix's live status is unconfirmed.",
+    "suggested_next_step": "Inspect claims.batch.v8_readiness item-level detail for N2/N4/N6/N7 to see whether they correspond to selection_data_ready or exit_derivation_data_ready, and check the report v3 output directly on the VPS.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F3",
+    "severity": "INFO",
+    "component": "Test suite counts",
+    "claim": "Full local (543) + VPS suite green.",
+    "observed_ground_truth": "EV005 shows tests_research collects 543 tests cleanly with no collection errors, consistent with the '543' figure cited. However, ground truth only confirms clean collection, not that all 543 tests pass ('green').",
+    "expected_ground_truth": "The claim asserts a passing full green suite; ground truth only supports successful test collection, not execution/pass results.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "Test collection health is confirmed but pass/fail execution status of the 543 tests is not established by the audited evidence, so 'green' cannot be independently corroborated.",
+    "suggested_next_step": "Pull the latest CI/test run log or pytest exit code for tests_research to confirm pass status, not just collection.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F4",
+    "severity": "INFO",
+    "component": "Holdout integrity claims",
+    "claim": "Holdout structurally never read (grep-level test on the function source, same pattern as _compute_diagnostics_feasibility); holdout untouched.",
+    "observed_ground_truth": "No evidence in the ground-truth bundle (EV001-EV006) covers source-code grep tests, holdout-access enforcement, or the internals of v8_entry_ev_report.py / v8_readiness_engine.py.",
+    "expected_ground_truth": "The claim asserts a specific code-level guarantee about holdout data isolation that would require source-code or test-suite evidence to confirm.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "This is an unverifiable code-correctness claim from the audit's evidence base; test collection counts (EV005) neither confirm nor deny the specific grep-level holdout check exists or passes.",
+    "suggested_next_step": "Review the diff/test for v8_entry_ev_report.py's holdout-exclusion logic and run the referenced grep-level test directly.",
+    "confidence": "low"
+  },
+  {
+    "finding_id": "F5",
+    "severity": "WARN",
+    "component": "funnel.v8 CRITICAL incident vs. claims narrative",
+    "claim": "The claims document describes ongoing readiness/engineering progress (YD2 implemented, entry-EV report shipped, funding re-confirmed) but does not mention the currently FIRING funnel.v8 CRITICAL incident (candidates stuck >120s in telegram_received with no terminal disposition, consecutive_failures: 3581).",
+    "observed_ground_truth": "EV005 shows funnel.v8 as FIRING CRITICAL with consecutive_failures: 3581, an ongoing and severe unresolved issue as of the latest fast run.",
+    "expected_ground_truth": "A claims/status document describing active pipeline health work would be expected to surface or at least acknowledge an actively firing CRITICAL funnel incident if it is operationally significant.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "A CRITICAL, long-running incident affecting funnel disposition tracking is omitted from the narrative status update, risking a false impression of overall pipeline health.",
+    "suggested_next_step": "Cross-check recent commits/deploys against the funnel.v8 incident timeline to see if any of the claimed work (YD2, entry-EV report) was expected to affect funnel disposition, and escalate the CRITICAL incident separately.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "Working tree state vs. claimed code changes",
+    "claim": "New modules research/v8_readiness_engine.py, research/v8_forward_readiness_report.py, research/v8_entry_ev_report.py were implemented and live-verified on the VPS.",
+    "observed_ground_truth": "EV002 shows the working tree has 5 modified tracked files and 19 untracked paths, including code files like p15_1_2_audit.py and scratch_incident_check.py, but does not list the specific files named in the claim (v8_readiness_engine.py, v8_forward_readiness_report.py, v8_entry_ev_report.py) as part of the tracked/untracked diff.",
+    "expected_ground_truth": "If these new modules were just implemented and live-verified, they would be expected to appear as new/modified files in the working tree or a recent commit corresponding to deployed HEAD.",
+    "evidence_ids": ["EV002"],
+    "operational_impact": "Cannot confirm from ground-truth evidence whether the specific new modules referenced in the claims actually exist in the deployed working tree or were committed as part of the current HEAD.",
+    "suggested_next_step": "Run git log --stat and git show on HEAD and check working-tree diff for the presence of research/v8_readiness_engine.py, research/v8_forward_readiness_report.py, and research/v8_entry_ev_report.py.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F7",
+    "severity": "INFO",
+    "component": "Batch verify claims.batch.rc_closure commit mismatch (context)",
+    "claim": "N/A - contextual cross-check with claims narrative describing ongoing commit-based verification work (v8_readiness batch, VPS live-verification).",
+    "observed_ground_truth": "EV005 shows claims.batch.rc_closure tied to commit db32f53, which does not match deployed HEAD SHA 7fb4165f... (EV002); this discrepancy remains unexplained.",
+    "expected_ground_truth": "Given the claims describe active, recent commit-tied verification work, a consistent commit reference across claims/batch-verify artifacts would be expected.",
+    "evidence_ids": ["EV002", "EV005"],
+    "operational_impact": "Unclear whether claims-tracking artifacts reflect the currently deployed commit, which could mean stale claims records or a separate verification pipeline not tied to the live deploy.",
+    "suggested_next_step": "Check git log for commit db32f53 to determine its relationship (ancestor/descendant/unrelated) to deployed HEAD 7fb4165f.",
+    "confidence": "low"
+  }
+]
+```
