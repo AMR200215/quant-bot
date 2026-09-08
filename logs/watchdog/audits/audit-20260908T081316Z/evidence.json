@@ -1,0 +1,568 @@
+{
+  "audit_id": "audit-20260908T081316Z",
+  "generated_at": 1788855194.5995207,
+  "raw_bundle_sha256": "8950b3ce85bf468d69ce0fe247d3b7337e5bb350686ac960c9b87772958a26ff",
+  "items": [
+    {
+      "ev_id": "EV001",
+      "section": "host",
+      "content": {
+        "host_time_utc": "2026-09-08T08:13:14Z",
+        "boot_id": "d0a4169b-96f4-4bb1-b365-92ca527627e6",
+        "uptime_s": 5471668.35
+      },
+      "collected_at": 1788855194.5995207
+    },
+    {
+      "ev_id": "EV002",
+      "section": "git",
+      "content": {
+        "head_sha": "d3409cd901654ff44f29bc8bb5f5c6e9bd85f218",
+        "dirty_tree_lines": [
+          "M docs/RECEIPTS.md",
+          " M docs/V8_INPUTS.md",
+          " M logs/memecoin_social_journal.csv",
+          " M logs/trade_telemetry_summary.csv",
+          " M memecoin/data/memecoin_positions.json",
+          " M memecoin/data/memecoin_signals.json",
+          "?? logs/epoch_daily.jsonl",
+          "?? logs/memecoin_v8_journal.csv",
+          "?? logs/price_paths/",
+          "?? logs/program_slots.json",
+          "?? logs/research_admission/",
+          "?? logs/research_execution_proxy/",
+          "?? logs/signal_candidates.csv",
+          "?? logs/signal_trajectory.csv",
+          "?? logs/t10_velocity.csv",
+          "?? logs/trade_telemetry.jsonl",
+          "?? logs/watchdog/path_collection_daily.json",
+          "?? logs/winners_journal.csv",
+          "?? memecoin/data/dev_wallets.json",
+          "?? memecoin/data/memecoin_v8_positions.json",
+          "?? memecoin/data/screening_outcomes.csv",
+          "?? p15_1_2_audit.py",
+          "?? research/data/",
+          "?? research/spool/dropped_fields.jsonl",
+          "?? research/spool/failed_inserts.jsonl",
+          "?? scratch_incident_check.py"
+        ]
+      },
+      "collected_at": 1788855194.5995207
+    },
+    {
+      "ev_id": "EV003",
+      "section": "systemd",
+      "content": {
+        "services": {
+          "quantbot.service": "Result=success\nExecMainStatus=0\nActiveState=active\nSubState=running",
+          "quantbot-research.service": "Result=success\nExecMainStatus=0\nActiveState=active\nSubState=running",
+          "quantbot-watchdog-fast.service": "Result=success\nExecMainStatus=0\nActiveState=inactive\nSubState=dead",
+          "quantbot-watchdog-slow.service": "Result=success\nExecMainStatus=0\nActiveState=inactive\nSubState=dead"
+        },
+        "timers": "NEXT                            LEFT LAST                              PASSED UNIT                         ACTIVATES\nTue 2026-09-08 08:15:00 UTC 1min 45s Tue 2026-09-08 08:10:03 UTC 3min 11s ago quantbot-watchdog-fast.timer quantbot-watchdog-fast.service\nTue 2026-09-08 09:03:00 UTC    49min Tue 2026-09-08 08:03:03 UTC    10min ago quantbot-watchdog-slow.timer quantbot-watchdog-slow.service\n\n2 timers listed.\nPass --all to see loaded but inactive timers, too.\n"
+      },
+      "collected_at": 1788855194.5995207
+    },
+    {
+      "ev_id": "EV004",
+      "section": "cron",
+      "content": {
+        "files": {
+          "quantbot-epoch": {
+            "mode": "0o100644",
+            "mtime": 1786703985.3400774,
+            "content": "55 23 * * * root cd /root/quant-bot && set -a && . ./.env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id epoch_daily --schedule \"55 23 * * *\" --output-artifact logs/epoch_daily.jsonl -- .venv/bin/python research/scripts/epoch_daily_log.py >> logs/epoch_daily_cron.log 2>&1\n"
+          },
+          "quantbot-v8": {
+            "mode": "0o100644",
+            "mtime": 1786579568.1089442,
+            "content": "58 23 * * * root cd /root/quant-bot && set -a && . ./.env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id v8_vs_v7_daily --schedule \"58 23 * * *\" --output-artifact \"docs/RECEIPTS.md (N6/N7 table row)\" -- .venv/bin/python research/scripts/v8_vs_v7_daily.py >> logs/v8_vs_v7_cron.log 2>&1\n"
+          },
+          "quantbot-v8-inputs": {
+            "mode": "0o100644",
+            "mtime": 1786579568.1089442,
+            "content": "15 0 * * * root cd /root/quant-bot && set -a && . ./.env && set +a && .venv/bin/python -m watchdog.exec_wrapper --job-id k5_nightly --schedule \"15 0 * * *\" --output-artifact docs/V8_INPUTS.md -- .venv/bin/python -m research.scripts.v8_inputs_nightly >> logs/v8_inputs_nightly_cron.log 2>&1\n"
+          }
+        },
+        "recent_parser_error_lines": []
+      },
+      "collected_at": 1788855194.5995207
+    },
+    {
+      "ev_id": "EV005",
+      "section": "watchdog",
+      "content": {
+        "latest_fast_run": {
+          "run_id": "4e2a7778c9814be3",
+          "host": "Quant-bot",
+          "boot_id": "d0a4169b-96f4-4bb1-b365-92ca527627e6",
+          "profile": "fast",
+          "started_at": 1788855005.1139276,
+          "finished_at": 1788855005.1255252,
+          "duration_ms": 11.597633361816406,
+          "git_sha": "d3409cd901654ff44f29bc8bb5f5c6e9bd85f218",
+          "watchdog_version": "1.0.0-phase1",
+          "checks_due": 11,
+          "checks_completed": 11,
+          "final_runner_status": "ok"
+        },
+        "latest_fast_check_results": [
+          {
+            "check_id": "cron_static.k5_nightly",
+            "status": "OK",
+            "reason": "parses cleanly, no recent journal parser errors",
+            "evidence": "{}"
+          },
+          {
+            "check_id": "cron_static.epoch_daily",
+            "status": "OK",
+            "reason": "parses cleanly, no recent journal parser errors",
+            "evidence": "{}"
+          },
+          {
+            "check_id": "cron_static.v8_vs_v7_daily",
+            "status": "OK",
+            "reason": "parses cleanly, no recent journal parser errors",
+            "evidence": "{}"
+          },
+          {
+            "check_id": "cron_execution.k5_nightly",
+            "status": "OK",
+            "reason": "last scheduler run at 1788826502 succeeded",
+            "evidence": "{\"expected_prev_fire\": 1788826500.0, \"deadline\": 1788829200.0, \"now\": 1788855004.0325282, \"latest_receipt\": {\"id\": 82, \"job_id\": \"k5_nightly\", \"trigger_type\": \"scheduler\", \"scheduled_for\": null, \"started_at\": 1788826501.7434835, \"finished_at\": 1788826819.5196862, \"exit_code\": 0, \"duration_ms\": 317776.2026786804, \"git_sha\": \"65711d99e16fce91ab1b6ab8ba0b10f9148fa2eb\", \"output_artifact\": \"docs/V8_INPUTS.md\", \"run_id\": \"\"}}"
+          },
+          {
+            "check_id": "cron_execution.epoch_daily",
+            "status": "OK",
+            "reason": "last scheduler run at 1788825301 succeeded",
+            "evidence": "{\"expected_prev_fire\": 1788825300.0, \"deadline\": 1788828000.0, \"now\": 1788855004.0325282, \"latest_receipt\": {\"id\": 80, \"job_id\": \"epoch_daily\", \"trigger_type\": \"scheduler\", \"scheduled_for\": null, \"started_at\": 1788825301.234785, \"finished_at\": 1788825301.2980864, \"exit_code\": 0, \"duration_ms\": 63.30132484436035, \"git_sha\": \"65711d99e16fce91ab1b6ab8ba0b10f9148fa2eb\", \"output_artifact\": \"logs/epoch_daily.jsonl\", \"run_id\": \"\"}}"
+          },
+          {
+            "check_id": "cron_execution.v8_vs_v7_daily",
+            "status": "OK",
+            "reason": "last scheduler run at 1788825481 succeeded",
+            "evidence": "{\"expected_prev_fire\": 1788825480.0, \"deadline\": 1788828180.0, \"now\": 1788855004.0325282, \"latest_receipt\": {\"id\": 81, \"job_id\": \"v8_vs_v7_daily\", \"trigger_type\": \"scheduler\", \"scheduled_for\": null, \"started_at\": 1788825481.4361424, \"finished_at\": 1788825481.5415573, \"exit_code\": 0, \"duration_ms\": 105.41486740112305, \"git_sha\": \"65711d99e16fce91ab1b6ab8ba0b10f9148fa2eb\", \"output_artifact\": \"docs/RECEIPTS.md (N6/N7 table row)\", \"run_id\": \"\"}}"
+          },
+          {
+            "check_id": "funnel.v8",
+            "status": "CRITICAL",
+            "reason": "1 candidate(s) entered a funnel stage more than 120s ago with no terminal disposition recorded \u2014 possible silent-disappearance regression (this is the exact V8-TWIN-FIX failure class: a candidate enters the pipeline and is never accounted for again). Stages affected: ['telegram_received']",
+            "evidence": "{\"missing_by_stage\": {\"telegram_received\": 1}, \"examples\": [{\"stage\": \"telegram_received\", \"event_id\": \"bd6003380054eb57\", \"mint\": \"AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump\", \"ts\": 1787710096.6625068}]}"
+          },
+          {
+            "check_id": "feed.telegram",
+            "status": "OK",
+            "reason": "last telegram_received event 1202s ago (threshold 7200s)",
+            "evidence": "{\"last_received_ts\": 1788853803.1210933, \"age_s\": 1201.768961906433}"
+          },
+          {
+            "check_id": "feed.pumpportal",
+            "status": "OK",
+            "reason": "most recent PumpPortal WS event was a successful connect (reconnects every ~45-60s are expected rotation behavior, not evaluated here)",
+            "evidence": "{\"last_connect_line\": \"Sep 08 08:09:51 Quant-bot gunicorn[3852602]: 2026-09-08 08:09:51,565 INFO memecoin.pumpportal_monitor: PumpPortal WebSocket connected (conn_start=08:09:51 prewarm=True keyed)\"}"
+          },
+          {
+            "check_id": "pipeline.research_queue_lag",
+            "status": "OK",
+            "reason": "consumer caught up (gap=0 bytes)",
+            "evidence": "{\"queue_size\": 2786363, \"offset\": 2786363, \"gap_bytes\": 0}"
+          },
+          {
+            "check_id": "pipeline.research_spool",
+            "status": "OK",
+            "reason": "0 failed insert(s) in the last 2.0h \u2014 below the 5-sample floor for an alert (total historical lines on disk: 68, not itself evidence of an active problem)",
+            "evidence": "{\"recent_count\": 0, \"total_lines\": 68}"
+          }
+        ],
+        "latest_slow_run": {
+          "run_id": "c6c451a6d02145ab",
+          "host": "Quant-bot",
+          "boot_id": "d0a4169b-96f4-4bb1-b365-92ca527627e6",
+          "profile": "slow",
+          "started_at": 1788854591.4958234,
+          "finished_at": 1788854591.5101037,
+          "duration_ms": 14.280319213867188,
+          "git_sha": "d3409cd901654ff44f29bc8bb5f5c6e9bd85f218",
+          "watchdog_version": "1.0.0-phase1",
+          "checks_due": 10,
+          "checks_completed": 10,
+          "final_runner_status": "ok"
+        },
+        "latest_slow_check_results": [
+          {
+            "check_id": "test_drift.stale_mocks",
+            "status": "OK",
+            "reason": "no stale patch() targets found (130 resolvable targets checked across own-package modules; targets in third-party/stdlib modules are skipped, not verified)",
+            "evidence": "{}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_memecoin",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/memecoin/tests)",
+            "evidence": "{\"stdout_tail\": \"t_z8_pumpfun_compat.py::TestZ8BCConstants::test_sell_v1_disc_matches_hash\\nmemecoin/tests/test_z8_pumpfun_compat.py::TestZ8BCConstants::test_sell_v1_discriminator_differs_from_v2\\nmemecoin/tests/test_z8_pumpfun_compat.py::TestZ8BCConstants::test_sell_v2_disc_matches_hash\\n\\n304 tests collected in 0.62s\\n\"}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_research",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/research/tests)",
+            "evidence": "{\"stdout_tail\": \"t_second_day_appends_without_disturbing_first\\ntests/test_v8_vs_v7_daily.py::TestDayStats::test_bad_pnl_value_does_not_raise\\ntests/test_v8_vs_v7_daily.py::TestDayStats::test_filters_by_day_prefix\\ntests/test_v8_vs_v7_daily.py::TestDayStats::test_missing_file_returns_zero\\n\\n562 tests collected in 0.62s\\n\"}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_watchdog",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/watchdog/tests)",
+            "evidence": "{\"stdout_tail\": \"ndependently\\nwatchdog/tests/test_v8_funnel.py::TestV8FunnelFaultInjection::test_v7_reject_does_not_excuse_v8_from_reaching_its_own_terminal\\nwatchdog/tests/test_v8_funnel.py::TestV8FunnelFaultInjection::test_v8_fork_entered_counts_as_valid_terminal_for_telegram_received\\n\\n103 tests collected in 0.25s\\n\"}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_layer2",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/watchdog/layer2/tests)",
+            "evidence": "{\"stdout_tail\": \"s_not_silently_returns_empty\\nwatchdog/layer2/tests/test_run_audit.py::TestAnthropicAdapterEmptyResponse::test_real_text_response_passes_through_normally\\nwatchdog/layer2/tests/test_run_audit.py::TestAnthropicAdapterEmptyResponse::test_whitespace_only_response_also_raises\\n\\n39 tests collected in 0.06s\\n\"}"
+          },
+          {
+            "check_id": "test_drift.collection.tests_quant-bot",
+            "status": "OK",
+            "reason": "collects cleanly (/root/quant-bot/tests)",
+            "evidence": "{\"stdout_tail\": \"s/test_signal_anchored_stop.py::test_no_anchor_when_fill_equals_signal\\ntests/test_signal_anchored_stop.py::test_no_anchor_when_signal_price_zero\\ntests/test_signal_anchored_stop.py::test_size_normalisation\\ntests/test_signal_anchored_stop.py::test_size_normalisation_floor\\n\\n56 tests collected in 0.26s\\n\"}"
+          },
+          {
+            "check_id": "claims.batch.rc_closure",
+            "status": "OK",
+            "reason": "batch 'rc_closure': 3/3 item(s) GREEN",
+            "evidence": "{\"batch_id\": \"rc_closure\", \"commit\": \"db32f53\", \"green\": 3, \"partial\": 0, \"fail\": 0, \"total\": 3, \"partial_item_ids\": [], \"fail_item_ids\": []}"
+          },
+          {
+            "check_id": "claims.batch.v8_readiness",
+            "status": "WARN",
+            "reason": "batch 'v8_readiness': 4/7 item(s) PARTIAL (['N2', 'N4', 'N6', 'N7']) \u2014 batch_verify's own exit code would be 0 here (PARTIAL doesn't fail the CLI), so this is exactly the gap between 'exit code says fine' and 'actually complete'",
+            "evidence": "{\"batch_id\": \"v8_readiness\", \"commit\": \"\", \"green\": 3, \"partial\": 4, \"fail\": 0, \"total\": 7, \"partial_item_ids\": [\"N2\", \"N4\", \"N6\", \"N7\"], \"fail_item_ids\": []}"
+          },
+          {
+            "check_id": "layer2.staleness",
+            "status": "OK",
+            "reason": "last Layer 2 audit 23.5h ago (audit-20260907T083033Z, 7 finding(s))",
+            "evidence": "{\"last_audit_id\": \"audit-20260907T083033Z\", \"age_s\": 84683.6402657032, \"findings_count\": 7, \"critical_count\": 0}"
+          },
+          {
+            "check_id": "research.path_collection",
+            "status": "OK",
+            "reason": "2026-09-07: 78 scheduled, 78 path files (yield 100.0%), budget 0/100000",
+            "evidence": "{\"day\": \"2026-09-07\", \"generated_at\": \"2026-09-08T00:00:56.755273+00:00\", \"tokens_scheduled\": 78, \"path_files\": 78, \"ticks\": 0, \"pp_messages\": 0, \"pp_daily_msg_budget\": 100000, \"budget_exceeded\": false, \"budget_dropped_tokens\": 0, \"path_yield_pct\": 100.0, \"sub_peak\": 4, \"hourly\": [{\"utc_hour\": 0, \"path_eligible\": 2, \"path_admitted\": 2, \"subscriptions_started\": 2, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 1, \"path_eligible\": 4, \"path_admitted\": 4, \"subscriptions_started\": 4, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 2, \"path_eligible\": 6, \"path_admitted\": 6, \"subscriptions_started\": 6, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 3, \"path_eligible\": 7, \"path_admitted\": 7, \"subscriptions_started\": 7, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 4, \"path_eligible\": 4, \"path_admitted\": 4, \"subscriptions_started\": 4, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 5, \"path_eligible\": 5, \"path_admitted\": 5, \"subscriptions_started\": 5, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 6, \"path_eligible\": 3, \"path_admitted\": 3, \"subscriptions_started\": 3, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 7, \"path_eligible\": 4, \"path_admitted\": 4, \"subscriptions_started\": 4, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 8, \"path_eligible\": 4, \"path_admitted\": 4, \"subscriptions_started\": 4, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 9, \"path_eligible\": 2, \"path_admitted\": 2, \"subscriptions_started\": 2, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 10, \"path_eligible\": 4, \"path_admitted\": 4, \"subscriptions_started\": 4, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 11, \"path_eligible\": 3, \"path_admitted\": 3, \"subscriptions_started\": 3, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 12, \"path_eligible\": 4, \"path_admitted\": 4, \"subscriptions_started\": 4, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 13, \"path_eligible\": 2, \"path_admitted\": 2, \"subscriptions_started\": 2, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 14, \"path_eligible\": 3, \"path_admitted\": 3, \"subscriptions_started\": 3, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 15, \"path_eligible\": 2, \"path_admitted\": 2, \"subscriptions_started\": 2, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 16, \"path_eligible\": 3, \"path_admitted\": 3, \"subscriptions_started\": 3, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 17, \"path_eligible\": 3, \"path_admitted\": 3, \"subscriptions_started\": 3, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 18, \"path_eligible\": 3, \"path_admitted\": 3, \"subscriptions_started\": 3, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 19, \"path_eligible\": 1, \"path_admitted\": 1, \"subscriptions_started\": 1, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 20, \"path_eligible\": 1, \"path_admitted\": 1, \"subscriptions_started\": 1, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 21, \"path_eligible\": 3, \"path_admitted\": 3, \"subscriptions_started\": 3, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 22, \"path_eligible\": 5, \"path_admitted\": 5, \"subscriptions_started\": 5, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": 100.0, \"usable_path_yield_pct\": 0.0}, {\"utc_hour\": 23, \"path_eligible\": 0, \"path_admitted\": 0, \"subscriptions_started\": 0, \"ticks_ge1\": 0, \"ticks_ge2\": 0, \"usable_paths\": 0, \"budget_messages\": 0, \"admission_rate_pct\": null, \"usable_path_yield_pct\": null}], \"age_s\": 28934.740089416504}"
+          }
+        ],
+        "all_incidents": [
+          {
+            "fingerprint": "watchdog.self_test:self_test_synthetic",
+            "check_id": "watchdog.self_test",
+            "subject": "self_test_synthetic",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578139.85207,
+            "last_seen": 1786578139.9956956,
+            "consecutive_failures": 0,
+            "last_notified": 1786578139.85207,
+            "recovered_at": 1786578139.9956956
+          },
+          {
+            "fingerprint": "cron_static.epoch_daily:epoch_daily",
+            "check_id": "cron_static.epoch_daily",
+            "subject": "epoch_daily",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786704004.1123273,
+            "consecutive_failures": 0,
+            "last_notified": 1786689004.0932431,
+            "recovered_at": 1786704004.1123273
+          },
+          {
+            "fingerprint": "cron_static.v8_vs_v7_daily:v8_vs_v7_daily",
+            "check_id": "cron_static.v8_vs_v7_daily",
+            "subject": "v8_vs_v7_daily",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786578901.9522345,
+            "consecutive_failures": 0,
+            "last_notified": 1786578603.9649127,
+            "recovered_at": 1786578901.9522345
+          },
+          {
+            "fingerprint": "cron_execution.k5_nightly:k5_nightly",
+            "check_id": "cron_execution.k5_nightly",
+            "subject": "k5_nightly",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786580104.0062454,
+            "consecutive_failures": 0,
+            "last_notified": 1786578603.9649127,
+            "recovered_at": 1786580104.0062454
+          },
+          {
+            "fingerprint": "cron_execution.epoch_daily:epoch_daily",
+            "check_id": "cron_execution.epoch_daily",
+            "subject": "epoch_daily",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786665301.791861,
+            "consecutive_failures": 0,
+            "last_notified": 1786647301.9246278,
+            "recovered_at": 1786665301.791861
+          },
+          {
+            "fingerprint": "cron_execution.v8_vs_v7_daily:v8_vs_v7_daily",
+            "check_id": "cron_execution.v8_vs_v7_daily",
+            "subject": "v8_vs_v7_daily",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786578303.5024815,
+            "last_seen": 1786665604.2020469,
+            "consecutive_failures": 0,
+            "last_notified": 1786647301.9246278,
+            "recovered_at": 1786665604.2020469
+          },
+          {
+            "fingerprint": "test_drift.collection.tests_memecoin",
+            "check_id": "test_drift.collection.tests_memecoin",
+            "subject": "",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786585581.2202768,
+            "last_seen": 1788501801.503788,
+            "consecutive_failures": 0,
+            "last_notified": 1786791790.8064759,
+            "recovered_at": 1788501801.503788
+          },
+          {
+            "fingerprint": "claims.batch.v8_readiness",
+            "check_id": "claims.batch.v8_readiness",
+            "subject": "",
+            "severity": "WARN",
+            "state": "FIRING",
+            "first_seen": 1786585581.2202768,
+            "last_seen": 1788854591.5089254,
+            "consecutive_failures": 731,
+            "last_notified": 1788832991.6018813,
+            "recovered_at": null
+          },
+          {
+            "fingerprint": "feed.pumpportal",
+            "check_id": "feed.pumpportal",
+            "subject": "",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786649704.13279,
+            "last_seen": 1788795605.2957392,
+            "consecutive_failures": 0,
+            "last_notified": null,
+            "recovered_at": 1788795605.2957392
+          },
+          {
+            "fingerprint": "layer2.staleness",
+            "check_id": "layer2.staleness",
+            "subject": "",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786707254.5743146,
+            "last_seen": 1788202991.6419072,
+            "consecutive_failures": 0,
+            "last_notified": 1788195791.236519,
+            "recovered_at": 1788202991.6419072
+          },
+          {
+            "fingerprint": "funnel.v8",
+            "check_id": "funnel.v8",
+            "subject": "",
+            "severity": "CRITICAL",
+            "state": "FIRING",
+            "first_seen": 1786748706.8931785,
+            "last_seen": 1788855005.1243572,
+            "consecutive_failures": 3869,
+            "last_notified": 1788843005.3427765,
+            "recovered_at": 1786810203.1470792
+          },
+          {
+            "fingerprint": "research.path_collection",
+            "check_id": "research.path_collection",
+            "subject": "",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1786917790.5362313,
+            "last_seen": 1787875388.8656924,
+            "consecutive_failures": 0,
+            "last_notified": 1787860991.7353504,
+            "recovered_at": 1787875388.8656924
+          },
+          {
+            "fingerprint": "feed.telegram",
+            "check_id": "feed.telegram",
+            "subject": "",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1787300101.9949317,
+            "last_seen": 1788708605.0795705,
+            "consecutive_failures": 0,
+            "last_notified": 1788706805.1227236,
+            "recovered_at": 1788708605.0795705
+          },
+          {
+            "fingerprint": "pipeline.research_queue_lag",
+            "check_id": "pipeline.research_queue_lag",
+            "subject": "",
+            "severity": "WARN",
+            "state": "RECOVERED",
+            "first_seen": 1788334503.886211,
+            "last_seen": 1788334804.9755657,
+            "consecutive_failures": 0,
+            "last_notified": null,
+            "recovered_at": 1788334804.9755657
+          }
+        ],
+        "recent_job_receipts": [
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1788826501.7434835,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788825481.4361424,
+            "exit_code": 0
+          },
+          {
+            "job_id": "epoch_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788825301.234785,
+            "exit_code": 0
+          },
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1788740101.3930132,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788739082.058039,
+            "exit_code": 0
+          },
+          {
+            "job_id": "epoch_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788738901.7645366,
+            "exit_code": 0
+          },
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1788653701.8907785,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788652681.5642104,
+            "exit_code": 0
+          },
+          {
+            "job_id": "epoch_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788652501.3505752,
+            "exit_code": 0
+          },
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1788567301.8731344,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788566281.5140762,
+            "exit_code": 0
+          },
+          {
+            "job_id": "epoch_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788566101.3063607,
+            "exit_code": 0
+          },
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1788480901.4099348,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788479882.0671113,
+            "exit_code": 0
+          },
+          {
+            "job_id": "epoch_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788479701.8666573,
+            "exit_code": 0
+          },
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1788394501.8353019,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788393481.535541,
+            "exit_code": 0
+          },
+          {
+            "job_id": "epoch_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788393301.3414366,
+            "exit_code": 0
+          },
+          {
+            "job_id": "k5_nightly",
+            "trigger_type": "scheduler",
+            "started_at": 1788308101.3784025,
+            "exit_code": 0
+          },
+          {
+            "job_id": "v8_vs_v7_daily",
+            "trigger_type": "scheduler",
+            "started_at": 1788307081.9798226,
+            "exit_code": 0
+          }
+        ]
+      },
+      "collected_at": 1788855194.5995207
+    },
+    {
+      "ev_id": "EV006",
+      "section": "research_pipeline",
+      "content": {
+        "queue_size": 2786363,
+        "queue_offset": "2786363"
+      },
+      "collected_at": 1788855194.5995207
+    },
+    {
+      "ev_id": "EV007",
+      "section": "receipts_tail",
+      "content": {
+        "mtime": 1788840172.7475111,
+        "length": 235881,
+        "tail": "---|---|---|---|---|---|\n| V8-P0 | 1145 | 67.1% | +178.0% | +82.3% | +37.8% | +186.1% | +375.8% |\n| V8-P3 | 458 | 62.2% | +158.7% | +71.2% | +31.3% | +179.5% | +354.1% |\n| BASELINE-0 | 17 | 70.6% | +115.5% | +87.8% | +49.0% | +207.6% | +275.6% (BELOW FLOOR, informational only) |\n| V8-P1 | 8 | 62.5% | +121.9% | +119.7% | +22.6% | +243.2% | +275.9% (BELOW FLOOR, informational only) |\n\nV8-P0 and V8-P3 clear `SELECTION_DATA_READY` (floor-clearing sample,\nnot below-floor informational). **Caveat that must travel with these\nnumbers**: `pct_change_peak` is peak price reached during the poll\nwindow, not a realized exit price \u2014 no execution costs, slippage, or\nexit-timing logic are applied here. This is an unbounded upper-bound\ndistribution on entry quality, not a backtest of any exit strategy.\nRead-only; no frozen registry touched, no threshold changed, no code\nchange to entry/exit logic.\n\n### THR-BATCH T1 \u2014 exact curve-reserve reconstruction: math proven, xval gate finds a structural blocker\n\n`research/thr_reconstruct_paths.py`: on-curve trades reconstructed via\npump.fun's own self-CPI TradeEvent log (`Program data:` lines), not the\nexisting balance-delta heuristic. Byte layout (mint at offset 8-40,\nvirtual_sol_reserves at 97-105, virtual_token_reserves at 105-113, etc.)\nverified live against TWO independent real mints, 2026-09-08: decoded\nvalues exactly bit-identical to a fresh `getAccountInfo` read of the same\ncurve account moments later. This is genuinely exact, not a better\nheuristic.\n\n**Two pre-existing bugs found during \"confirm state,\" fixed only in the\nnew module (original files unchanged, out of scope):** (1)\n`backfill_paths.py`'s std_rpc `vsol` field reads the curve PDA's native\nlamport balance (~0.1 SOL), not `virtual_sol_reserves` (~30+ SOL) \u2014 every\nvsol value that mode has ever written is wrong, off by the ~30 SOL\nvirtual-reserve offset. (2) its tx-error check reads `result.get(\"err\")`,\nbut real `getTransaction` responses carry the error under `meta.err` \u2014 a\nsilent no-op.\n\n**xval pilot result (20 tokens, train+validation only, holdout hard-\nexcluded and asserted):** yield 25-55% (varied run-to-run \u2014 the pilot's\n\"most recent N\" selection is non-deterministic against a live-growing\ntable; T2's IPW sample from a fixed population won't have this issue),\n100% path-integrity-VALID among reconstructed tokens. Real finding, not\nexpected going in: at a staleness cut of 30s (half the smallest poll\noffset), the FRESH bucket was **empty (n=0)** \u2014 every reconstructed\ntoken's real on-chain trading stopped 43-59s before the T1m mark alone,\ni.e. within ~1-17 seconds of alert. This is the same thin-liquidity\ncharacteristic behind the multi-week path-coverage blocker\n(`docs/RECEIPTS.md`'s YD3/YD2 entries) showing up again here: most\nadmitted tokens simply have no real trades anywhere near the T1m/T3m/T10m\ncomparison points, so the raw mismatch distribution (p50=85%, mean=179%,\nSTALE bucket n=15) is confounded by genuine token movement over an\nunavoidable tens-of-seconds gap, not proof the reconstruction math is\nwrong \u2014 but this pilot's n is too small (5-11 reconstructed tokens) to\nfully separate the two. Worked example: `2bQiQBjvy8wG...`, T10m diff\nshrinks to -3.99% at 599s staleness once you're comparing against a mark\nfar enough out that both sides have had time to reflect real trading \u2014\nconsistent with the staleness-confound explanation, not conclusive alone.\n\n**Not yet resolved, held before T2:** the xval gate as specified\n(fixed-offset comparison) can't yet produce a trustworthy numeric\ntolerance from available pilot data. Proposed fix (not yet built):\ninterpolate the poll curve's implied price AT the reconstructed row's own\ntimestamp instead of comparing to a fixed T1m/T3m/T10m mark \u2014 removes the\nstaleness confound structurally rather than just flagging it. Flagged to\nuser before proceeding to T2's real Helius-credit-spend run, per T1's own\n\"prove don't infer\" bar for handing a tolerance number to a\nproduction-scale reconstruction.\n"
+      },
+      "collected_at": 1788855194.5995207
+    }
+  ]
+}
