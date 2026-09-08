@@ -58,7 +58,8 @@ def _select_pilot_tokens(sb, n: int) -> list:
     while True:
         resp = (sb.table("research_tokens")
                 .select("event_id,token_address,alert_time,venue_state_at_signal,"
-                        "pct_change_peak,price_t1m,price_t3m,price_t5m,price_t10m,price_t20m")
+                        "pct_change_peak,price_t1m,price_t3m,price_t5m,price_t10m,price_t20m,"
+                        "vsol_at_signal,progress_capture_lag_ms")
                 .eq("chain", "solana").eq("progress_data_ok", True)
                 .eq("venue_state_at_signal", "CURVE_ACTIVE")
                 .range(offset, offset + batch - 1).execute())
@@ -115,6 +116,7 @@ def run_pilot(n: int = 20):
     from research.backfill_paths import _fetch_sigs, _parse_txs_std
     from research.thr_reconstruct_paths import (
         extract_rows_exact, compute_xval_diffs, classify_xval,
+        compute_interpolated_xval, independent_reference_points,
     )
     from research.v8_path_integrity import assess_path_integrity, PathIntegrityStatus
 
@@ -126,7 +128,8 @@ def run_pilot(n: int = 20):
     log.info("Selected %d pilot tokens (train+validation only, holdout excluded)", len(tokens))
 
     per_token_results = []
-    all_diffs = []  # raw (label, pct_diff, staleness_s) triples across the whole pilot
+    all_diffs = []  # raw (label, pct_diff, staleness_s) triples across the whole pilot (fixed-offset gate)
+    all_interp_diffs = []  # raw pct_diff values across the whole pilot (interpolated gate)
     worked_example = None
 
     for i, tok in enumerate(tokens, 1):
@@ -155,17 +158,25 @@ def run_pilot(n: int = 20):
             if d.pct_diff is not None:
                 all_diffs.append((d.label, d.pct_diff, d.staleness_s))
 
+        interp_diffs = compute_interpolated_xval(exact_rows, tok, alert_ts, sol_price) if alert_ts else []
+        for d in interp_diffs:
+            all_interp_diffs.append(d.pct_diff)
+        n_ref_points = len(independent_reference_points(tok, alert_ts, sol_price)) if alert_ts else 0
+
         result = {
             "mint": mint, "status": "RECONSTRUCTED",
             "n_exact_rows": len(exact_rows), "n_heuristic_fallback_tx": len(heuristic_candidates),
             "integrity_status": integ.status,
             "diffs": diffs,
+            "interp_diffs": interp_diffs, "n_ref_points": n_ref_points,
+            "has_vsol_at_signal": tok.get("vsol_at_signal") is not None,
         }
         per_token_results.append(result)
 
         if worked_example is None and integ.status == PathIntegrityStatus.VALID.value and diffs:
             worked_example = {"mint": mint, "alert_time": tok["alert_time"],
-                               "exact_rows": exact_rows, "diffs": diffs, "n_tx": len(tx_results)}
+                               "exact_rows": exact_rows, "diffs": diffs, "n_tx": len(tx_results),
+                               "interp_diffs": interp_diffs}
 
         time.sleep(0.1)
 
@@ -212,13 +223,21 @@ def run_pilot(n: int = 20):
         if n:
             print(f"  {status}: {n}")
 
-    print(f"\n  Cross-validation mismatch distributions (|pct_diff|), staleness-conditioned "
+    print(f"\n  [OLD] Fixed-offset mismatch distributions (|pct_diff|), staleness-conditioned "
           f"(cut={STALENESS_CUT_S:.0f}s, half the smallest poll offset T1m=60s):")
     _dist(f"FRESH (staleness<={STALENESS_CUT_S:.0f}s -- reconstruction-agreement signal)", fresh)
     _dist(f"STALE (staleness>{STALENESS_CUT_S:.0f}s -- confounded by real token movement in the gap)", stale)
     _dist("peak (reconstructed max vs poll-implied peak -- staleness not well-defined the same way)", peak_diffs)
 
-    print(f"\n  Per-token detail (diff / staleness_s):")
+    interp_abs = sorted(abs(v) for v in all_interp_diffs)
+    tokens_with_vsol_at_signal = sum(1 for r in per_token_results
+                                      if r["status"] == "RECONSTRUCTED" and r.get("has_vsol_at_signal"))
+    print(f"\n  [NEW] Interpolated cross-validation (compares each reconstructed row against an "
+          f"independent price interpolated AT THAT ROW'S OWN TIMESTAMP -- no staleness confound):")
+    print(f"    reconstructed tokens with vsol_at_signal available: {tokens_with_vsol_at_signal}/{len(reconstructed)}")
+    _dist(f"interpolated |pct_diff|", [(None, v, None) for v in all_interp_diffs])
+
+    print(f"\n  Per-token detail:")
     for r in per_token_results:
         if r["status"] != "RECONSTRUCTED":
             print(f"    {r['mint'][:12]}  {r['status']}")
@@ -228,8 +247,15 @@ def run_pilot(n: int = 20):
             else f"{d.label}={d.pct_diff:+.2f}%"
             for d in r["diffs"] if d.pct_diff is not None
         )
+        interp_s = "  ".join(f"interp={d.pct_diff:+.2f}%" for d in r["interp_diffs"])
         print(f"    {r['mint'][:12]}  rows={r['n_exact_rows']:>4}  heuristic_fallback_tx={r['n_heuristic_fallback_tx']:>3}  "
-              f"integrity={r['integrity_status']:<7}  {diff_s}")
+              f"integrity={r['integrity_status']:<7}  ref_points={r['n_ref_points']}  vsol_at_signal={r['has_vsol_at_signal']}")
+        if diff_s:
+            print(f"      [OLD] {diff_s}")
+        if interp_s:
+            print(f"      [NEW] {interp_s}")
+        elif r["n_exact_rows"] > 0:
+            print(f"      [NEW] (no reconstructed row fell within the independent reference range)")
 
     if worked_example:
         print(f"\n  Worked example: {worked_example['mint']}  (alert {worked_example['alert_time']})")
@@ -241,8 +267,11 @@ def run_pilot(n: int = 20):
         for d in worked_example["diffs"]:
             if d.pct_diff is not None:
                 stale_s = f"  staleness={d.staleness_s:.0f}s" if d.staleness_s is not None else ""
-                print(f"    xval {d.label}: reconstructed={d.reconstructed_price:.10f}  "
+                print(f"    [OLD] xval {d.label}: reconstructed={d.reconstructed_price:.10f}  "
                       f"poll={d.poll_price:.10f}  diff={d.pct_diff:+.3f}%{stale_s}")
+        for d in worked_example["interp_diffs"]:
+            print(f"    [NEW] xval @ts={d.ts_ms}: reconstructed={d.reconstructed_price:.10f}  "
+                  f"interpolated={d.interpolated_price:.10f}  diff={d.pct_diff:+.3f}%")
 
     print(f"\n{'=' * 78}\n")
     return per_token_results, all_diffs

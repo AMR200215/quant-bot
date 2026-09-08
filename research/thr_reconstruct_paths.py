@@ -83,8 +83,21 @@ from typing import Optional
 from research.config import INTERVAL_MINUTES
 from research.curve_oracle import PUMP_PROGRAM, PUMP_DECIMALS
 from research.path_schema import PATH_SCHEMA_VERSION as _SCHEMA_VER
+from memecoin.pumpfun_reserve_pricing import PUMPFUN_INITIAL_VIRTUAL_TOKEN_RESERVES
 
 THR_RECONSTRUCT_VERSION = 1
+
+# pump.fun's publicly documented initial virtual reserves (30 SOL /
+# 1,073,000,000 tokens) -- cross-checked live against 3 real curve
+# accounts during T1 verification: implied k = vsol*vtoken matched this
+# to ~8 significant figures in every case (module docstring above).
+# Used ONLY to convert an independently-captured vsol reading (e.g.
+# vsol_at_signal, from memecoin/progress_capture.py -- never from this
+# module's own reconstruction) into a price, for xval interpolation.
+_PUMP_INITIAL_VIRTUAL_SOL_LAMPORTS = 30_000_000_000
+_PUMP_K_RAW = _PUMP_INITIAL_VIRTUAL_SOL_LAMPORTS * (PUMPFUN_INITIAL_VIRTUAL_TOKEN_RESERVES * (10 ** PUMP_DECIMALS))
+
+_INDEPENDENT_POLL_OFFSET_LABELS = ("T1m", "T3m", "T5m", "T10m", "T20m")
 
 # Anchor event: 8 (discriminator) + 32 (mint) + 8+8+1+32+8+8+8+8+8 (fields
 # through real_token_reserves) = 129 bytes minimum. Verified live, see
@@ -315,3 +328,100 @@ def classify_xval(diffs: list, tolerance_pct: float) -> XvalResult:
     max_abs = max(abs(d.pct_diff) for d in usable)
     status = "PASS" if max_abs <= tolerance_pct else "FAIL"
     return XvalResult(diffs=tuple(diffs), max_abs_pct_diff=max_abs, status=status)
+
+
+# ── Interpolated cross-validation (T1 pilot fix) ────────────────────────
+# The fixed-offset gate above (compute_xval_diffs) compares a reconstructed
+# row's price against a poll mark 60-600s away -- fine when reconstructed
+# coverage reaches that far, but most thin tokens stop trading within
+# seconds of alert (T1 pilot finding, docs/RECEIPTS.md), so the comparison
+# ends up confounded by genuine token movement over the gap rather than
+# testing reconstruction accuracy. This section instead interpolates an
+# INDEPENDENT reference price at each reconstructed row's OWN timestamp,
+# never extrapolating beyond the available reference range -- a same-time
+# comparison, not same-fixed-offset.
+
+def price_from_vsol_via_curve_invariant(vsol_ui: Optional[float], sol_price_usd: float) -> Optional[float]:
+    """Exact on-curve price from a vsol reading alone, via the verified
+    constant-product invariant k = virtual_sol_reserves * virtual_token_
+    reserves (module docstring: cross-checked live against 3 real curve
+    accounts, matched pump.fun's public initial constants to ~8 sig figs).
+    Intended for vsol_at_signal (memecoin/progress_capture.py) -- a live
+    capture completely independent of this module's own reconstruction."""
+    if vsol_ui is None or vsol_ui <= 0:
+        return None
+    vsol_lamports = vsol_ui * 1e9
+    vtoken_raw = _PUMP_K_RAW / vsol_lamports
+    vtoken_ui = vtoken_raw / (10 ** PUMP_DECIMALS)
+    price_sol = vsol_ui / vtoken_ui
+    return price_sol * sol_price_usd
+
+
+def independent_reference_points(token_row: dict, alert_ts: float, sol_price_usd: float) -> list[tuple]:
+    """Sorted [(ts_ms, price_usd), ...] built ONLY from sources independent
+    of this module's reconstruction: vsol_at_signal (progress_capture.py,
+    a separate live-capture mechanism, converted via the curve invariant)
+    and price_t1m/t3m/t5m/t10m/t20m (outcome_poller.py, never reads
+    path/tick data). Neither source ever touches a reconstructed row."""
+    points: list[tuple] = []
+
+    vsol_at_signal = token_row.get("vsol_at_signal")
+    if vsol_at_signal is not None:
+        price = price_from_vsol_via_curve_invariant(vsol_at_signal, sol_price_usd)
+        if price is not None:
+            lag_ms = token_row.get("progress_capture_lag_ms") or 0
+            ts_ms = int(alert_ts * 1000 + lag_ms)
+            points.append((ts_ms, price))
+
+    for label in _INDEPENDENT_POLL_OFFSET_LABELS:
+        offset_s = INTERVAL_MINUTES[label] * 60
+        price = token_row.get(f"price_{label.lower()}")
+        if price is not None and price > 0:
+            points.append((int((alert_ts + offset_s) * 1000), price))
+
+    points.sort(key=lambda p: p[0])
+    return points
+
+
+def _interpolate_price_at(points: list, target_ms: int) -> Optional[float]:
+    """Linear interpolation strictly between two known reference points.
+    Returns None if target_ms falls outside the known range -- never
+    extrapolates. A single reference point is usable only for an exact
+    timestamp match (no second point to bracket with)."""
+    if not points or target_ms < points[0][0] or target_ms > points[-1][0]:
+        return None
+    if len(points) == 1:
+        return points[0][1] if target_ms == points[0][0] else None
+    for (t0, p0), (t1, p1) in zip(points, points[1:]):
+        if t0 <= target_ms <= t1:
+            if t1 == t0:
+                return p0
+            frac = (target_ms - t0) / (t1 - t0)
+            return p0 + frac * (p1 - p0)
+    return None
+
+
+@dataclass(frozen=True)
+class InterpolatedTickDiff:
+    ts_ms: int
+    reconstructed_price: float
+    interpolated_price: float
+    pct_diff: float
+
+
+def compute_interpolated_xval(reconstructed_rows: list, token_row: dict, alert_ts: float,
+                               sol_price_usd: float) -> list[InterpolatedTickDiff]:
+    """For each reconstructed row, compares against an independent
+    reference price interpolated AT THAT ROW'S OWN TIMESTAMP -- removes
+    the staleness confound structurally rather than flagging it. Rows
+    outside the independent reference range are skipped, not compared."""
+    points = independent_reference_points(token_row, alert_ts, sol_price_usd)
+    diffs: list[InterpolatedTickDiff] = []
+    for row in reconstructed_rows:
+        interp = _interpolate_price_at(points, row["ts_ms"])
+        if interp is None or interp <= 0:
+            continue
+        pct_diff = (row["price_usd"] - interp) / interp * 100.0
+        diffs.append(InterpolatedTickDiff(ts_ms=row["ts_ms"], reconstructed_price=row["price_usd"],
+                                           interpolated_price=interp, pct_diff=pct_diff))
+    return diffs

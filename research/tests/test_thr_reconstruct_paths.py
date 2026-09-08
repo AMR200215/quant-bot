@@ -15,6 +15,8 @@ import unittest
 from research.thr_reconstruct_paths import (
     _decode_trade_events, curve_event_price_usd, extract_rows_exact,
     compute_xval_diffs, classify_xval, XvalOffsetDiff,
+    price_from_vsol_via_curve_invariant, independent_reference_points,
+    _interpolate_price_at, compute_interpolated_xval,
 )
 
 # Real event, mint HnAVbEMfF1iLdBsSF2YGf9LHWvurwX63cTGHyKaWpump, a SellV2.
@@ -189,6 +191,107 @@ class TestXvalGate(unittest.TestCase):
         result = classify_xval(diffs, tolerance_pct=5.0)
         self.assertEqual(result.status, "FAIL")
         self.assertAlmostEqual(result.max_abs_pct_diff, 9.0, places=6)
+
+
+class TestPriceFromVsolViaCurveInvariant(unittest.TestCase):
+
+    def test_matches_real_verified_reserves(self):
+        # Real live-verified pair from module docstring: vsol=30.112633589,
+        # vtoken=1068986546.118749 (bit-identical getAccountInfo read).
+        price = price_from_vsol_via_curve_invariant(30.112633589, sol_price_usd=200.0)
+        expected_price_sol = 30.112633589 / 1068986546.118749
+        self.assertAlmostEqual(price, expected_price_sol * 200.0, places=6)
+
+    def test_none_or_nonpositive_vsol_returns_none(self):
+        self.assertIsNone(price_from_vsol_via_curve_invariant(None, 200.0))
+        self.assertIsNone(price_from_vsol_via_curve_invariant(0.0, 200.0))
+        self.assertIsNone(price_from_vsol_via_curve_invariant(-1.0, 200.0))
+
+
+class TestIndependentReferencePoints(unittest.TestCase):
+
+    def test_includes_vsol_at_signal_and_poll_marks_sorted(self):
+        alert_ts = 1_700_000_000.0
+        token_row = {
+            "vsol_at_signal": 30.0, "progress_capture_lag_ms": 500,
+            "price_t1m": 1.0, "price_t3m": 1.2, "price_t5m": None,
+            "price_t10m": 1.5, "price_t20m": 1.8,
+        }
+        points = independent_reference_points(token_row, alert_ts, sol_price_usd=200.0)
+        # vsol_at_signal point + 4 poll marks (t5m excluded, None)
+        self.assertEqual(len(points), 5)
+        ts_values = [p[0] for p in points]
+        self.assertEqual(ts_values, sorted(ts_values))
+        self.assertEqual(ts_values[0], int(alert_ts * 1000 + 500))  # vsol_at_signal is earliest
+
+    def test_missing_vsol_at_signal_still_returns_poll_points(self):
+        alert_ts = 1_700_000_000.0
+        token_row = {"vsol_at_signal": None, "price_t1m": 1.0, "price_t3m": None,
+                      "price_t5m": None, "price_t10m": None, "price_t20m": None}
+        points = independent_reference_points(token_row, alert_ts, sol_price_usd=200.0)
+        self.assertEqual(len(points), 1)
+
+    def test_no_data_at_all_returns_empty(self):
+        alert_ts = 1_700_000_000.0
+        token_row = {}
+        self.assertEqual(independent_reference_points(token_row, alert_ts, 200.0), [])
+
+
+class TestInterpolatePriceAt(unittest.TestCase):
+
+    def test_midpoint_interpolation(self):
+        points = [(100, 1.0), (200, 2.0)]
+        self.assertAlmostEqual(_interpolate_price_at(points, 150), 1.5, places=9)
+
+    def test_exact_point_match(self):
+        points = [(100, 1.0), (200, 2.0)]
+        self.assertAlmostEqual(_interpolate_price_at(points, 100), 1.0, places=9)
+        self.assertAlmostEqual(_interpolate_price_at(points, 200), 2.0, places=9)
+
+    def test_outside_range_returns_none_never_extrapolates(self):
+        points = [(100, 1.0), (200, 2.0)]
+        self.assertIsNone(_interpolate_price_at(points, 50))
+        self.assertIsNone(_interpolate_price_at(points, 250))
+
+    def test_empty_points_returns_none(self):
+        self.assertIsNone(_interpolate_price_at([], 100))
+
+    def test_three_point_bracket_selection(self):
+        points = [(0, 1.0), (100, 2.0), (200, 10.0)]
+        self.assertAlmostEqual(_interpolate_price_at(points, 50), 1.5, places=9)
+        self.assertAlmostEqual(_interpolate_price_at(points, 150), 6.0, places=9)
+
+
+class TestComputeInterpolatedXval(unittest.TestCase):
+
+    def test_reconstructed_row_within_range_gets_a_diff(self):
+        alert_ts = 1_700_000_000.0
+        token_row = {"vsol_at_signal": None, "price_t1m": 1.0, "price_t3m": 2.0,
+                      "price_t5m": None, "price_t10m": None, "price_t20m": None}
+        rows = [{"ts_ms": int((alert_ts + 120) * 1000), "price_usd": 1.6}]  # between t1m/t3m, true interp=1.5
+        diffs = compute_interpolated_xval(rows, token_row, alert_ts, sol_price_usd=200.0)
+        self.assertEqual(len(diffs), 1)
+        self.assertAlmostEqual(diffs[0].interpolated_price, 1.5, places=6)
+        self.assertAlmostEqual(diffs[0].pct_diff, (1.6 - 1.5) / 1.5 * 100, places=6)
+
+    def test_reconstructed_row_outside_range_skipped(self):
+        alert_ts = 1_700_000_000.0
+        token_row = {"vsol_at_signal": None, "price_t1m": 1.0, "price_t3m": 2.0,
+                      "price_t5m": None, "price_t10m": None, "price_t20m": None}
+        rows = [{"ts_ms": int(alert_ts * 1000), "price_usd": 0.5}]  # before t1m, no earlier anchor
+        diffs = compute_interpolated_xval(rows, token_row, alert_ts, sol_price_usd=200.0)
+        self.assertEqual(diffs, [])
+
+    def test_vsol_at_signal_extends_coverage_to_near_alert_time(self):
+        alert_ts = 1_700_000_000.0
+        token_row = {"vsol_at_signal": 30.112633589, "progress_capture_lag_ms": 500,
+                      "price_t1m": None, "price_t3m": None, "price_t5m": None,
+                      "price_t10m": None, "price_t20m": None}
+        expected_signal_price = price_from_vsol_via_curve_invariant(30.112633589, 200.0)
+        rows = [{"ts_ms": int(alert_ts * 1000 + 500), "price_usd": expected_signal_price}]
+        diffs = compute_interpolated_xval(rows, token_row, alert_ts, sol_price_usd=200.0)
+        self.assertEqual(len(diffs), 1)
+        self.assertAlmostEqual(diffs[0].pct_diff, 0.0, places=6)
 
 
 if __name__ == "__main__":
