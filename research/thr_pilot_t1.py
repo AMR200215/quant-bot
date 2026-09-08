@@ -245,7 +245,7 @@ def run_pilot(n: int = 20):
                       f"poll={d.poll_price:.10f}  diff={d.pct_diff:+.3f}%{stale_s}")
 
     print(f"\n{'=' * 78}\n")
-    return per_token_results, abs_diffs
+    return per_token_results, all_diffs
 
 
 def main():
