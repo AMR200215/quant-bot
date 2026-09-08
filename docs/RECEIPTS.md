@@ -4331,3 +4331,54 @@ exit-timing logic are applied here. This is an unbounded upper-bound
 distribution on entry quality, not a backtest of any exit strategy.
 Read-only; no frozen registry touched, no threshold changed, no code
 change to entry/exit logic.
+
+### THR-BATCH T1 — exact curve-reserve reconstruction: math proven, xval gate finds a structural blocker
+
+`research/thr_reconstruct_paths.py`: on-curve trades reconstructed via
+pump.fun's own self-CPI TradeEvent log (`Program data:` lines), not the
+existing balance-delta heuristic. Byte layout (mint at offset 8-40,
+virtual_sol_reserves at 97-105, virtual_token_reserves at 105-113, etc.)
+verified live against TWO independent real mints, 2026-09-08: decoded
+values exactly bit-identical to a fresh `getAccountInfo` read of the same
+curve account moments later. This is genuinely exact, not a better
+heuristic.
+
+**Two pre-existing bugs found during "confirm state," fixed only in the
+new module (original files unchanged, out of scope):** (1)
+`backfill_paths.py`'s std_rpc `vsol` field reads the curve PDA's native
+lamport balance (~0.1 SOL), not `virtual_sol_reserves` (~30+ SOL) — every
+vsol value that mode has ever written is wrong, off by the ~30 SOL
+virtual-reserve offset. (2) its tx-error check reads `result.get("err")`,
+but real `getTransaction` responses carry the error under `meta.err` — a
+silent no-op.
+
+**xval pilot result (20 tokens, train+validation only, holdout hard-
+excluded and asserted):** yield 25-55% (varied run-to-run — the pilot's
+"most recent N" selection is non-deterministic against a live-growing
+table; T2's IPW sample from a fixed population won't have this issue),
+100% path-integrity-VALID among reconstructed tokens. Real finding, not
+expected going in: at a staleness cut of 30s (half the smallest poll
+offset), the FRESH bucket was **empty (n=0)** — every reconstructed
+token's real on-chain trading stopped 43-59s before the T1m mark alone,
+i.e. within ~1-17 seconds of alert. This is the same thin-liquidity
+characteristic behind the multi-week path-coverage blocker
+(`docs/RECEIPTS.md`'s YD3/YD2 entries) showing up again here: most
+admitted tokens simply have no real trades anywhere near the T1m/T3m/T10m
+comparison points, so the raw mismatch distribution (p50=85%, mean=179%,
+STALE bucket n=15) is confounded by genuine token movement over an
+unavoidable tens-of-seconds gap, not proof the reconstruction math is
+wrong — but this pilot's n is too small (5-11 reconstructed tokens) to
+fully separate the two. Worked example: `2bQiQBjvy8wG...`, T10m diff
+shrinks to -3.99% at 599s staleness once you're comparing against a mark
+far enough out that both sides have had time to reflect real trading —
+consistent with the staleness-confound explanation, not conclusive alone.
+
+**Not yet resolved, held before T2:** the xval gate as specified
+(fixed-offset comparison) can't yet produce a trustworthy numeric
+tolerance from available pilot data. Proposed fix (not yet built):
+interpolate the poll curve's implied price AT the reconstructed row's own
+timestamp instead of comparing to a fixed T1m/T3m/T10m mark — removes the
+staleness confound structurally rather than just flagging it. Flagged to
+user before proceeding to T2's real Helius-credit-spend run, per T1's own
+"prove don't infer" bar for handing a tolerance number to a
+production-scale reconstruction.
