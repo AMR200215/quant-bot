@@ -126,7 +126,7 @@ def run_pilot(n: int = 20):
     log.info("Selected %d pilot tokens (train+validation only, holdout excluded)", len(tokens))
 
     per_token_results = []
-    all_diffs = []  # raw (label, pct_diff) pairs across the whole pilot, for tolerance derivation
+    all_diffs = []  # raw (label, pct_diff, staleness_s) triples across the whole pilot
     worked_example = None
 
     for i, tok in enumerate(tokens, 1):
@@ -153,7 +153,7 @@ def run_pilot(n: int = 20):
         diffs = compute_xval_diffs(exact_rows, tok, alert_ts) if alert_ts else []
         for d in diffs:
             if d.pct_diff is not None:
-                all_diffs.append((d.label, d.pct_diff))
+                all_diffs.append((d.label, d.pct_diff, d.staleness_s))
 
         result = {
             "mint": mint, "status": "RECONSTRUCTED",
@@ -170,7 +170,33 @@ def run_pilot(n: int = 20):
         time.sleep(0.1)
 
     # --- Distribution of real mismatches (for tolerance derivation) ---
-    abs_diffs = sorted(abs(v) for _, v in all_diffs)
+    # STALENESS_CUT_S: a transparent, stated pragmatic cut (half of the
+    # smallest poll offset, T1m=60s) separating "the reconstructed
+    # reference row is close enough to the target offset that a pct_diff
+    # mainly reflects reconstruction (dis)agreement" from "the reference
+    # row is stale and a large pct_diff more likely reflects real token
+    # movement in the gap, not a reconstruction error." Not a claim that
+    # 30s is the true right answer -- a stated, revisitable choice.
+    STALENESS_CUT_S = 30.0
+    peak_diffs = [(lbl, v, s) for lbl, v, s in all_diffs if lbl == "peak"]
+    offset_diffs = [(lbl, v, s) for lbl, v, s in all_diffs if lbl != "peak"]
+    fresh = [(lbl, v, s) for lbl, v, s in offset_diffs if s is not None and abs(s) <= STALENESS_CUT_S]
+    stale = [(lbl, v, s) for lbl, v, s in offset_diffs if s is not None and abs(s) > STALENESS_CUT_S]
+
+    def _dist(label, triples):
+        vals = sorted(abs(v) for _, v, _ in triples)
+        print(f"\n  {label} (n={len(vals)}):")
+        if not vals:
+            print("    (none)")
+            return
+        def pct(p):
+            idx = min(len(vals) - 1, int(round(p / 100 * (len(vals) - 1))))
+            return vals[idx]
+        print(f"    p50={pct(50):.3f}%  p75={pct(75):.3f}%  p90={pct(90):.3f}%  "
+              f"p95={pct(95):.3f}%  max={vals[-1]:.3f}%")
+        if len(vals) >= 2:
+            print(f"    mean={statistics.mean(vals):.3f}%  stdev={statistics.stdev(vals):.3f}%")
+
     print(f"\n{'=' * 78}")
     print("  THR-BATCH T1 PILOT REPORT")
     print(f"{'=' * 78}")
@@ -186,25 +212,22 @@ def run_pilot(n: int = 20):
         if n:
             print(f"  {status}: {n}")
 
-    print(f"\n  Cross-validation mismatch distribution (|pct_diff|, n={len(abs_diffs)} observations, "
-          f"pooled across T1m/T3m/T10m/peak):")
-    if abs_diffs:
-        def pct(p):
-            idx = min(len(abs_diffs) - 1, int(round(p / 100 * (len(abs_diffs) - 1))))
-            return abs_diffs[idx]
-        print(f"    p50={pct(50):.3f}%  p75={pct(75):.3f}%  p90={pct(90):.3f}%  "
-              f"p95={pct(95):.3f}%  max={abs_diffs[-1]:.3f}%")
-        if len(abs_diffs) >= 2:
-            print(f"    mean={statistics.mean(abs_diffs):.3f}%  stdev={statistics.stdev(abs_diffs):.3f}%")
-    else:
-        print("    (no comparable poll-outcome marks available in this sample)")
+    print(f"\n  Cross-validation mismatch distributions (|pct_diff|), staleness-conditioned "
+          f"(cut={STALENESS_CUT_S:.0f}s, half the smallest poll offset T1m=60s):")
+    _dist(f"FRESH (staleness<={STALENESS_CUT_S:.0f}s -- reconstruction-agreement signal)", fresh)
+    _dist(f"STALE (staleness>{STALENESS_CUT_S:.0f}s -- confounded by real token movement in the gap)", stale)
+    _dist("peak (reconstructed max vs poll-implied peak -- staleness not well-defined the same way)", peak_diffs)
 
-    print(f"\n  Per-token detail:")
+    print(f"\n  Per-token detail (diff / staleness_s):")
     for r in per_token_results:
         if r["status"] != "RECONSTRUCTED":
             print(f"    {r['mint'][:12]}  {r['status']}")
             continue
-        diff_s = "  ".join(f"{d.label}={d.pct_diff:+.2f}%" for d in r["diffs"] if d.pct_diff is not None)
+        diff_s = "  ".join(
+            f"{d.label}={d.pct_diff:+.2f}%(stale={d.staleness_s:.0f}s)" if d.staleness_s is not None
+            else f"{d.label}={d.pct_diff:+.2f}%"
+            for d in r["diffs"] if d.pct_diff is not None
+        )
         print(f"    {r['mint'][:12]}  rows={r['n_exact_rows']:>4}  heuristic_fallback_tx={r['n_heuristic_fallback_tx']:>3}  "
               f"integrity={r['integrity_status']:<7}  {diff_s}")
 
@@ -217,8 +240,9 @@ def run_pilot(n: int = 20):
         print(f"    last  tick: ts_ms={last['ts_ms']}  price_usd={last['price_usd']:.10f} vsol={last['vsol']:.4f}")
         for d in worked_example["diffs"]:
             if d.pct_diff is not None:
+                stale_s = f"  staleness={d.staleness_s:.0f}s" if d.staleness_s is not None else ""
                 print(f"    xval {d.label}: reconstructed={d.reconstructed_price:.10f}  "
-                      f"poll={d.poll_price:.10f}  diff={d.pct_diff:+.3f}%")
+                      f"poll={d.poll_price:.10f}  diff={d.pct_diff:+.3f}%{stale_s}")
 
     print(f"\n{'=' * 78}\n")
     return per_token_results, abs_diffs

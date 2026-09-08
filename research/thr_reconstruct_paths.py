@@ -228,6 +228,13 @@ class XvalOffsetDiff:
     reconstructed_price: Optional[float]
     poll_price: Optional[float]
     pct_diff: Optional[float]   # (reconstructed - poll) / poll * 100, None if either side missing
+    staleness_s: Optional[float] = None  # target offset time minus the reconstructed
+                                          # reference row's own ts (seconds). A large
+                                          # value means the "reconstructed" price being
+                                          # compared is not actually from near the target
+                                          # offset (real trading went quiet before then) --
+                                          # a comparison confound, not a reconstruction
+                                          # error. See T1 pilot finding, docs/RECEIPTS.md.
 
 
 @dataclass(frozen=True)
@@ -237,11 +244,11 @@ class XvalResult:
     status: str                 # "PASS" / "FAIL" / "INSUFFICIENT_DATA"
 
 
-def _nearest_reconstructed_price_at_or_before(rows: list, target_ms: int) -> Optional[float]:
+def _nearest_reconstructed_row_at_or_before(rows: list, target_ms: int) -> Optional[dict]:
     candidates = [r for r in rows if r["ts_ms"] <= target_ms]
     if not candidates:
         return None
-    return max(candidates, key=lambda r: r["ts_ms"])["price_usd"]
+    return max(candidates, key=lambda r: r["ts_ms"])
 
 
 def compute_xval_diffs(reconstructed_rows: list, token_row: dict, alert_ts: float) -> list[XvalOffsetDiff]:
@@ -252,6 +259,15 @@ def compute_xval_diffs(reconstructed_rows: list, token_row: dict, alert_ts: floa
     cross-check between two independent sources, not circular).
     Also compares reconstructed peak vs pct_change_peak-implied peak price
     where both a peak reference price and reconstructed rows exist.
+
+    Every offset comparison also reports staleness_s: how far the
+    reconstructed reference row actually is from the target offset. When
+    real trading goes quiet shortly after alert (common for thin tokens --
+    see T1 pilot finding), the nearest-before row can be minutes stale;
+    a large pct_diff paired with large staleness is expected token
+    movement over that gap, not evidence the reconstruction math is wrong.
+    Callers deriving a tolerance should condition on staleness, not treat
+    the raw pooled distribution as apples-to-apples.
     """
     diffs: list[XvalOffsetDiff] = []
 
@@ -259,12 +275,15 @@ def compute_xval_diffs(reconstructed_rows: list, token_row: dict, alert_ts: floa
         offset_s = INTERVAL_MINUTES[label] * 60
         target_ms = int((alert_ts + offset_s) * 1000)
         poll_price = token_row.get(f"price_{label.lower()}")
-        recon_price = _nearest_reconstructed_price_at_or_before(reconstructed_rows, target_ms)
+        recon_row = _nearest_reconstructed_row_at_or_before(reconstructed_rows, target_ms)
+        recon_price = recon_row["price_usd"] if recon_row else None
+        staleness_s = (target_ms - recon_row["ts_ms"]) / 1000.0 if recon_row else None
         pct_diff = None
         if poll_price not in (None, 0) and recon_price is not None:
             pct_diff = (recon_price - poll_price) / poll_price * 100.0
         diffs.append(XvalOffsetDiff(label=label, reconstructed_price=recon_price,
-                                     poll_price=poll_price, pct_diff=pct_diff))
+                                     poll_price=poll_price, pct_diff=pct_diff,
+                                     staleness_s=staleness_s))
 
     # Peak: compare reconstructed max price over the reconstructed rows
     # against the poll-derived peak price implied by pct_change_peak +
