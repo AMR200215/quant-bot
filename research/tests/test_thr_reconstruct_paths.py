@@ -17,6 +17,7 @@ from research.thr_reconstruct_paths import (
     compute_xval_diffs, classify_xval, XvalOffsetDiff,
     price_from_vsol_via_curve_invariant, independent_reference_points,
     _interpolate_price_at, compute_interpolated_xval,
+    classify_interpolated_xval, XVAL_TOLERANCE_PCT, InterpolatedTickDiff,
 )
 
 # Real event, mint HnAVbEMfF1iLdBsSF2YGf9LHWvurwX63cTGHyKaWpump, a SellV2.
@@ -292,6 +293,35 @@ class TestComputeInterpolatedXval(unittest.TestCase):
         diffs = compute_interpolated_xval(rows, token_row, alert_ts, sol_price_usd=200.0)
         self.assertEqual(len(diffs), 1)
         self.assertAlmostEqual(diffs[0].pct_diff, 0.0, places=6)
+
+
+class TestClassifyInterpolatedXval(unittest.TestCase):
+
+    def test_tolerance_constant_is_the_documented_15_pct(self):
+        # Pinned so a future edit to the pilot-derived provenance comment
+        # can't silently drift from the actual gate value.
+        self.assertEqual(XVAL_TOLERANCE_PCT, 15.0)
+
+    def test_pass_within_default_tolerance(self):
+        diffs = [InterpolatedTickDiff(ts_ms=1, reconstructed_price=1.0, interpolated_price=1.0, pct_diff=4.0)]
+        result = classify_interpolated_xval(diffs)
+        self.assertEqual(result.status, "PASS")
+
+    def test_fail_beyond_default_tolerance(self):
+        diffs = [InterpolatedTickDiff(ts_ms=1, reconstructed_price=1.0, interpolated_price=1.0, pct_diff=71.0)]
+        result = classify_interpolated_xval(diffs)
+        self.assertEqual(result.status, "FAIL")
+        self.assertAlmostEqual(result.max_abs_pct_diff, 71.0, places=6)
+
+    def test_insufficient_data_when_no_comparable_rows(self):
+        result = classify_interpolated_xval([])
+        self.assertEqual(result.status, "INSUFFICIENT_DATA")
+        self.assertIsNone(result.max_abs_pct_diff)
+
+    def test_override_tolerance_respected(self):
+        diffs = [InterpolatedTickDiff(ts_ms=1, reconstructed_price=1.0, interpolated_price=1.0, pct_diff=20.0)]
+        self.assertEqual(classify_interpolated_xval(diffs, tolerance_pct=25.0).status, "PASS")
+        self.assertEqual(classify_interpolated_xval(diffs, tolerance_pct=10.0).status, "FAIL")
 
 
 if __name__ == "__main__":

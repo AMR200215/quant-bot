@@ -87,6 +87,28 @@ from memecoin.pumpfun_reserve_pricing import PUMPFUN_INITIAL_VIRTUAL_TOKEN_RESER
 
 THR_RECONSTRUCT_VERSION = 1
 
+# XVAL_TOLERANCE_PCT provenance (2026-09-09, 20-token pilot,
+# research/thr_pilot_t1.py, interpolated gate): 77 comparable observations
+# across 11 reconstructed tokens. p50=2.106% p75=8.319% p90=72.584%
+# mean=18.569%. Distribution is bimodal, not a smooth tail: 9/11 tokens
+# cluster under 14%, 2/11 sit at a near-constant ~71%/~89% across every
+# one of their rows (not scattered -- a systematic per-token offset).
+# Investigated, not assumed benign: both outlier tokens have
+# progress_source="curve_account" (the SAME exact on-chain read mechanism
+# this module's own reconstruction uses, not a DexScreener/heuristic
+# estimate) for vsol_at_signal, and outcome_poller.py uses the same
+# curve_oracle mechanism for price_t1m -- both interpolation endpoints are
+# independently exact, on-chain, same-class reads. The large diffs are
+# consistent with genuine large price moves inside the 60s linear-
+# interpolation gap (both tokens show large pct_change_peak swings
+# elsewhere in their own record), not a reconstruction or interpolation
+# bug. Tolerance set at ~2x p75 (8.3% -> 15%): clears normal
+# reconstruction/interpolation noise with margin, while still catching
+# the two identified extreme-volatility cases as INVALID_XVAL -- correct,
+# conservative behavior (flagging genuine uncertainty), not a false
+# positive. Pilot pass rate at this tolerance: 9/11 tokens (82%).
+XVAL_TOLERANCE_PCT = 15.0
+
 # pump.fun's publicly documented initial virtual reserves (30 SOL /
 # 1,073,000,000 tokens) -- cross-checked live against 3 real curve
 # accounts during T1 verification: implied k = vsol*vtoken matched this
@@ -425,3 +447,17 @@ def compute_interpolated_xval(reconstructed_rows: list, token_row: dict, alert_t
         diffs.append(InterpolatedTickDiff(ts_ms=row["ts_ms"], reconstructed_price=row["price_usd"],
                                            interpolated_price=interp, pct_diff=pct_diff))
     return diffs
+
+
+def classify_interpolated_xval(diffs: list, tolerance_pct: float = XVAL_TOLERANCE_PCT) -> XvalResult:
+    """Per-token verdict for T3's path INVALID_XVAL gate. Defaults to
+    XVAL_TOLERANCE_PCT (see its provenance comment) but accepts an
+    override for sensitivity checks. INSUFFICIENT_DATA when no
+    reconstructed row fell within the independent reference range at
+    all (not the same as PASS -- absence of evidence, not evidence of
+    agreement)."""
+    if not diffs:
+        return XvalResult(diffs=(), max_abs_pct_diff=None, status="INSUFFICIENT_DATA")
+    max_abs = max(abs(d.pct_diff) for d in diffs)
+    status = "PASS" if max_abs <= tolerance_pct else "FAIL"
+    return XvalResult(diffs=tuple(diffs), max_abs_pct_diff=max_abs, status=status)
