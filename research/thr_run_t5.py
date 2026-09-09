@@ -124,6 +124,23 @@ def combined_mint_set_for_candidate(candidate: dict, forward_valid: set, reconst
             and by_mint[m]["progress_at_signal"] < thr}
 
 
+def _type_rows(rows: list) -> list:
+    """load_path_file returns raw csv.DictReader string values -- same
+    typing pass research/v8_collection_yield.py already uses before
+    handing rows to resolve_entry_alignment/replay_strategy, which do
+    numeric comparisons (ts_ms >= target) that fail on strings."""
+    typed = []
+    for r in rows:
+        try:
+            t = dict(r)
+            t["ts_ms"] = int(r["ts_ms"])
+            t["price_usd"] = float(r["price_usd"])
+            typed.append(t)
+        except (KeyError, ValueError, TypeError):
+            continue
+    return typed
+
+
 def _load_path_rows(mint: str, by_mint: dict, root: Path):
     """Forward path (research_tokens.path_file) if present and loadable,
     else the reconstructed path (logs/research_paths/reconstructed/)."""
@@ -138,14 +155,16 @@ def _load_path_rows(mint: str, by_mint: dict, root: Path):
             full = gz if gz.exists() else None
         if full is not None:
             rows, _w = load_path_file(full)
-            if rows:
-                return rows, event
+            typed = _type_rows(rows) if rows else []
+            if typed:
+                return typed, event
 
     recon_path = RECONSTRUCTED_DIR / f"{mint}.csv.gz"
     if recon_path.exists():
         rows, _w = load_path_file(recon_path)
-        if rows:
-            return rows, event
+        typed = _type_rows(rows) if rows else []
+        if typed:
+            return typed, event
     return None, event
 
 

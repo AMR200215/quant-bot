@@ -3,17 +3,61 @@
 Run: python -m pytest research/tests/test_thr_run_t5.py -v
 """
 
+import gzip
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from research.thr_run_t5 import (
     combined_mint_set_for_candidate, candidate_venue_qualified_n,
-    replay_candidate_exit, ROUND_TRIP_COST_PCT, _era_days,
+    replay_candidate_exit, ROUND_TRIP_COST_PCT, _era_days, _type_rows, _load_path_rows,
 )
 from research.v8_candidate_registry import CANDIDATES
 
 _V8_P0 = next(c for c in CANDIDATES if c["candidate_id"] == "V8-P0")
 _V8_P3 = next(c for c in CANDIDATES if c["candidate_id"] == "V8-P3")
+
+
+class TestTypeRows(unittest.TestCase):
+
+    def test_string_ts_ms_and_price_usd_become_numeric(self):
+        rows = [{"ts_ms": "1000", "price_usd": "0.5", "other": "x"}]
+        typed = _type_rows(rows)
+        self.assertEqual(typed[0]["ts_ms"], 1000)
+        self.assertIsInstance(typed[0]["ts_ms"], int)
+        self.assertEqual(typed[0]["price_usd"], 0.5)
+        self.assertIsInstance(typed[0]["price_usd"], float)
+
+    def test_unparseable_row_dropped_not_fatal(self):
+        rows = [{"ts_ms": "not-a-number", "price_usd": "0.5"}]
+        self.assertEqual(_type_rows(rows), [])
+
+    def test_load_path_rows_from_real_csv_gz_returns_typed_ints(self):
+        # Regression test for the real bug this module hit live: load_path_file
+        # returns csv.DictReader string values, and resolve_entry_alignment's
+        # "r['ts_ms'] >= entry_target_ts" comparison raises TypeError against
+        # an untyped row -- caught running T5 against the real VPS corpus.
+        from research.path_schema import PATH_HEADER, PATH_SCHEMA_VERSION
+        with tempfile.TemporaryDirectory() as td:
+            gz_path = Path(td) / "MINT1.csv.gz"
+            import csv
+            with gzip.open(gz_path, "wt", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(PATH_HEADER)
+                row = {c: "" for c in PATH_HEADER}
+                row.update({"schema_version": str(PATH_SCHEMA_VERSION), "ts_ms": "12345",
+                            "price_usd": "0.0001", "source": "reconstructed_curve_exact",
+                            "venue_state": "CURVE_ACTIVE", "backfilled": "true", "data_status": "ok",
+                            "side": "buy"})
+                writer.writerow([row.get(c, "") for c in PATH_HEADER])
+
+            by_mint = {"MINT1": {"path_file": None}}
+            with patch("research.thr_run_t5.RECONSTRUCTED_DIR", Path(td)):
+                rows, event = _load_path_rows("MINT1", by_mint, Path(td))
+            self.assertIsNotNone(rows)
+            self.assertIsInstance(rows[0]["ts_ms"], int)
+            self.assertIsInstance(rows[0]["price_usd"], float)
 
 
 class TestCombinedMintSet(unittest.TestCase):
