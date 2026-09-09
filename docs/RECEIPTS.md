@@ -4373,12 +4373,46 @@ shrinks to -3.99% at 599s staleness once you're comparing against a mark
 far enough out that both sides have had time to reflect real trading —
 consistent with the staleness-confound explanation, not conclusive alone.
 
-**Not yet resolved, held before T2:** the xval gate as specified
-(fixed-offset comparison) can't yet produce a trustworthy numeric
-tolerance from available pilot data. Proposed fix (not yet built):
-interpolate the poll curve's implied price AT the reconstructed row's own
-timestamp instead of comparing to a fixed T1m/T3m/T10m mark — removes the
-staleness confound structurally rather than just flagging it. Flagged to
-user before proceeding to T2's real Helius-credit-spend run, per T1's own
-"prove don't infer" bar for handing a tolerance number to a
-production-scale reconstruction.
+**RESOLVED 2026-09-09 — T1 complete.** Built `compute_interpolated_xval`:
+compares each reconstructed row against an independent reference price
+interpolated AT THAT ROW'S OWN TIMESTAMP (never extrapolated beyond the
+available range), sourced from `vsol_at_signal`
+(`memecoin/progress_capture.py`, a live capture at alert time completely
+independent of reconstruction, converted to price via the same verified
+curve invariant) plus `price_t1m/t3m/t5m/t10m/t20m`. Structurally removes
+the staleness confound instead of just flagging it.
+
+Real 20-token pilot re-run: 77 comparable observations, 11 reconstructed
+tokens (all still integrity-VALID). **p50=2.106% p75=8.319% p90=72.584%
+mean=18.569%.** Worked example
+(`7sTjqCiai43Kym1RuiZsGwUAXARebxvjRUmrNgG5pump`): every OLD fixed-offset
+diff was 39-339%; every NEW interpolated diff was under 5%.
+
+Distribution is bimodal, not a smooth tail — 9/11 tokens cluster under
+14%, 2/11 (`jtJpeNYa...`, `2bQiQBjv...`) sit at a near-constant ~71%/~89%
+across every one of their own rows. Investigated, not waved off as
+noise: both outliers have `progress_source="curve_account"` for
+`vsol_at_signal` (the same exact on-chain read mechanism this module's
+own reconstruction uses) and `outcome_poller.py` uses the same
+`curve_oracle` read for `price_t1m` on CURVE_ACTIVE tokens — both
+interpolation endpoints are independently exact, same-class reads. The
+diffs are consistent with genuine large price moves inside the 60s
+linear-interpolation gap (both tokens show large swings elsewhere in
+their own record — one closed the alert window at -9.5%, the other at
++95.7%), not a reconstruction or interpolation bug.
+
+`XVAL_TOLERANCE_PCT = 15.0` (`research/thr_reconstruct_paths.py`) — set
+at ~2x p75, clears normal reconstruction/interpolation noise with
+margin, still catches the two identified extreme-volatility cases as
+INVALID_XVAL (correct, conservative: flags genuine uncertainty about
+what happened inside the gap rather than trusting a straight line
+through a fast move). **Pilot pass rate at this tolerance: 9/11 tokens
+(82%).** `classify_interpolated_xval` is the gate T3 will use. 6 new
+tests pin the constant and the classification behavior. Full suite green
+(580 local, 32+37 module-specific).
+
+**T1 status: COMPLETE.** Exact reconstruction proven (byte-identical,
+twice), 2 pre-existing bugs found and fixed (new module only), xval gate
+redesigned and validated with a real, provenance-backed tolerance. Ready
+for T2 (pre-registered ~500-token sample + Helius credit dry-run) pending
+the dry-run numbers being presented before any real credit spend.
