@@ -1,0 +1,3510 @@
+{
+  "generated_at": "2026-09-09T02:22:04.657090+00:00",
+  "seed": 20260909,
+  "target_n": 500,
+  "population_n": 1913,
+  "sample_n": 500,
+  "holdout_mints_excluded": 241,
+  "tokens": [
+    {
+      "token_address": "12pckin3imvmMJQZsEUuRcy8xT3MitmwJzmJpGQipump",
+      "alert_time": "2026-09-01T18:04:23+00:00",
+      "event_id": "465e157676cc69f1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "13f8VrCFV6ak2jZKtr3EBW7sCcNy7EDwdtaA9v3Q6Nc5",
+      "alert_time": "2026-08-19T23:05:32+00:00",
+      "event_id": "f77cf15c4dbeeff7",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "161FPsYkSaSAbV9YdRjKQiagwmPf9atrvgtGppspump",
+      "alert_time": "2026-08-26T02:51:24+00:00",
+      "event_id": "fa969875d6f42d7b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "17dnmka1Ty9uSMNnN1oXoRGpVCGHe3PwjMXQXT3pump",
+      "alert_time": "2026-08-19T23:30:08+00:00",
+      "event_id": "786b6fbcf0c1187f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "1EaGq2PtdsxhZicYsrMXcVMLXMdyqpbUNQJjfZBpump",
+      "alert_time": "2026-08-17T06:41:57+00:00",
+      "event_id": "4cb37fc692b744b1",
+      "path_sampling_probability": 0.889743,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "21V6xbaG675M1qummZTvJvfAGUFKoASzzc6hMpebsWbP",
+      "alert_time": "2026-08-18T11:42:27+00:00",
+      "event_id": "c8f8254a76dbdd24",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "25LRj6Sqm2TEw6rxz5NRp789NpebAhh5sEwY3ukrpump",
+      "alert_time": "2026-08-29T03:13:14+00:00",
+      "event_id": "14476a3188860c86",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "26iuiZnCX7zVqyCX27Dfh22jm1t5i6EZyhErKfpspump",
+      "alert_time": "2026-08-20T10:14:03+00:00",
+      "event_id": "44c57917bb959062",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "28qTgAWraGg5ziXjTHm6ArDAvNBV9W3B2Y6DgYJTpump",
+      "alert_time": "2026-09-02T19:22:24+00:00",
+      "event_id": "364e2d90a431619a",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2Agb3R77tGRGfsm9PAytzBd3WEgamqNsfzLP2Fa6pump",
+      "alert_time": "2026-09-01T18:47:49+00:00",
+      "event_id": "2a43afa8a382d44b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2F5Z8EeSYbdgeybD8ixeubZeqkKcrp1LfF5QRTesmL8N",
+      "alert_time": "2026-09-03T12:16:10+00:00",
+      "event_id": "73c3577c830f143c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2HDWPZzyb5u8VtU3nEEPKaR38c4zAkUurjrpDWCzcYsD",
+      "alert_time": "2026-08-31T20:36:53+00:00",
+      "event_id": "8f7c15e94dd6db13",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2MDXbiHrUfG2Ko1GQiczah8wH6rdzRhVyUK1hojqpump",
+      "alert_time": "2026-08-20T20:49:34+00:00",
+      "event_id": "39ee8ecc663cf304",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2MZ1GCezJwRMdDUnSHnVzXbv1s13idA6SrXF56Fspump",
+      "alert_time": "2026-08-24T20:47:04+00:00",
+      "event_id": "e38cb19aabca2c3e",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "2P9weU7SKrBXJu8MaHezXRBuaDrGUYZGwduyKZwBpump",
+      "alert_time": "2026-09-01T17:01:02+00:00",
+      "event_id": "aeb8a148b42aa9bc",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2Sx47cq4Z4TVYiZgZnoZMJFB8WtcoTzopDTZDE1Lpump",
+      "alert_time": "2026-08-19T00:15:07+00:00",
+      "event_id": "efa2dd9ee143ee93",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2Tg1RFtLaQvNYDKLevLNC9C7GCoALy3vdPCyehvXpump",
+      "alert_time": "2026-08-16T22:20:32+00:00",
+      "event_id": "54db5bd6f8288d43",
+      "path_sampling_probability": null,
+      "admission_reason": null
+    },
+    {
+      "token_address": "2VLVnUfyU4UNvbZCZUfVRLGJKQRJS9UQ5mRSswwgpump",
+      "alert_time": "2026-08-18T18:34:29+00:00",
+      "event_id": "0ea502323a62a306",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2VVBKWfWTpAwdkDFLCz5SsAeZDxFrzmsKHvchLc5pump",
+      "alert_time": "2026-08-21T04:29:51+00:00",
+      "event_id": "f1f6e722aaefab08",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2WG6mgKMx97jYCCoiHGcJndvQXjwDgyFeVRAnKH2pump",
+      "alert_time": "2026-09-03T00:39:16+00:00",
+      "event_id": "0681eef3d2b3e6af",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2WujBAAnETRNkfSbGpkCbpdYYiv3QmzsFmb1ZVFZpump",
+      "alert_time": "2026-08-30T09:28:32+00:00",
+      "event_id": "26393c805a3c5721",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2ZC3qvafFaMrJ5hKTZniMPBsZhgdrVfJB9ce4nuypump",
+      "alert_time": "2026-08-18T08:32:31+00:00",
+      "event_id": "16531e71842231b0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2ZVKH8FpNvmqaFhaH3Apgw1rctNzmfyVRSz4SaFFpump",
+      "alert_time": "2026-08-23T04:21:23+00:00",
+      "event_id": "895a7b74fdf7a4b3",
+      "path_sampling_probability": 0.936119,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "2b4fuwXmwqY8c12ScBa1RakBz2CQgNgPNpvbo3vUpump",
+      "alert_time": "2026-08-20T11:06:27+00:00",
+      "event_id": "a327c5f1fee69e49",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2cxCB5Ydp5B5PcgcmRQCnhVfKV9wfVyvuKLJ6jWTpump",
+      "alert_time": "2026-09-01T07:37:30+00:00",
+      "event_id": "783d9769112f845d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2d8ZWNM39gyhPD4L5SVmkYMakZaQYgdD3qHh283tpump",
+      "alert_time": "2026-08-27T15:19:50+00:00",
+      "event_id": "9d55f8854cabf690",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2fE81nZZHFnPFWtheQrcY5o3DCiVRGwA9ghsUgCJpump",
+      "alert_time": "2026-08-20T23:44:13+00:00",
+      "event_id": "efb8f484e330e0d1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2hGybziEkFPFmSXJJtt7jPR1NEuoSD9RriP69uQxpump",
+      "alert_time": "2026-08-22T05:11:16+00:00",
+      "event_id": "79c6c9f90862b566",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2hSYFFK9S9gwKjnZnPdiN1GZFLNvYTPCCcqNLBDMpump",
+      "alert_time": "2026-09-01T05:18:32+00:00",
+      "event_id": "2c18bd799f43659a",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2ibd5V3BptgZXaycSCnQcuXcYW4JKw56Ye2dVzXuJkrZ",
+      "alert_time": "2026-08-18T00:30:34+00:00",
+      "event_id": "c374657c72d9ce63",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2j43cNANCLFe9NrV5X2BZeJBbkbigtFhmpeqqqgZpump",
+      "alert_time": "2026-08-18T13:48:04+00:00",
+      "event_id": "1073804a3dadb0af",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2oQBjm3bvghDZmRNZthkYxCLhGUgHBEZcejTLgte8Rnc",
+      "alert_time": "2026-09-02T01:21:09+00:00",
+      "event_id": "0d61c01f29a570b4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2p39btwzkc4AfCFqjNNwfBby5abvreaeBsZakjtKpump",
+      "alert_time": "2026-08-28T17:14:17+00:00",
+      "event_id": "4e07772392408cfc",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "2u4HKh44c4Pps8v2KFcgczEYZZNrSgreheBcXMCupump",
+      "alert_time": "2026-08-28T19:50:42+00:00",
+      "event_id": "ccf76cb5a97943ee",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "33aXu1kk1KwMmzPPhEKG1UxFwixHYdZ5oenKixrUCX56",
+      "alert_time": "2026-08-22T10:09:39+00:00",
+      "event_id": "a9fd22e7e56e36f2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "355yZV9nwdha3Uv1a9oh3YtALuf2AAPv3vzYx65kpump",
+      "alert_time": "2026-08-30T14:59:55+00:00",
+      "event_id": "cb2a20af14740d21",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "36j5MKbcNyd9vjHePhZLu8rNt7RXW2HU89sKyVvApump",
+      "alert_time": "2026-09-02T15:32:45+00:00",
+      "event_id": "5a2676fa3e1d8035",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "379HHMsUSfovg38PFDsbZ4qBQNRqFxmj6UCxQk2Kpump",
+      "alert_time": "2026-08-23T17:08:14+00:00",
+      "event_id": "89441f3fcac5391f",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "3CF1EmxFZWqjXBQxxvy16RwvQSxhz8ro12Tu2ZCRpump",
+      "alert_time": "2026-08-31T18:26:18+00:00",
+      "event_id": "a1c451b73d8c951f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3K2VgXbJRXGvpvo1e3wCA57m2WFe3MGubr8tFpXppump",
+      "alert_time": "2026-08-31T06:27:02+00:00",
+      "event_id": "270a3936a936deb0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3KBTuU4dSfn5hvD5e51TS5YJDuYDoDm9Sd3tbsfBpump",
+      "alert_time": "2026-08-31T10:46:56+00:00",
+      "event_id": "7fa4cd9e54681507",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3KVxrNkRMnGCaTgpAv2zvADADUBMFjFt2ayrZe3Lpump",
+      "alert_time": "2026-08-24T11:10:49+00:00",
+      "event_id": "fb7d21b4ed65db3d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3PkXvrHSpbJB4wFryEXG8HrgiKmNJZASiEf28GBrpump",
+      "alert_time": "2026-09-03T10:54:57+00:00",
+      "event_id": "bed0545060458dc2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3QhHyv3qC82e6AmUUsGEEG2iSenfYFr42ZYufyWkpump",
+      "alert_time": "2026-08-30T14:13:06+00:00",
+      "event_id": "f3b4a047fc4fb248",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3SjCJ2SyanaUjj4spQmBHY9i4rA4nEzwzqN6aawmpump",
+      "alert_time": "2026-08-19T22:49:47+00:00",
+      "event_id": "cc3d93575619774e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3UWgqBEk8HHtnyftdLaE8DG52xuxUwQRxvZdYDEzpump",
+      "alert_time": "2026-08-24T19:27:25+00:00",
+      "event_id": "8924c7301c442911",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "3VMQDucDn6fhEEDYfsVUhhuBm5Vj2REwwt8J5MMYpump",
+      "alert_time": "2026-08-22T08:07:22+00:00",
+      "event_id": "e1befa4f17a06abb",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3Xb9KafJsBkzLykKbW7hTrZysTV8N1TMBsfpNoR7pump",
+      "alert_time": "2026-08-30T21:43:01+00:00",
+      "event_id": "2cb6f2f539a11385",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3Z3NJp9GuasHPh6akoKAFhyzitLWh8A53rigEmUk7zG3",
+      "alert_time": "2026-09-02T01:06:35+00:00",
+      "event_id": "842e85c4ae4d0c56",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3Z72sNaaLwNqGx9Gkw8Do6owAggZAVXh5ZjavZQ5pump",
+      "alert_time": "2026-08-18T08:21:28+00:00",
+      "event_id": "3ecbbdaef1bdafdb",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3aYE9aXX5pJefCzdfNzZdgui9MBnDz1bWM6GgoTEpump",
+      "alert_time": "2026-08-27T19:38:47+00:00",
+      "event_id": "8dbfc86345fdf0d5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3eP3JkeCkRpuReMMy8SJkfZ5xuKrYwVDxjC5XGVapump",
+      "alert_time": "2026-08-28T23:31:51+00:00",
+      "event_id": "c9bd920668c117f8",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3eSiycqBow8tQA5fCmHMMwwbgh1DFrnoNeZUja7Gpump",
+      "alert_time": "2026-08-29T14:03:50+00:00",
+      "event_id": "a8b666589def49bf",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3eXf3HS1y2W62E3A33SkgXURwQUokbxSDyCM4oTT4SkQ",
+      "alert_time": "2026-08-28T12:06:05+00:00",
+      "event_id": "ebf62fc3777d12a3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3eY3fYwqwrLxFWqvw8xiurre6qg7U5YmvDanS3Lj1VoT",
+      "alert_time": "2026-08-17T16:05:03+00:00",
+      "event_id": "2852bb3fe7afac7a",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "3ecKs2oo4RXwJf16pcANBuJtZVhA8xwEi6Ewu2sLpump",
+      "alert_time": "2026-08-29T13:01:37+00:00",
+      "event_id": "a0eaf9b6bf443b25",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3f11NAwS7Yn5MkbYr5u3UGZqmEP4WQkLdacuhRKNpump",
+      "alert_time": "2026-08-30T21:21:57+00:00",
+      "event_id": "4fabe190dd14699d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3gS22AU5UjGT8JFCed7cbhFE5B74XTChWFL5jBSTpump",
+      "alert_time": "2026-08-31T15:15:04+00:00",
+      "event_id": "4accd946ab41715a",
+      "path_sampling_probability": 0.80082,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "3ig2BjrmfVttEzC1FTFJWyZ7RE4xA2Bp154sjzKY5AFy",
+      "alert_time": "2026-08-31T00:48:05+00:00",
+      "event_id": "a841a97465ac7ebe",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3mZWPfnfDPcaCddXZPN16BBMDDtc5NGEwekpTfSMpump",
+      "alert_time": "2026-08-20T23:20:44+00:00",
+      "event_id": "b6607946d6f504b5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3ngyhYu55s1MJFE9c1JNrUPPn1e4ZLti27zM8dfFpump",
+      "alert_time": "2026-09-02T04:58:46+00:00",
+      "event_id": "1d7927f2de1fe98d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3oY5NnNAbnRK4eNzPWZFmtAWVW4RNumpni4XtGarpump",
+      "alert_time": "2026-09-01T10:49:32+00:00",
+      "event_id": "e4e72ae08edf48e8",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3qr42gxEWffvpwPe3GLTvBKYomNDHPsyVevz8gA2pump",
+      "alert_time": "2026-08-19T20:08:40+00:00",
+      "event_id": "0894594674e2d847",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3s7PVGDT2UqJELChtESJBHSuYP33dYaneF3TXoiKEZhR",
+      "alert_time": "2026-08-22T21:00:20+00:00",
+      "event_id": "7c185e89a227fabd",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3tHeTHVcWiCsWFxEacxUkvJAybLkV2Ph7hPmpCSNpump",
+      "alert_time": "2026-08-23T13:15:06+00:00",
+      "event_id": "b7a1016f6171f12e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3tgwHbthufLT2ur1zxXyZZ1qoTA2iXtb8rkXC1Wkpump",
+      "alert_time": "2026-08-26T04:34:51+00:00",
+      "event_id": "bdc548fc0e1863c9",
+      "path_sampling_probability": 0.855227,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "3uwfUnEo9uJ8s7CqpmNw9jEjcFAf3zgQyNsJb2K1jLiJ",
+      "alert_time": "2026-08-22T21:19:55+00:00",
+      "event_id": "a75f50ba4352b43c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "3xCDRsr83PLdJ2voLQ2Pq36jGWtvw2fT4oZYqHKnpump",
+      "alert_time": "2026-08-19T00:33:09+00:00",
+      "event_id": "41815c0dd0c0f2f1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "42JJanV8Jb5moYLsGvWCBXWSSMAAVKSTozhmb4uoQaxj",
+      "alert_time": "2026-08-17T16:00:15+00:00",
+      "event_id": "3257430d96fbe248",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "42VaiAQJnpXLpfzyC3GnTzudnEPHHkctZWQW4aaWpump",
+      "alert_time": "2026-08-24T20:41:47+00:00",
+      "event_id": "821fbabfc7185157",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "43FTCiHG6gKk9AqDsP6WgdoyBndvp4gG7G5kroPreuET",
+      "alert_time": "2026-08-19T13:28:40+00:00",
+      "event_id": "2acfcbf9e28f81c4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "43nS2WbBYgwUot7nSWZeik8nCpDkUksDADMwa81Ppump",
+      "alert_time": "2026-09-02T18:45:44+00:00",
+      "event_id": "1705af61a1a65be5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "46SLneUXXDn7qvngYXrL5EzM5P1A9994RRfCWHEkpump",
+      "alert_time": "2026-08-19T12:43:56+00:00",
+      "event_id": "f9d5ecabcaad135b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "48ZGLrze6a59kgEDVsfQ6Vq8ZrFLuuEw4jt3Rg7kpump",
+      "alert_time": "2026-08-18T12:25:21+00:00",
+      "event_id": "c80ac0332afaabbc",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "49DbBgC9Z385FzJqtdTBdDHPRzcD5GoUUeYCRNdYpump",
+      "alert_time": "2026-08-20T18:30:53+00:00",
+      "event_id": "b21b6588606b858f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4AiqyJ8X5b8PrDVirREvP83uhPeKYAWsqRKUj4GSpump",
+      "alert_time": "2026-08-29T04:55:37+00:00",
+      "event_id": "9a03a37522014c18",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4GCmJ87xRchBREMVpgZWiyJPUgzkhkyzt8MbddsDULx7",
+      "alert_time": "2026-08-29T08:51:48+00:00",
+      "event_id": "c8dd349dd3b5aa35",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4HKGqTLEj6ERc4JLwL561aJJ3eqAXfUrHE5WfifNpump",
+      "alert_time": "2026-08-18T17:15:37+00:00",
+      "event_id": "65c586d2d116b63d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4JWztng3c6J5f6gPh7brpdLpAfEj6D8UWipiDY7Bpump",
+      "alert_time": "2026-08-17T22:45:26+00:00",
+      "event_id": "8ceb5a210f1a2db7",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "4PJ8wZpyKEL4QoiVKc5NpbhvopmZLUhxXpaSPVimpump",
+      "alert_time": "2026-08-25T01:41:43+00:00",
+      "event_id": "76d0b41e4cdab6b9",
+      "path_sampling_probability": 0.625438,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "4QV31UeJJyUVWP2f1qgEz8gUPkf6WyPZyAmGdT8UD8Ld",
+      "alert_time": "2026-08-22T22:25:37+00:00",
+      "event_id": "ca35352169850c29",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4R6eExsK4dxBXHPBUz89RxiRMY7MfxyBhMauAtLeJn5f",
+      "alert_time": "2026-09-02T04:43:56+00:00",
+      "event_id": "1812e08541e2a514",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4SU5ZMCrfgmZYw6HhTFcxA9MfRs1NzGYgRrXDtL2pump",
+      "alert_time": "2026-08-18T12:02:44+00:00",
+      "event_id": "fdf00e3c4e4388f7",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4UwqaSJ9JjNW3DQnNqE9s6vjLUsb2hnqvBFHDDt5pump",
+      "alert_time": "2026-08-17T01:36:15+00:00",
+      "event_id": "ed70aca5ac360d01",
+      "path_sampling_probability": 0.607209,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "4VhVX2vybeUCPBKKvy7x4Aj3THeNei3x9E1mq1PQpump",
+      "alert_time": "2026-08-20T14:58:26+00:00",
+      "event_id": "6fe8d712167e4352",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4Vq3fwDfTvynU2ABMFnPdBdEEcMB2Y4XzSVQCHkF4bBr",
+      "alert_time": "2026-09-01T15:08:32+00:00",
+      "event_id": "171c790cb9839aa0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4afRrQG9CJ8EN5hc97UubvNRCny6cxcExgYk5W45pump",
+      "alert_time": "2026-08-31T14:05:40+00:00",
+      "event_id": "7320ec1235319832",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4aqNfcKAHnWmqTNC5q5FjdNP5vEke6L4qhFDXx1Bpump",
+      "alert_time": "2026-08-28T02:32:47+00:00",
+      "event_id": "5cf925bf60abcea1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4bgPRCQAZz1mBAe8WSuY9od5t6AjFSyGqrijBbJDpump",
+      "alert_time": "2026-08-28T21:51:39+00:00",
+      "event_id": "7183fa987b391365",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4dj32Zb2YAjpuJVaBZorWhmRehA9se4VvqR68SEypump",
+      "alert_time": "2026-08-19T21:25:37+00:00",
+      "event_id": "79b86a2cb7b0e73c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4dpL1YkGPuEKgEjRfP7TrmU96nQvpgEQc78iiYQapump",
+      "alert_time": "2026-09-01T18:54:46+00:00",
+      "event_id": "1226481068001057",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4dwc8JDjNzn8FHwiPXNhgbAhAyL8tfTX73mb5TR9pump",
+      "alert_time": "2026-08-18T18:38:20+00:00",
+      "event_id": "dbb995c925326617",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4eNkqqxC4iJ6gugYqWRJXfzgDT4KXQujV7xKgMaxpump",
+      "alert_time": "2026-08-27T13:02:12+00:00",
+      "event_id": "15b76dc0e61919d9",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4eNyg56io8Z7HAchVieZ6bsfr6rbZ6Y6ASNFD6Whpump",
+      "alert_time": "2026-08-19T02:03:14+00:00",
+      "event_id": "bd20478f38db87b0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4fC2GLYnLvqy6zuZF3GreiUHFamwz5jiYDUfmcPKXwp9",
+      "alert_time": "2026-08-25T20:10:56+00:00",
+      "event_id": "94f38c674a7e09fb",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "4j5nQBLXszoKzqNiTbpfeHwaLvc2QBKSc8R8GNtYpump",
+      "alert_time": "2026-09-01T13:57:39+00:00",
+      "event_id": "64ff9301b1856a10",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4jmkzvn9t5kEMBuh3uEj1L49XYBJbcEm1LPL2ddfpump",
+      "alert_time": "2026-08-31T17:20:49+00:00",
+      "event_id": "8ba67156d4cf3ed2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4qiP21qHTXyvXks8ErgXJdCWNrRP48yXHcvaNdX3pump",
+      "alert_time": "2026-08-27T09:39:28+00:00",
+      "event_id": "a03efed98a09c95e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4r9pAJYisxDw7zevNBQUaA2Wr7KUfbXZyjeb9nG1pump",
+      "alert_time": "2026-08-26T10:19:32+00:00",
+      "event_id": "c6b3dfb5b885424f",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "4rSRTTJWSr6Rc2SLH5Uibmja8dtmuBBwkm46LQuPpump",
+      "alert_time": "2026-09-01T16:04:14+00:00",
+      "event_id": "22f9bfb124ac7309",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4rsd2NBg2Gq72QpQgu3mgXCko7s1T4LNGbZN8Bwhpump",
+      "alert_time": "2026-08-25T22:47:23+00:00",
+      "event_id": "4d65b6141cd8dd17",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "4tGYC8sVTCvdqCH43rYW3ckiPuXJbdKTENyXUaD9pump",
+      "alert_time": "2026-08-20T07:26:02+00:00",
+      "event_id": "5aad7a15b62e0630",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4vewR2UHGVWNPYfqJCq27DmREq1HgvVYiMvyB14Ppump",
+      "alert_time": "2026-08-26T17:24:55+00:00",
+      "event_id": "6921041b57b6f400",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "4wXP83KvMNHBRqczkqwNfCgj7kuUqnYZ6TgnxrMWpump",
+      "alert_time": "2026-08-21T01:55:00+00:00",
+      "event_id": "f39c45b5c1dcb81f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "4wgn7wZCspYYjcB8ccfVjjguff8yUt9aywCa8fyEpump",
+      "alert_time": "2026-08-28T17:11:24+00:00",
+      "event_id": "eec50df1bf68c362",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "51oFpBmndopoh1nLuFa2JVqFehXYjrcYrkLbuqSppump",
+      "alert_time": "2026-08-19T20:15:37+00:00",
+      "event_id": "0d8150fdfea2be73",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "52FmhRcQoYxdfPgjEuuCVjPmz9zpkkGWg1Fmqu8kpump",
+      "alert_time": "2026-08-26T12:38:45+00:00",
+      "event_id": "16e17df8e304e7d7",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "549CD7fGQTEnHphZyQboNzaVb4LQ5CQBE3Cn8Xyepump",
+      "alert_time": "2026-08-17T05:00:03+00:00",
+      "event_id": "743d40292e0638dd",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "559Fh5RqCBSgrL65wtSeUyz56f3ibi8S9eLTXcqs2aCB",
+      "alert_time": "2026-08-19T02:39:59+00:00",
+      "event_id": "e1314573a073cf46",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5DvguvyfNA1fN94o21ac3Lhz9AZrLbPQSDbB7UDrpump",
+      "alert_time": "2026-08-28T14:53:31+00:00",
+      "event_id": "f14986233807ec25",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5HDneDrhYGR1f7upQeKwrAT5hCg9DosAH94LNs4Tpump",
+      "alert_time": "2026-09-01T21:52:58+00:00",
+      "event_id": "c6ff6779ca84e9ab",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5KDizJH8AWnBiNRrXvSfUfamEkW9ESawK5TXicgGpump",
+      "alert_time": "2026-08-24T21:51:28+00:00",
+      "event_id": "6e481a9b0c297f50",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "5L3upAqpYQ3od45eHLD4HgHd8TrVmWnEqYescPQr5GkM",
+      "alert_time": "2026-09-01T21:27:27+00:00",
+      "event_id": "b5e9a0871618b4b6",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5Liyzb8xsX7v5s3LiHNEAzuUTjwoanTLE7FG6AsKpump",
+      "alert_time": "2026-08-29T07:20:06+00:00",
+      "event_id": "00bfe38957d2d368",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5Lm6yjvckqjgpHDfAsTuRLLvc4mH4jDF7ihc6E3xpump",
+      "alert_time": "2026-08-29T04:07:38+00:00",
+      "event_id": "1571da751c6244b7",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5NKDZgzM4Adb212qo2quNiShRLqR9ND6VxxvgssEAAph",
+      "alert_time": "2026-08-31T14:53:15+00:00",
+      "event_id": "8f37e0e044ee96e2",
+      "path_sampling_probability": 0.25277,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "5QUf78bnfJPqPRyMsHfE51Qv7hEKx6yGB2CGUYU3BrUq",
+      "alert_time": "2026-08-31T08:27:25+00:00",
+      "event_id": "70989e73d5703bb4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5R8bVvKrdotCukqqYb9emndQ9rqMiMfCVRTWWVdipump",
+      "alert_time": "2026-09-03T15:53:05+00:00",
+      "event_id": "eef103af886d174c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5RViTjU4Rt6B3Gkd4vNbYUJ2nDAL8MBiZHQ9CD4Jpump",
+      "alert_time": "2026-09-01T00:46:46+00:00",
+      "event_id": "bf7529805e4c1d0c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5V9t5eGs5ASdhUasDpWrgZsbPbipyhHzpEPLhcBFNffN",
+      "alert_time": "2026-09-02T12:29:29+00:00",
+      "event_id": "5626547f16dd1e35",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5WnxLprZhMVmQZxqs1aakeGkY1F7nGdPkYE28mjUpump",
+      "alert_time": "2026-08-27T17:18:14+00:00",
+      "event_id": "aaf7dcfa485cba1a",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5Wr3m8QpTqqn1idrQvp3iNPa4f8hviBji5A9aEVapump",
+      "alert_time": "2026-08-18T17:55:57+00:00",
+      "event_id": "320616157c3f2f8c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5ZRCtHhskzRjREqyg7siJB9iqNZ5m9GQU5pYfskjpump",
+      "alert_time": "2026-08-29T23:21:12+00:00",
+      "event_id": "62367d670835d85d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5ZqaMgN32z2UuvWKQDVpPvbFpAKmayhBKRuW4PYqasxB",
+      "alert_time": "2026-09-01T06:17:37+00:00",
+      "event_id": "1dc4b1142109f206",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5ahQGfjUNC9tPX9kdCf1fVQkdDGMKTyeQMbrViw5pump",
+      "alert_time": "2026-08-29T18:05:16+00:00",
+      "event_id": "a649007c5f24bfab",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5eNTra94PT3NSoQNFqZpV73kA7aoCehjDTxE6Drkpump",
+      "alert_time": "2026-08-18T14:53:32+00:00",
+      "event_id": "14c1223447dafe30",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5fdjSdqFicNhx6prANMZxGTc1GiCNpjZVMHWT9KTpump",
+      "alert_time": "2026-08-25T02:15:51+00:00",
+      "event_id": "3653c6cf12121be9",
+      "path_sampling_probability": 0.950209,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "5frJycEGZ4opxvok4qSJyLgEHkSw4USrSnJHQwGdpump",
+      "alert_time": "2026-08-31T18:05:00+00:00",
+      "event_id": "2e63510c4f7f6197",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5g7Q3rC8Hvf3toRzujsYq1GSBxNdv9pZKx1muXaVpump",
+      "alert_time": "2026-08-31T00:07:34+00:00",
+      "event_id": "4499569563cde4d2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5geVBi3XgVwtW6A9xtTmno7KL6cpoMvwzJzK15Lpump",
+      "alert_time": "2026-08-22T07:31:02+00:00",
+      "event_id": "d98bacfc1523a415",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5hxhtFH77vFccxVtFSJMEkvAbPhRcFjM1NMSHFcXpump",
+      "alert_time": "2026-08-31T13:50:06+00:00",
+      "event_id": "8d81bc85d5880274",
+      "path_sampling_probability": 0.842602,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "5mni69zBTGhcVXRAJYf5W4xXpeKXCRFkJLvuC39Fpump",
+      "alert_time": "2026-08-25T03:21:01+00:00",
+      "event_id": "d3d367e454664536",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5qmSaFVw2PzUqk3Ab9f6DZBuk35ZsLp3EVwWNfCVpump",
+      "alert_time": "2026-08-23T15:59:42+00:00",
+      "event_id": "cd5d91149d6e33e1",
+      "path_sampling_probability": 0.468323,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "5rPuiKKbEXLxzssjuKHzGeuKuuHRuJf6aYhVLNtepump",
+      "alert_time": "2026-08-17T15:37:34+00:00",
+      "event_id": "7e1e55f761e2ee8a",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "5te4qXdCWkXPCHQiEtRLGzX6eWnuemJ9Hy2Zp9rYpump",
+      "alert_time": "2026-08-24T06:58:28+00:00",
+      "event_id": "e4d151b62ee47e23",
+      "path_sampling_probability": 0.697,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "5uE4quvCeo2fKaMTweDiy54FYYPCn3vA9e3sHQfqpump",
+      "alert_time": "2026-08-19T06:16:20+00:00",
+      "event_id": "16bbefc606d65950",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5v6z7wfY4XFSzei1mYpqACxfNhrQdkJ71tD1LoUhpump",
+      "alert_time": "2026-08-24T04:23:45+00:00",
+      "event_id": "0a710428afcea0c2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5vP9iAr4omW6j14L3LZemXpJ8aZbJ3oWiE4hwq7epump",
+      "alert_time": "2026-08-17T03:48:34+00:00",
+      "event_id": "c1c558ff489dba3f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5xDwbQcVDjqXsuJUm84Pqu2JaSuEYgeRN6o4WFzDpump",
+      "alert_time": "2026-08-18T21:13:57+00:00",
+      "event_id": "81e7f4e4f81dd29e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "5yv5w1uf4ramg4L3QH5Z4tg1i6KLKEWTU9puYTwUpump",
+      "alert_time": "2026-08-30T23:01:12+00:00",
+      "event_id": "95a1ff10ba4e6ab1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "67QTyapnkr6V4BU5D3equN6G3Bv2hJgt8yrYbbmpump",
+      "alert_time": "2026-08-28T20:44:11+00:00",
+      "event_id": "406d4ca8249700ae",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "68GpHP3M6VSArzpRzqX3MMV9VnLcadZhrpKENo85pump",
+      "alert_time": "2026-08-29T21:50:00+00:00",
+      "event_id": "e052f0fa2e89036b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "68QzftmYA3xW2Y3WTe7TP9QN985Vv9SG63uUtfidpump",
+      "alert_time": "2026-08-19T20:31:39+00:00",
+      "event_id": "87cb994b0ffcceab",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "68fn2tLABKmS7VA9Eaz3n6RfoXM3iBWUACckT9dwpump",
+      "alert_time": "2026-08-25T19:25:58+00:00",
+      "event_id": "50eb862462f4f191",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "69PcfUNvqhJagdfjoW2CyWr5qUKWxvtnqXqofTa9pump",
+      "alert_time": "2026-08-25T21:35:43+00:00",
+      "event_id": "28aa1161b2adc37a",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "6AToH4XM14eQZeRtbX4JvaaFN2AFUS3D44AjfiWzpump",
+      "alert_time": "2026-08-28T19:27:50+00:00",
+      "event_id": "2dda1fd0fac10c01",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6BKQQrLrNtegxjVVhCGoHj4hWjefzWDAU5WqkQJwpump",
+      "alert_time": "2026-08-25T19:46:03+00:00",
+      "event_id": "2efe76b0ccb00a8b",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "6DGgsCCoyJehBbJzUoLcYeukHJoqJDrBCjNcZDar1Mjt",
+      "alert_time": "2026-08-30T00:40:12+00:00",
+      "event_id": "7a8b520038fd5b1e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6E8UmPnQVsYD7utPUbZdGBowisR41HFyehB4NtREpump",
+      "alert_time": "2026-09-01T14:03:28+00:00",
+      "event_id": "cc471e39192e1574",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6G3jeSMJzfDinWSnKLsCho5BCa8i9CHKWg8jizwKpump",
+      "alert_time": "2026-08-27T14:09:23+00:00",
+      "event_id": "1153d112c8cab5f6",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6JJ5VejCCdRW4eHeKNtCsrgQspnPky5tBF6oSc85GNPf",
+      "alert_time": "2026-08-28T20:41:22+00:00",
+      "event_id": "31e83ca3e77ae89e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6JZfJw1ufSgU9Bt3mAsKQBCo5rtHi6hJuGzmKwhGwv8",
+      "alert_time": "2026-09-02T13:55:09+00:00",
+      "event_id": "f21be549da47184e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6RdfnFL9SdJdoruxYz3tJuZHQXPLGG8Uy1LoDgSZpump",
+      "alert_time": "2026-08-23T23:24:36+00:00",
+      "event_id": "4ac19121de21aa29",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "6RpG9B7srVPZaccAr8YUQRMefFBvwC15kNCrkeBHpump",
+      "alert_time": "2026-08-29T00:14:51+00:00",
+      "event_id": "7e4697568ff3f7f0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6RvxMucD3nEhNTQCWtm4F3SfET1CnsQbSjQdr3Jrpump",
+      "alert_time": "2026-08-19T01:00:42+00:00",
+      "event_id": "094f4aa048ebed28",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6SvnHC1T1dRTY1MogpCg4PMLZLvpD5MJLi9pDTt2pump",
+      "alert_time": "2026-08-31T23:00:51+00:00",
+      "event_id": "6771cd3af8526d25",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6T6APFk43FoZjNXSsBRhMYyVinsntzTGAUpZeP8hpump",
+      "alert_time": "2026-08-17T05:31:08+00:00",
+      "event_id": "5e91dbf4ba8f90a3",
+      "path_sampling_probability": 0.635259,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "6TpjcLmBm9Vy9hL39TrCRibVY4NJv6tpdu8o9kvzpump",
+      "alert_time": "2026-08-20T05:51:55+00:00",
+      "event_id": "16fd692d82d63eb1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6WmCmv4RErtiCtTX7RCyq8f4cCmzPfXtBehENiMtpump",
+      "alert_time": "2026-08-20T13:44:15+00:00",
+      "event_id": "b0029694cb3998c2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6WsYJF6qTqc9A3vzP2pLbr3RgG5j9Xrhx3gaiVutpump",
+      "alert_time": "2026-08-17T13:57:21+00:00",
+      "event_id": "bca7e4299ff6ac56",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "6X4eXm1WWom2eidjnT6XxW8CHUVbaqU8kFsTXeL7pump",
+      "alert_time": "2026-08-19T15:36:04+00:00",
+      "event_id": "3aa1cf46ec342425",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6bPhpAh7SZKzxAywyZ6yR95QXU6MBAi4DwkEWzy3pump",
+      "alert_time": "2026-08-27T22:27:27+00:00",
+      "event_id": "71a51cdb55ea7416",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6fjdzxBZuf2AFCaCffmqbzqLPehTtTezFHqoKcYvpump",
+      "alert_time": "2026-08-29T15:24:13+00:00",
+      "event_id": "0be752e039d67c41",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6mcu9Sdt4ZvUV8U1HqfK4Ug1hkoc23odH2LkgHnUpump",
+      "alert_time": "2026-08-28T00:51:36+00:00",
+      "event_id": "4092e1a0f9ec70c3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6nWbQH6aSjG83JizxiYKwBRK5njaKvqgm1EWu7rPpump",
+      "alert_time": "2026-09-03T08:22:07+00:00",
+      "event_id": "18ba14f5f9bb9bb0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6o4d4XDQPuhzNNVRszgcNbWtfgVEBFzwBoLgJxJTpump",
+      "alert_time": "2026-08-27T20:46:46+00:00",
+      "event_id": "6667ff3b757f11e9",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6oQjSA4eVA9hhManYFcQCqga6GXGqfd1aTbAMWAxpump",
+      "alert_time": "2026-08-30T05:02:49+00:00",
+      "event_id": "f6c833e889546a8e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6pfKqojhCUYsvNvrHpyMFRvVks61jXadzVuM1gcpump",
+      "alert_time": "2026-08-19T01:12:25+00:00",
+      "event_id": "03f9fb5b1cc2b2ca",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6pg5uegVbhjZkZ7xA8v55JX1RgeqGKHW96QQZVwLpump",
+      "alert_time": "2026-08-31T15:39:37+00:00",
+      "event_id": "c8c7ba33bfca3941",
+      "path_sampling_probability": 0.356613,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "6rtKeLE89kPfqLyWUtnsRtAGimCDk3SNQoLfszSXpump",
+      "alert_time": "2026-08-29T20:31:43+00:00",
+      "event_id": "178a26c55bef17f8",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6t2KrNYfGoKtu1uFu2byRFZoKrXTY9fJ7ojHaETupump",
+      "alert_time": "2026-08-28T00:36:18+00:00",
+      "event_id": "5f7e3591d8d8b541",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6w8VHx63RJ74AQvMbStk7fatPbaDgAj9b7k7B74vpump",
+      "alert_time": "2026-09-02T16:47:06+00:00",
+      "event_id": "49a82dd45877c321",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6wcyE46tT6p4LJfrLXGe1uhbhKyfuRw4ciYCRFXopump",
+      "alert_time": "2026-08-22T09:56:28+00:00",
+      "event_id": "e29d437437f55e30",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6x8nA5P6XYJhwtS2XodDKUte5hA8E88xrPsqNAyuFJpr",
+      "alert_time": "2026-09-03T13:10:06+00:00",
+      "event_id": "9fdcffd96b35a04b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "6xbZRQ1New1bHvVjk9GwY2JFNCZwd4HuVGWGgwjEpump",
+      "alert_time": "2026-08-25T19:16:38+00:00",
+      "event_id": "9e6cd988e3a10fb0",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "717UTy9TDaiKf9fgtJyJwtfV4bneGz4fVDSGaZfFpump",
+      "alert_time": "2026-08-18T13:59:06+00:00",
+      "event_id": "8a394228184e1bd1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "733VHwbMSw3ARpMuxL3ZZX2wKD6GrsmGeDceUs3Lpump",
+      "alert_time": "2026-08-19T15:39:37+00:00",
+      "event_id": "2851f5c3a74417b6",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "77YnBCb2nAgEPrjw71VpCDcbhiiZE4n78JFUS8f9pump",
+      "alert_time": "2026-08-24T17:41:16+00:00",
+      "event_id": "9c6cee77ef737d59",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "79Z56ijKdhGRSdifkQJ1LFX3aJfH7tMTNKMATw1jpump",
+      "alert_time": "2026-08-31T12:04:59+00:00",
+      "event_id": "fe475e557207b141",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7E2eVyu2FMjoieEEMtFJ6yrWf9a4FXnydMLwqFoXpump",
+      "alert_time": "2026-08-20T21:49:36+00:00",
+      "event_id": "fbd3ba2d0ce6f30e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7E8UAqKaNNN7xpgna5qFYmAqMfhNsUJUgLcwfX2ypump",
+      "alert_time": "2026-08-28T14:06:54+00:00",
+      "event_id": "fdbc8a0df31ee048",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7G5QwVrFkRu4QmDB3nAkqjxJFsBx9WYwm1eGBGmMpump",
+      "alert_time": "2026-08-19T09:19:57+00:00",
+      "event_id": "877b7efe76d3eff4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7GtzdDUgjSKCPu8NJ61trND7wJ73TBvVHbkCMwgzpump",
+      "alert_time": "2026-08-29T16:41:35+00:00",
+      "event_id": "176b8e215cab40e5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7HzdWh634nVKY88CWT7imR3isimmmWZg5oJnwwN2pump",
+      "alert_time": "2026-08-27T21:58:37+00:00",
+      "event_id": "207e3de8848c72e5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7J1YWS62H63dz2UGtYKv3pbHevRxHtVeRaUN8nVjWC5J",
+      "alert_time": "2026-08-28T00:26:57+00:00",
+      "event_id": "1dcf09cc769f7475",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7LawQbDn1EfgGRQAizzj12EwVjwuGy8AE2poWNrnpump",
+      "alert_time": "2026-08-24T22:34:29+00:00",
+      "event_id": "85d16ba4200c058a",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "7SecUUhKVK8qGGFC1vfGytNkxeMhaTPz1eQ8mJMxpump",
+      "alert_time": "2026-08-17T11:00:02+00:00",
+      "event_id": "ea5443c578328ccd",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7Vk5dEgApb3sDB4rDtzEx3DXeFptiLPEYQmsqHZypump",
+      "alert_time": "2026-08-17T23:20:45+00:00",
+      "event_id": "55f3392c33d96372",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "7VpVi2JbZBy3dNBr8Vt7ciYq18JFVWBWaLLxvgZZpump",
+      "alert_time": "2026-08-18T14:07:59+00:00",
+      "event_id": "88acf2a2d4ba09f4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7WVLWSc3PuYdZ13MRq7KZSWXFc2zarYR4kV7YK1mpump",
+      "alert_time": "2026-08-20T09:52:01+00:00",
+      "event_id": "93d98825e6d00c59",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7Yn7UhVQvDggsEKE1jRABr4SNAaBAR43dgtV1r3Tpump",
+      "alert_time": "2026-08-25T19:11:12+00:00",
+      "event_id": "eef9cf340f42d961",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "7bCQsrVrvsfhWU7G8g6948mimmzE8687HM5TYaBmpump",
+      "alert_time": "2026-08-22T19:57:45+00:00",
+      "event_id": "b13bd5bbe4a315c1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7e7BoAWtCBi5gHpGo4Cvz5tyJz2SZVUkVb8r9rFNpump",
+      "alert_time": "2026-08-18T16:33:37+00:00",
+      "event_id": "f5eaea129a62c01f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7gUNjdsLRavTNY28cX3ztdLwM7NSqs11LoR8oGvvpump",
+      "alert_time": "2026-08-29T22:25:09+00:00",
+      "event_id": "88e646ad1590e853",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7iQp58BeS2JjJKa1QihgDT9CrWtL4Eceu1Tzn5t6pump",
+      "alert_time": "2026-08-31T15:08:21+00:00",
+      "event_id": "f571314800adad52",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7iX7xSgVoy7YQVuSh9GQrP2s4C6DxWMcX5p72ZMcpump",
+      "alert_time": "2026-08-28T21:05:43+00:00",
+      "event_id": "5f2eaa0699ccdf9d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7mPePj49y6nRjj6bGmXoRU1iXMrGFgdF7tkRJtSFpump",
+      "alert_time": "2026-08-19T15:13:02+00:00",
+      "event_id": "e662259b37269f16",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "7sTjqCiai43Kym1RuiZsGwUAXARebxvjRUmrNgG5pump",
+      "alert_time": "2026-09-04T04:56:50+00:00",
+      "event_id": "c9fe43d8e5ab2876",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "81hb1tsS17EUMeKdJGL3CYg4A3eMuvZnN1p1QzJupump",
+      "alert_time": "2026-08-19T21:31:24+00:00",
+      "event_id": "11e1fe03f0749f55",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "82HxvW1K7kqEakBoqKaUwUr5zRpNrQK7BBjQvq7spump",
+      "alert_time": "2026-09-01T15:05:35+00:00",
+      "event_id": "4d728e6d0db4cf2d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "82cdF7Vg6zQfjGZFSyWApfKaxnUQJyw3CMxjfEDGpump",
+      "alert_time": "2026-08-17T23:37:24+00:00",
+      "event_id": "c6d7d7c7f5e0a600",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "83opTP8HEZHHjuUKTobdPzXMxorDhgUgG5WhJxECpump",
+      "alert_time": "2026-08-29T16:37:22+00:00",
+      "event_id": "7f7608b3bc72598e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "87jMwGkpF8tpWaUfhmcPzfM9uew2rXLiZVdu8bEqpump",
+      "alert_time": "2026-09-01T16:55:09+00:00",
+      "event_id": "319d4693efe0633e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "88a7JX9aZdXg5Uip7F6RcPi2fzR6mR4vAzQkBVBpump",
+      "alert_time": "2026-08-29T16:10:32+00:00",
+      "event_id": "efe490060cd0d411",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "89HmhRtVHqeSnDMVZYvHWGPckwA5oa1Ds52zMaEQpump",
+      "alert_time": "2026-08-26T11:01:50+00:00",
+      "event_id": "48df34e9240c32d8",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "89d4U7qHT2G3rSWeCr29fwWnmxz9s61sKpcbdXKzpump",
+      "alert_time": "2026-09-02T20:42:11+00:00",
+      "event_id": "7fb8285a6faf5a1c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8BXGfS8vUza6RaLxjtweXg9eySw6DxcfkevBJpDTpump",
+      "alert_time": "2026-08-31T00:47:36+00:00",
+      "event_id": "490c11919fd040f6",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8C1TCuWEXnWhW2UPdeQfq2WwPkJA5rDR3bbHM329pump",
+      "alert_time": "2026-08-20T14:37:45+00:00",
+      "event_id": "8a0d79675d0725e3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8DDegriQVvjCxj5UtkLZ2iBx4DBJDuskijKFQ7wipump",
+      "alert_time": "2026-08-23T13:23:28+00:00",
+      "event_id": "37e705a2563be890",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8Do5g718wVppdu5XCvJ97uT3fnpSvRo9miqnUhqZsHU8",
+      "alert_time": "2026-08-17T16:01:30+00:00",
+      "event_id": "e42d486d5c231c8f",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "8GZQoF1CSjasXo65iLLj38kB1VQWiQaNvPrD7sNzpump",
+      "alert_time": "2026-08-28T01:18:13+00:00",
+      "event_id": "a6812fc9c00f3e15",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8LNxXCAbpoUAJ9jaJLvE4UntZwLQbbeY9CPUp87Ppump",
+      "alert_time": "2026-08-28T14:01:24+00:00",
+      "event_id": "ab286ede45eb6159",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8Mx7jdrgshEykYrL4dYgw5UjSU8mHsKkrsRXww1Gpump",
+      "alert_time": "2026-08-18T22:41:12+00:00",
+      "event_id": "6332584c3aff6a53",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8NZWZJcHEsRDqfs1MzEzRQcEmxf8KN3pkhLSAom9pump",
+      "alert_time": "2026-08-28T05:43:18+00:00",
+      "event_id": "505b61678d464c1b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8PA6W7h5UaNinVExYEZF6zuWDjEP2vd6A6xkM7cNpump",
+      "alert_time": "2026-08-28T08:34:11+00:00",
+      "event_id": "653622610192c2f6",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8TX939Z5iifN8EjbaXSuLD1N2yZTKHeAApEFVsnipump",
+      "alert_time": "2026-08-17T04:14:06+00:00",
+      "event_id": "8430c8febd31a363",
+      "path_sampling_probability": 0.517791,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "8UBwyJJMuqQfWBbiek9RaY6uN1epFpp8dJRKinzEpump",
+      "alert_time": "2026-08-23T10:58:35+00:00",
+      "event_id": "7fdc0f580b98ade3",
+      "path_sampling_probability": 0.599866,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "8YXB7GV72Xay7nP5oaLoWkG2VBko7M1Yk2NokdzZpump",
+      "alert_time": "2026-09-01T18:56:17+00:00",
+      "event_id": "3b1220e5ab222ccb",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8awPKLE47m4EbyMEZPXhusbHpEzbv2GRJpGPfqNApump",
+      "alert_time": "2026-08-30T23:26:31+00:00",
+      "event_id": "558ee8cd879304e3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8cWEJk8KwPGv8mTqgcAEdd6LYTXSLtk4SJTD2bJwpump",
+      "alert_time": "2026-08-26T18:51:54+00:00",
+      "event_id": "16a1b76557be9538",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "8dcEdmQC8A9AiiHwpTG1pUf7DqH3XkXhZHAUtr2KUXg4",
+      "alert_time": "2026-08-18T17:26:58+00:00",
+      "event_id": "c27c3598493637d4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8fRhgKcTCNeXt5AVUdZ7BkGJ74y9vbUbGJaKt5Kpump",
+      "alert_time": "2026-08-29T17:13:58+00:00",
+      "event_id": "c8bbe493dd669b6e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8fmZ7i4mVQ6iUTR8U3hg3bFt1hzznkqHbBc9qCt8pump",
+      "alert_time": "2026-08-27T21:20:26+00:00",
+      "event_id": "ee58184b884e9caa",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8gFywdHpEQBRSB7WF1BGJFWabYdfsFrLN4RxSFdpump",
+      "alert_time": "2026-08-19T17:31:38+00:00",
+      "event_id": "9d0e0ae617e8b8ea",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8iHB4wqa1hBUkZXFqa1qTsUkk1NzUza9QFciUabkpump",
+      "alert_time": "2026-08-21T00:09:16+00:00",
+      "event_id": "ba6089422515ef1c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8k6YidRtD893CYRRKeWvGp2ixwTVU2haf5ymrwwZpump",
+      "alert_time": "2026-08-19T17:20:27+00:00",
+      "event_id": "a1452c32a413f5cc",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8np28cjujPCNWswWCxSRBYso7i43zqpWKN7RwtUkpump",
+      "alert_time": "2026-08-31T16:44:58+00:00",
+      "event_id": "54c7ce80678c21dc",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8p1bp9H1X4YEXUePuBwqJHJfXDjcA8m18wrpmjgqqrHy",
+      "alert_time": "2026-08-18T19:10:10+00:00",
+      "event_id": "1bfbdb25b51f6a7c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8tzKmbAHmwaac4ZrHS339LZUhssbXZJ6CYAwv1qXpump",
+      "alert_time": "2026-08-25T15:27:52+00:00",
+      "event_id": "df284adba6875844",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "8vWsFgTrwNG22mEH4rzYpz4mN5mrvUZ8VhwLLHYpump",
+      "alert_time": "2026-08-22T08:31:55+00:00",
+      "event_id": "764ced85055e5aaf",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8vhvDujF2uFBtRSfRoK7xY6JCJGyEqHSTzbCUVz6pump",
+      "alert_time": "2026-08-18T18:55:52+00:00",
+      "event_id": "5b3b089b1d947f8c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "8yRnzRAPtNwnupaSKBmBRwnUGBfu7u1JKLnsUdUzpump",
+      "alert_time": "2026-08-24T22:51:52+00:00",
+      "event_id": "3f49b5dc5080915d",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "92hRpoTx8GWPZDyKxKjgMRjFStrDq6M9VkMfAshoZ8Ct",
+      "alert_time": "2026-08-19T16:23:08+00:00",
+      "event_id": "4bd5496ac016790c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "931wvs24jszzA2TDashukRoqK9A71KzUE54m29G5pump",
+      "alert_time": "2026-08-23T18:13:59+00:00",
+      "event_id": "d534eecf0e531af7",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "94MumCye7uvNiggHKY4zPiwn18NUbAirV3BJWrSGpump",
+      "alert_time": "2026-08-29T05:08:00+00:00",
+      "event_id": "fddb6b274a9436d2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9CjqabSD83y7eACCDbxRe9gMew1EqmrT7vxbjoAXpump",
+      "alert_time": "2026-08-24T23:49:58+00:00",
+      "event_id": "fdb68f30c6c4481e",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "9ENMRcpQNzTZtQJSBQgoPsjJPySbo35pj17kcLkwpump",
+      "alert_time": "2026-09-04T01:05:17+00:00",
+      "event_id": "953a14ff6e11c382",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9Ejro7H645QgDwSQkryzbMvDQXAjfpZ9omuadeKLpump",
+      "alert_time": "2026-08-22T03:12:12+00:00",
+      "event_id": "d7d322a701e2c7e1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9HDGFCJNrsVAjYJ9qD8sy7rnFwE4yzLxEVn6ek6Dpump",
+      "alert_time": "2026-08-24T10:10:06+00:00",
+      "event_id": "74ba6a3e64b82f25",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9JydyXyoXCssdFPkm6nTEYzK5KDoxy5LSg7E8EYLpump",
+      "alert_time": "2026-08-24T22:52:02+00:00",
+      "event_id": "d97b4f6bae625ed9",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "9KDwXBf7patui1Hr1CVUaCzzNidPRopNxCT2BXZSpump",
+      "alert_time": "2026-08-26T12:11:55+00:00",
+      "event_id": "c390108e23f721c6",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "9KLsemencnUAtBNRb4f5kojva3KdK33VT8NbyGgVbPAT",
+      "alert_time": "2026-08-18T20:29:58+00:00",
+      "event_id": "8f56c56f11972aad",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9KXdg4SSmGDwphgK5CDpmxHnuHnrJHQA5ra3j7tbpump",
+      "alert_time": "2026-08-24T06:33:01+00:00",
+      "event_id": "43298fc1622f55d5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9NmdgmLXNrrPqb3YygvTTxyqMeXf7p43CB1ADH92pump",
+      "alert_time": "2026-08-26T20:22:50+00:00",
+      "event_id": "380939020bfc8f4c",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "9Q56WiU3utVffR6i63jNgsumhaR5rthAx2R2rtJxpump",
+      "alert_time": "2026-08-25T15:23:04+00:00",
+      "event_id": "b9aa3d317382598f",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "9Rf6DTf9xXEnJVQQVL3uQ5hkYdJuZPjx8V9rTCbZpump",
+      "alert_time": "2026-08-30T13:16:26+00:00",
+      "event_id": "a18dab11ac4b92a6",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9XEh9DLsi8tS1Q37znTR8Fv2w5VzNWahkxLVPwtTpump",
+      "alert_time": "2026-08-20T00:13:48+00:00",
+      "event_id": "525aac28753b388d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9YWiwGWv799mADiLeCoHL3ynVB7hmUbzP1npRvsbpump",
+      "alert_time": "2026-09-03T13:27:02+00:00",
+      "event_id": "11c37e7fb62542df",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9cRujSWK3eRhnFFatb5hxZTzzPPXeNfs6sqbXem7pump",
+      "alert_time": "2026-08-17T09:39:13+00:00",
+      "event_id": "e9da42beb21cc25e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9d7ZKT9Cc1NDQVCPkXnCD9gMQDZoppMrKzXEwFoApump",
+      "alert_time": "2026-08-22T02:22:09+00:00",
+      "event_id": "90d3deaff2701249",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9dpqWx5hQg4Bk7amL8GcEmTJbwsw8CucNNMDDzPppump",
+      "alert_time": "2026-08-27T22:05:11+00:00",
+      "event_id": "893c6698573a3375",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9pa87pMwv1LNrvJRndqPpyu7UmBWqQjsGWiEj4tdpump",
+      "alert_time": "2026-08-25T21:12:44+00:00",
+      "event_id": "f6371378f38694e7",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "9xPYzgAonj2Z2Utkurfj7nM2C5Hqd8nS5ZoUiFcCpump",
+      "alert_time": "2026-08-28T20:56:33+00:00",
+      "event_id": "2b53d073df36bf41",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "9xt1mevKYgvzhov4taPS3zAkZmu3v2PePFzTgwQxpump",
+      "alert_time": "2026-08-19T09:55:57+00:00",
+      "event_id": "38326d1c6812dba3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "A4uLVUvEaxKuju4skJSeXijn7jBADULuqjensguWpump",
+      "alert_time": "2026-08-26T19:03:46+00:00",
+      "event_id": "70aa644f84bf175b",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "ABBFYPowMmMKsfLtAHGAkpmhU4pZgLFggLkpDBepump",
+      "alert_time": "2026-08-23T11:27:48+00:00",
+      "event_id": "f8a334d0694e83c4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "ACL9ooDZ66UdiuHqQqsemmYKfcUghtYMVbZToKxEpump",
+      "alert_time": "2026-08-18T23:22:47+00:00",
+      "event_id": "73f32433b92941c4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AD2VX8ZpvKDapxnVMZqrkuGoq9WVqGSzv2Xj3PmFnvZD",
+      "alert_time": "2026-08-26T08:29:51+00:00",
+      "event_id": "2f7135f025c53bd5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AD9NFXGM4bf9U16EoJXGdoX8ueAG1MNrbaaGVFmSpump",
+      "alert_time": "2026-09-01T09:22:41+00:00",
+      "event_id": "06dad9e7c4399ea7",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump",
+      "alert_time": "2026-08-26T02:07:31+00:00",
+      "event_id": "aa22e6e2a4cb058c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "ANpL9wPqn8MYJXj9WtCDZfdGYCNYfi6m7TJqGRPrpump",
+      "alert_time": "2026-08-28T22:34:39+00:00",
+      "event_id": "702a372d19a06667",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AP8Wnu37Gf9RHgugPKGvpHe6LcTE2yp5GDy7pL5Upump",
+      "alert_time": "2026-08-24T16:32:51+00:00",
+      "event_id": "b09da8efbcfffeb9",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AV2YabfxMoLu13Kji8yTPAZ2PjrxLuHG8hNUJwaHpump",
+      "alert_time": "2026-08-28T18:20:43+00:00",
+      "event_id": "f33dbe20528bcdb3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AW7EARjTzcRCj5RKstttgn4zXvosUEvdGM9sMS2Mpump",
+      "alert_time": "2026-08-24T07:34:47+00:00",
+      "event_id": "b3c6397b9ae11e55",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AXqh8NbPzcr9M6U3FgdGbEhW81apYdg3rY2QhDw8pump",
+      "alert_time": "2026-08-26T11:22:51+00:00",
+      "event_id": "2122bc0fa590869f",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "Ac5LSKqNeV1PFeJAHwdi2wfSXXNAAfLVmeEEcKuLpump",
+      "alert_time": "2026-09-03T23:37:06+00:00",
+      "event_id": "7d28a6fd029d8e26",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AckB4GuVx2vmNtaibcTL6Po1jfavx5hAdKs1aP2r7qeq",
+      "alert_time": "2026-09-02T01:21:16+00:00",
+      "event_id": "626136f8512ceb28",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AdvYhFSCPudscjVXVZjA5NfgHQEFdEaPj7dF5gC2pump",
+      "alert_time": "2026-08-30T22:42:58+00:00",
+      "event_id": "212efe47b49855e0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AjJXwigo6pZsxq2kpDVKQGxjEBejtv2hZzDVceFopump",
+      "alert_time": "2026-08-26T20:15:02+00:00",
+      "event_id": "9969cda0722610d0",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "Ajz8hHstxm4LENccToraxpc9dRftAWwzB5VYDLMzds9k",
+      "alert_time": "2026-08-25T12:20:10+00:00",
+      "event_id": "ed316142f986abc9",
+      "path_sampling_probability": 0.855403,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "AnH4BQrETiaoeaAbL82qDa6Vf16BrvJZ2uGtVLszpump",
+      "alert_time": "2026-08-29T08:53:16+00:00",
+      "event_id": "6d13ea80683a764e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AoKz8FAx6kU2CqHiUpS6cUBtEz1romekEBs6R3xRpump",
+      "alert_time": "2026-08-24T21:59:56+00:00",
+      "event_id": "dc31f4a76da6a3cb",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "AoymGqVBEoDeS1ypcfqWCYwNSb4iJWqorGMx76kppump",
+      "alert_time": "2026-08-26T12:01:03+00:00",
+      "event_id": "0dca0059919b9ceb",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "ApYYfiFpppHPWha6zP7WJT1L82HoksBYaWicz6Nkpump",
+      "alert_time": "2026-08-29T01:22:18+00:00",
+      "event_id": "0c7df579073ad761",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "ArK6tw2bHtEW6ShYmam778HBrCjzN6v9Tc6sEMuRpump",
+      "alert_time": "2026-08-29T22:40:23+00:00",
+      "event_id": "ae2990cb7621c97e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AscmmKPEMM4K2fSB2virRrmRTpAXXWZpngvhdhqKpump",
+      "alert_time": "2026-08-23T14:45:23+00:00",
+      "event_id": "046fba317e7be575",
+      "path_sampling_probability": 0.530245,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "Asp3yp5zeimaBkPqfpo4g6FHxtGBZgaim7sQ3132pump",
+      "alert_time": "2026-08-24T17:35:28+00:00",
+      "event_id": "1c9eb37e6fdd2f31",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "Au6T2JHiEAr1WFJraK4eNFCdFYE7Y33QkcVehnJ4uVTW",
+      "alert_time": "2026-08-31T14:57:24+00:00",
+      "event_id": "846da3684e8c54dd",
+      "path_sampling_probability": 0.238723,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "Aw4a7y2BjZPhxGjV4N45JqXuhAVpgfx95hUrGVrtupxx",
+      "alert_time": "2026-09-02T00:40:43+00:00",
+      "event_id": "81656bfbc0b49eb3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AxDBCnwQ7u5w5omDb7iNQxzZtCouarPEMnGmP9W9pump",
+      "alert_time": "2026-08-28T03:13:29+00:00",
+      "event_id": "96b41823df0fdf9f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "AynSkeXtUM7tkBGhDd9x2XaeJ1RNJM8wQeaVY5SRpump",
+      "alert_time": "2026-08-19T16:32:44+00:00",
+      "event_id": "c3264b9f3b7470e8",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "B1i92YZ4khDCoqDJPcQmPz4iSineB8qbgc8uC7gQpump",
+      "alert_time": "2026-09-03T14:03:15+00:00",
+      "event_id": "84a29aa9e8fbe6ef",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "B3K4qx7pvMCs4cDV3r4f9wLSPNxViAtxxCErKi4ppump",
+      "alert_time": "2026-09-01T03:18:04+00:00",
+      "event_id": "1f1b5c569d34723d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "B6UM3ubEsjLssgoPhKPN4bG9kNfQ2DLx4xvvXz9Apump",
+      "alert_time": "2026-08-20T12:20:00+00:00",
+      "event_id": "07fb252216aaf1f4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "B6iPFNDCTnW6kzfWPCiAFtJdsZCgJBKRWUaJfHcjpump",
+      "alert_time": "2026-08-19T02:16:15+00:00",
+      "event_id": "c01aa2a1b53dc075",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "B7WPFwb37h1vE1CTHS1mjed3LXnCDZKFLGPiL5Pupump",
+      "alert_time": "2026-08-18T12:35:11+00:00",
+      "event_id": "9699438062b8203d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BFLuu3KxHtiJvCTKrb3EkHLnggm1gacbYejaTC9Xpump",
+      "alert_time": "2026-08-22T11:59:13+00:00",
+      "event_id": "b4da6005dca6f552",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BFjiU4de6VC8HwUQxjBtAUJMTNR9TsdZ7Kt7VWEMpump",
+      "alert_time": "2026-08-31T14:57:49+00:00",
+      "event_id": "d3df9fd19c81cdca",
+      "path_sampling_probability": 0.238518,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "BKRoPpAHMnPfSTFXtq1ffU4K5gnxVF54iuURnPwjpump",
+      "alert_time": "2026-08-18T22:20:28+00:00",
+      "event_id": "fc3802d76662ee65",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BKnKfpqBR8KJQj59gX3UZ7QFodnBvVCgkHMssah2pump",
+      "alert_time": "2026-08-25T18:13:55+00:00",
+      "event_id": "430289cdd02b1ba2",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "BM5UxWDrY2tVxHA6H9xMGcnbki2V8N1TRKkKyQYNpump",
+      "alert_time": "2026-08-27T05:49:38+00:00",
+      "event_id": "903645b911306ae2",
+      "path_sampling_probability": 0.912342,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "BNAJpb6MjunztkunSQS2KuBzspqd8R3Q61kvipL5pump",
+      "alert_time": "2026-09-02T19:34:15+00:00",
+      "event_id": "143bbae8e5f0aca9",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BNr9ReNanVCCW6VX8J8CcRkPp4AyeEeYXMiYs6T4TdPm",
+      "alert_time": "2026-09-01T00:05:43+00:00",
+      "event_id": "8e94543ba4ee7f11",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BP1Lq7UVPgBCw5QU2bxwP3JdCuV3LbsNSdJUDhibpump",
+      "alert_time": "2026-08-26T18:19:02+00:00",
+      "event_id": "f6becdf09d17c614",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "BQEJVZRWiivXDdwLCG5UCjabXcLAH3DkWkCwfXqCpump",
+      "alert_time": "2026-08-27T21:33:27+00:00",
+      "event_id": "c09baf36c9622d8d",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BUny5DF7yX2dzHJudjq8HWP7DkfX3TkzNjP1b4btpump",
+      "alert_time": "2026-08-25T03:45:31+00:00",
+      "event_id": "febc20ed2257543c",
+      "path_sampling_probability": 0.420196,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "BVqXfpZPKCSUbViP969iJoBWbQV5KA1U1xJN7Cx6pump",
+      "alert_time": "2026-08-30T08:43:06+00:00",
+      "event_id": "4f1ea72e96a2e952",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BXCosYpBXpiWznAEbYm93pTu81b82SoSkRVCw7Bcpump",
+      "alert_time": "2026-08-29T17:01:21+00:00",
+      "event_id": "aa153aec7766f32c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BbGcaeFpwhshH1EJTbh4KJzrgRgjLajx1afMTnRVpump",
+      "alert_time": "2026-08-21T02:41:40+00:00",
+      "event_id": "f00c6caf4fc10ee4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BbgeqPHTCHqariNRUvwNUrj4GRUhnRJCuKnLyuDrpump",
+      "alert_time": "2026-08-20T19:34:22+00:00",
+      "event_id": "065bd4bbf56375ef",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BcMYDqxzY64h6iSmxeEQWLzk6o84iPQUutc1Pewx9nHQ",
+      "alert_time": "2026-09-02T05:14:36+00:00",
+      "event_id": "c6cf3e2a353d1a13",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BcsUMB2AV2ZzapEwNEY2VjbpxzYsquzAsNNVGyLApump",
+      "alert_time": "2026-08-28T22:37:02+00:00",
+      "event_id": "f5b02731a55f88ea",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BdEWVJ16bP3VRtYssSUHtoU5GojviaMBFdZEJS3Ppump",
+      "alert_time": "2026-08-23T17:50:23+00:00",
+      "event_id": "d7e4215a5c5167e9",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "BeSeZHr6axZLzPcSWhpADzHHQQitFmT1ndLtbU58pump",
+      "alert_time": "2026-08-18T06:44:19+00:00",
+      "event_id": "c95ca1efaf67638c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BenZ4V7BHcUy8sN2CdtXHY4sjESvG3beJSi2c9oxpump",
+      "alert_time": "2026-08-20T04:47:46+00:00",
+      "event_id": "515fc8e65a0cb2f2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BfHXMwoX28ox4n76tk7Xdxbk8R4H5qrafFRw1cc6pump",
+      "alert_time": "2026-08-26T04:43:48+00:00",
+      "event_id": "6d2c002575aa29ef",
+      "path_sampling_probability": 0.598487,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "BhdgMUP915ogPPFQZ1YUVGnUKDDr3Tajgmtzjao2pump",
+      "alert_time": "2026-08-18T12:00:05+00:00",
+      "event_id": "25ecaa7572244474",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BhqGYqy2qP8kze668hPQCRioLXLV866jVubKcyZZpump",
+      "alert_time": "2026-08-29T20:34:13+00:00",
+      "event_id": "3913327643904aac",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BsbsB3WLq7vbY5En3MBCAsTrcwaCxNKY2Mp5pGuLpump",
+      "alert_time": "2026-08-26T14:57:00+00:00",
+      "event_id": "aeb1d9d1db9d49b4",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "BsdQxb427UCTcxwSjRc8VpXHRvDNsTdbuNbZgXhSpump",
+      "alert_time": "2026-09-01T01:14:11+00:00",
+      "event_id": "1a130ee72ce882ed",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "BxcJp66TNRohNK7i5qu1KsoZva35VWpXDfGWDe1Cpump",
+      "alert_time": "2026-08-17T05:27:35+00:00",
+      "event_id": "f91fa66fd9d6b484",
+      "path_sampling_probability": 0.858222,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "ByojUxNyb3Dz7f1aFGjH8gg5UwYPwuFmgadkrdxgPXqE",
+      "alert_time": "2026-08-27T16:21:16+00:00",
+      "event_id": "921de216fb93ef5f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "C1Q8Gau8EDNJrmhR4F5G4cNQsQz23E2uaVR5cRsVpump",
+      "alert_time": "2026-08-30T13:02:14+00:00",
+      "event_id": "d55983ccc8fed49c",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "C1TsRMAcm911NdBoR1NseWqPku2qd1aW2CupsuMvpump",
+      "alert_time": "2026-08-29T04:44:17+00:00",
+      "event_id": "5a149c427bfbc469",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "C5L12t4ivPKJErCr2SC8pEsvZZZsZuRYaAcmhR4Apa3f",
+      "alert_time": "2026-08-17T16:14:44+00:00",
+      "event_id": "fb74aa16fc23c9ea",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "C67JvvriGSCivc9xhr5E6B6X8gcsjqWXZvigdXoYpump",
+      "alert_time": "2026-09-02T15:06:01+00:00",
+      "event_id": "4e79e430f6b60743",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "C6R3o7saUf8mGD7qbPpTHuFJbPPFSfNvzL89VBjEpump",
+      "alert_time": "2026-08-27T05:54:33+00:00",
+      "event_id": "c4a0730337c1ad2d",
+      "path_sampling_probability": 0.634099,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "C6dx4ZKPdfmtAC1cymGxkbSAZ6aDWCpqmSnekWNopump",
+      "alert_time": "2026-09-02T17:01:51+00:00",
+      "event_id": "e4d884ef3371f530",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "C8BtrmhKqp9ryzC75yz5HQwtzb13PPb63q6TWoLrpump",
+      "alert_time": "2026-09-01T20:08:36+00:00",
+      "event_id": "09605772d379c1cb",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CBftYjJC7XEwh1r2hD87zsLudwAb7Y3TyUvWcacXpump",
+      "alert_time": "2026-09-02T16:54:01+00:00",
+      "event_id": "228d2bf8eff71d41",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CCDtWh2mbs8NziLjhchJf4JSGpzqkzmCjAY1Nn9Xpump",
+      "alert_time": "2026-08-30T14:46:41+00:00",
+      "event_id": "fb5dfb51fedb05f1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CRDQDjsfGp8WtZS8M59r1Jq3KmF1abf4W6qKeDn5pump",
+      "alert_time": "2026-08-19T21:53:19+00:00",
+      "event_id": "593fad9bd3ca3ac3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CSCSRbGAJxgDhzGDaiKUH2v7djzVtFAPmETEiNhZpump",
+      "alert_time": "2026-08-31T23:13:24+00:00",
+      "event_id": "6813d464d3223ea7",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CTHx7fen9TKZ51TRSkMm3G4F6DvFY5ZweJHk12dKpump",
+      "alert_time": "2026-09-01T09:58:44+00:00",
+      "event_id": "b74d4996a89952b4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CV6p2itrfbRfCEahpxUANDAmTWR8E2gAGSbNbeVUpump",
+      "alert_time": "2026-08-18T08:37:19+00:00",
+      "event_id": "4309d7e435e9b13f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CaAYBGo6efKkrV1A9cL2Jd7VpfrNzN5ri1khLgdypump",
+      "alert_time": "2026-08-30T20:48:47+00:00",
+      "event_id": "c411f7b02148b017",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CbvkyT49XSXk9JEeBsrien97ycnWYwmoyRGmJrzK6kR8",
+      "alert_time": "2026-08-19T10:57:33+00:00",
+      "event_id": "e85944c7437d0bd8",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CcWVFqrwzkEdHH1YpfZRjkdbKrxYQbU9BRqeC6ZGpump",
+      "alert_time": "2026-08-18T14:58:14+00:00",
+      "event_id": "de6ba5fd166a6873",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CfBYu1dsy6nC3oiYmxE3Kxds6auwpoxcErvSMVykVEPH",
+      "alert_time": "2026-09-03T04:38:38+00:00",
+      "event_id": "bd625ad76a5d7908",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CoQoM8Se9wbX6VThDkkKgZXzWWjsz8XyPYPqLFqWpump",
+      "alert_time": "2026-09-01T17:25:09+00:00",
+      "event_id": "936621d4dc45f229",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CrcHj9H6yDUkqZ3iy6t1aZL1Si8MZaNevhH5d8DVpump",
+      "alert_time": "2026-08-26T09:35:17+00:00",
+      "event_id": "b1a98efb46c6c41f",
+      "path_sampling_probability": 0.414223,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "CsaBHbqvkLSDi9fuFpoHj6ATwD2SbTUNH6dx9KCtpump",
+      "alert_time": "2026-08-29T20:23:23+00:00",
+      "event_id": "a014a609499b1485",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CtjPQSDXTwUEs1mv72KeMCMNGW8WYXzHGofbU99wV4hm",
+      "alert_time": "2026-09-02T03:21:32+00:00",
+      "event_id": "d97c4c885dfa6906",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Cu5a6oVDtDjwYVo17aaBK5rgsRJgnTKLDyvXvj45pump",
+      "alert_time": "2026-08-29T19:05:41+00:00",
+      "event_id": "816132adc09b1a54",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CwJa5HR3p5fL8Ms4KFASsPbioGs4qGjdF8Bk53Wmpump",
+      "alert_time": "2026-08-24T23:52:14+00:00",
+      "event_id": "c5459cff119ba1c7",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "CwftESNDph8JgN51D3jua2g4BgrLnGSDitcpeKx8pump",
+      "alert_time": "2026-08-18T01:02:30+00:00",
+      "event_id": "ab71f2269b99e76e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CybSRsmzi8A9yDEd5zBQkbYzJhxyBJfRDLGZeR7ypump",
+      "alert_time": "2026-08-29T10:56:46+00:00",
+      "event_id": "3f57939dacd90af7",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CzhiGmwb4nEz3aNy9tNF8ACByu6Djit261DCmxrspump",
+      "alert_time": "2026-08-19T20:59:26+00:00",
+      "event_id": "1784688eebc8366b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "CzyEJ2zcz5FoR9EFBKhrWjpaotoPnvVzqyFoeX1dpump",
+      "alert_time": "2026-08-31T17:41:21+00:00",
+      "event_id": "0aa2df2664bfd598",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "D2FEt3akyEjC8RVue4rKf37GkqcgYUaVNtKAmbB2pump",
+      "alert_time": "2026-08-20T14:45:19+00:00",
+      "event_id": "1c438a2a80e2f414",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "D7EzLhhDcuXGrgb95iv1ScXtvXzk6Un8aawBRvb6pump",
+      "alert_time": "2026-08-27T06:47:45+00:00",
+      "event_id": "52607884c628910d",
+      "path_sampling_probability": 0.526759,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "D7L9pvxnzhh3M9wFWFATiHX4y7iEbjnmKB9LTsWDpump",
+      "alert_time": "2026-08-19T10:29:42+00:00",
+      "event_id": "f2af2e835d16a4b5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "D8RHobSRJcvuxD5w24bM41WQHew4m32EJ9rWCSuWpump",
+      "alert_time": "2026-08-21T01:04:31+00:00",
+      "event_id": "45202364d109b747",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "D9xsVSVrW9VeWVSm67iiRvsAueCp1Dc4B2pVWPABpump",
+      "alert_time": "2026-08-30T01:27:21+00:00",
+      "event_id": "3b4fa45ee2d75ac3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DAHWBpP6QJCBLpuWRtRsYZm11ArxwuBb1B7THZa8pump",
+      "alert_time": "2026-08-26T16:09:03+00:00",
+      "event_id": "31ea9511b6220a1e",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "DCyeKUFjDYszHhip74K8BWseCGA5e5uT72qJjJKEpump",
+      "alert_time": "2026-08-28T02:58:51+00:00",
+      "event_id": "bcd63eddc6e08f18",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DD6ebCCCn2JahKve1LubomR84HJjnY1zvjmfeoQapump",
+      "alert_time": "2026-08-19T02:35:44+00:00",
+      "event_id": "25995179cc530d5b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DECCvbB1dSDMSbXdHJTUDE9AFCPJCRjzwcrCQTUK6BXR",
+      "alert_time": "2026-08-17T17:24:21+00:00",
+      "event_id": "067cd9d9bfa98394",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "DNu3FAYNNccYxH2ED21Xs8Bvufdej6CDsHAypqYWpump",
+      "alert_time": "2026-08-31T03:11:00+00:00",
+      "event_id": "a074d20d2cb20e89",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DSDvBY17VQoEWMaZxivedBeGxetBTbNru7fF2KNX5y2F",
+      "alert_time": "2026-08-17T20:30:06+00:00",
+      "event_id": "8e3eb67aac8d2ffe",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "DWX5YZEFmPapoL3NDzPmbpnDc5Dq23dDWjQcwhu1pump",
+      "alert_time": "2026-08-27T11:46:51+00:00",
+      "event_id": "58fd895e4ea09547",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Da9TrRXf69zR5FU1nvwwPyA3DwiJYxv4ZXtnaWNzpump",
+      "alert_time": "2026-08-23T21:10:25+00:00",
+      "event_id": "f648e7948a838f29",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "DapBXxje2ux4eHsruD7NjA1B6vvvsHw2SKLCJwp9pump",
+      "alert_time": "2026-08-25T10:26:13+00:00",
+      "event_id": "8a206aaf198b1726",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Db6nZzeqgvip16MpXV33GVoNku9DHGFGNyWsR4bAeiLw",
+      "alert_time": "2026-08-18T19:47:32+00:00",
+      "event_id": "78ca6d1325d7635f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DddajcZPHJ2LVM6e3Ey9Q4DB2vfi7UnitoMn4S97pump",
+      "alert_time": "2026-08-26T12:58:30+00:00",
+      "event_id": "77e6086650cdd567",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "DfvXmcXWo8VYzXKLV5CLfFKUWzC7RmUAMKBhFqxNpump",
+      "alert_time": "2026-08-17T08:08:42+00:00",
+      "event_id": "c72ccbae74555b8e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Dhc4cPrYxT6FhzVxn8gUMs5vocLA6SDvAjfJzKNcpump",
+      "alert_time": "2026-08-27T23:36:33+00:00",
+      "event_id": "f1d266d465b2fd48",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Dj2WeeaTWdPJHMYqzKBwHJBU27XDVBfGmtiPvQzzpump",
+      "alert_time": "2026-09-02T13:56:15+00:00",
+      "event_id": "f302f93ae1275405",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DmF6YKupSjvdquo2PoKHsAZiX4mQogP15CGaGdkEpump",
+      "alert_time": "2026-09-02T06:39:54+00:00",
+      "event_id": "cb8507023daafeb0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DnJffmBQE5qiG3JWWMWi78b5Unbh5CwxdDg6BRmtPDBw",
+      "alert_time": "2026-08-29T09:08:11+00:00",
+      "event_id": "ecbd976007a2e948",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DoEqH7JpYT3XP84Qc8a6poKGqHxXEZA6GpnYG1sKpump",
+      "alert_time": "2026-08-22T17:29:20+00:00",
+      "event_id": "f473f7438887708e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DoTMzBpSRPEwaycrSUzgSaDEs42PaiQVvYXAmLkcHr5X",
+      "alert_time": "2026-08-22T21:37:55+00:00",
+      "event_id": "bdaee61d80057047",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DpfucJCdvWYxrVNvoVTciQ3AG14oPpYEdUAGvamypump",
+      "alert_time": "2026-08-26T01:17:06+00:00",
+      "event_id": "fbe992de579c7125",
+      "path_sampling_probability": 0.680161,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "DsrZm5VXhQRPcZ4thjUcJpbizga5q96w9gT54XnCpump",
+      "alert_time": "2026-08-23T16:13:57+00:00",
+      "event_id": "ec6829e422061477",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DtHH4ZvyDusSzecfWnYxN1L68Jc31bN7nx8bckEmpump",
+      "alert_time": "2026-08-27T08:45:18+00:00",
+      "event_id": "1e406fc3d7215e10",
+      "path_sampling_probability": 0.601945,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "DuGf6g7hoKf62bLfqUS2Mr8jVa3FMzJqVEtyd9VUpump",
+      "alert_time": "2026-08-29T03:48:44+00:00",
+      "event_id": "7cd7e5ff8a0b41af",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DunmmJnoafguSQM4BAGifD5scF6gEWa5Gse46F7fpump",
+      "alert_time": "2026-08-27T22:27:55+00:00",
+      "event_id": "137498a98e99b9cf",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "DyF87PdxGCh9xrZTYRCR35f146dCLFHbtTdiby3Fpump",
+      "alert_time": "2026-08-28T00:48:18+00:00",
+      "event_id": "dc47a4012a838682",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "E1hFukZCh9C1GYRN3paX7J4NBwvfZq5MposWURbdpump",
+      "alert_time": "2026-08-27T06:59:29+00:00",
+      "event_id": "685feb46907127c9",
+      "path_sampling_probability": 0.501766,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "E36kEqRNYtKRCf3Qh8QaMT4yXininjf6eRf9DXSmpump",
+      "alert_time": "2026-08-26T17:41:02+00:00",
+      "event_id": "16f79de564a576dd",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "E3XqNdjdiZcA1gSQyhjy9GJvhgcYTNbyMVWam23Gpump",
+      "alert_time": "2026-08-29T11:06:03+00:00",
+      "event_id": "68294435c3817878",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "E571NnFXsVpTrTKD9AadoXpnQn8pRgi1oXABTzeC5JaV",
+      "alert_time": "2026-08-20T07:37:32+00:00",
+      "event_id": "ed7b44c939e5ce32",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "E8MnCtZVxk6EZAxQBAfzrWTPoCQfyEm7dghbSrMQpump",
+      "alert_time": "2026-09-03T01:07:14+00:00",
+      "event_id": "edf0539e6c4549a1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "E8jr3TtEEa6gwvcJ7EoeKg7VSFACjHifQuwLZAh2pump",
+      "alert_time": "2026-09-03T14:29:16+00:00",
+      "event_id": "7a823d5d01935c99",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EDE9scnnyNvcv9DpCfvVDHuRhpULAt5snwJ5krQLrYQ8",
+      "alert_time": "2026-08-19T21:27:50+00:00",
+      "event_id": "bb1a18b05171d7e2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EDMusteWGdi1CMhqFQqUwWhCwEB9Zf4X9DRVTXHspump",
+      "alert_time": "2026-08-18T15:51:40+00:00",
+      "event_id": "5aadfb78719a57ba",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EFXB8SyGF2yKed31zL2eoAqDgzTucve2GH2PFGXPpump",
+      "alert_time": "2026-08-25T02:45:09+00:00",
+      "event_id": "b7c7cc594d3fa189",
+      "path_sampling_probability": 0.381214,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "EH5scbBRuDnFLWnzJC91sCQ382TVg1qBgb5FzSQ9pump",
+      "alert_time": "2026-08-18T23:19:31+00:00",
+      "event_id": "a2c1596e6c9e8f16",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EHTJSJ97kDfwtb6qCv5AWgSn18cBAtGbwLSquxqMpump",
+      "alert_time": "2026-08-20T16:32:51+00:00",
+      "event_id": "b01c1d538a34c7bb",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EN57jp1J5FErMSezopd5BXid4YKuPYTSPfsoKjBL3xFS",
+      "alert_time": "2026-09-03T01:35:58+00:00",
+      "event_id": "053422401291a529",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "ENzjkHHNgb7X4eB2pvZ5pQ7B8KUGoD8M7fZtnJsppump",
+      "alert_time": "2026-08-20T17:08:59+00:00",
+      "event_id": "1cb291ef2b698148",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EUqvfNJ9gSvAzC4guV8xkG3ifhPtxQR1aDi1QtfVpump",
+      "alert_time": "2026-08-26T10:04:56+00:00",
+      "event_id": "ed68d2171232b916",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EXYEkUiKhy7vcgMJktCWGygkCiEAh2GBBntWDLnApump",
+      "alert_time": "2026-08-19T17:27:26+00:00",
+      "event_id": "c08cd16c145eb24e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EZaKeZcosDoUFMPEAyjUfsNE7BbWxTiQ3mzRLdgYpump",
+      "alert_time": "2026-09-01T12:07:28+00:00",
+      "event_id": "b1f0850da43bf953",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Ea7jPMTNHzazhoPBSEqZgqsMkcbDLY2TEDnNnsRjx1wE",
+      "alert_time": "2026-08-19T04:05:24+00:00",
+      "event_id": "ad8dbf9a424c01b6",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EcLg1ww1u1EFEC5nH5gK7KFTZjMXwrqGSmgB2gp3pump",
+      "alert_time": "2026-08-23T17:21:46+00:00",
+      "event_id": "3465412d10bd01ac",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "EeXWZbLXTWcK9n3aHJ44Hujk8Zczx9chJD9v9EANpump",
+      "alert_time": "2026-08-30T23:47:46+00:00",
+      "event_id": "627f4d3c22fbf0a6",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Eme822muEhzokFAv281vkxQA95QHusrzRmsNmD4pVQz5",
+      "alert_time": "2026-08-17T19:34:23+00:00",
+      "event_id": "2b70189001f06053",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "EoEZ8gDkEDMQd8iE4XJULhQ5rD6FiCUmxpfCvr8cpump",
+      "alert_time": "2026-08-18T15:20:33+00:00",
+      "event_id": "7eed64c78dc03fac",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "ErQN3R5QRBZ4qnP4AdH5fS9X5kei16hVFyFzNCVspump",
+      "alert_time": "2026-08-27T20:18:47+00:00",
+      "event_id": "29742fa94cace824",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Ex2rpMv7WzvYhpKUkiyPmj2tGb4dbFMpNHiBbqbcpump",
+      "alert_time": "2026-08-22T04:04:38+00:00",
+      "event_id": "2bcedf632e3e8295",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "EzsbYaeEGZmz3pbpzWYBqhR7BG3SP2PBG5vSY84epump",
+      "alert_time": "2026-08-20T01:14:48+00:00",
+      "event_id": "521824bc9d8199ed",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "F24fp4pfkQmSuZFkNwh8YpXpVZP1TA5ZttizFe3Qpump",
+      "alert_time": "2026-09-02T06:25:04+00:00",
+      "event_id": "5ee47b7e7fecad07",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "F2h5W5AwoRcQXb2anKHXUA9JJ5QchjXq1sk4eP7xppHF",
+      "alert_time": "2026-08-29T23:26:47+00:00",
+      "event_id": "a15a69043fde9857",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "F3PBDtZBq9mLo1PEsP6Ax9ACJY7SfFCufjTA97eEpump",
+      "alert_time": "2026-08-22T13:46:53+00:00",
+      "event_id": "e311ff5e30b25e3b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "F4UyY11dxPMmacFTEM3PwuzpHdXjPtnntjbfoYnCpump",
+      "alert_time": "2026-08-24T11:49:20+00:00",
+      "event_id": "c98cc999e29e00b8",
+      "path_sampling_probability": 0.340748,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "F4ZN8VTUkzFpEwxGt5z3cTt6jfoXSuCLoCNtAMyNpump",
+      "alert_time": "2026-09-01T00:13:55+00:00",
+      "event_id": "f94fd35033d2b945",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "F4paGkpzqWsB3GEGHHE2H86cKcNxB4y72aU859xspump",
+      "alert_time": "2026-08-27T09:31:13+00:00",
+      "event_id": "6c91a9e3a70d4ed8",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "F5qnZ9qxdkvXSTECQ2MoGRvUDQGsKiMw59YhkWz4pump",
+      "alert_time": "2026-08-17T23:01:59+00:00",
+      "event_id": "c2cad891c8b706d9",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "F9oUz5Qs1zZuNq5VHQjxCNFSbBh7mJdDYd3qwLaPpump",
+      "alert_time": "2026-08-29T02:07:11+00:00",
+      "event_id": "68061e8a8f12f036",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FAP71JACFwdtueZR7xkNx84JuFPkwuHab8asAYW1uwN",
+      "alert_time": "2026-08-28T13:04:46+00:00",
+      "event_id": "9ec0d02d56bf4439",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FBpGzj2VN7Us4retrDPd5C2yJexruhqvB5TYtQCEpump",
+      "alert_time": "2026-08-27T12:31:00+00:00",
+      "event_id": "d186810dc2ef524a",
+      "path_sampling_probability": 0.580963,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "FD5GJQ2Js26rm7E9zicY2R3ZHGqKwRNthTpsLFf8pump",
+      "alert_time": "2026-08-19T19:21:56+00:00",
+      "event_id": "36860d7d652db45a",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FDXoALsMioumuyjit61e8wFMY3tEmBfdMuyzCnULcZMS",
+      "alert_time": "2026-08-23T21:55:48+00:00",
+      "event_id": "75d9c07b879e08e8",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "FDjGQWUZV5PbuoNaXiETDvPjqExuHnDAByBAXyNbpump",
+      "alert_time": "2026-08-29T13:42:45+00:00",
+      "event_id": "c1bf48716a336c01",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FEFtdbDo5atXqNTyY9of3reV1t7NUt2t4x3xU1AQpump",
+      "alert_time": "2026-08-27T12:46:28+00:00",
+      "event_id": "aa832e81856c2bce",
+      "path_sampling_probability": 0.412337,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "FESTnFCJ2Gh8CqGrwyk8s26t4f8CsQXtTYg6J7vjpump",
+      "alert_time": "2026-09-01T11:45:31+00:00",
+      "event_id": "9f359e6d054f3071",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FHqHtemiNLu6WNy35wQaebQrayKHVifH2TuJsNq1pump",
+      "alert_time": "2026-08-19T23:14:40+00:00",
+      "event_id": "75b20dfb9bff5e32",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FLwoiKDq6pKT5so68Xx74p94DDtdvQW7WZy5WK6Epump",
+      "alert_time": "2026-08-22T21:57:04+00:00",
+      "event_id": "203fcf97e520da06",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FNBZJ6PG5pBukbC8EiKRAUtjwupX5vQg9KroYZ3bpump",
+      "alert_time": "2026-08-29T21:49:30+00:00",
+      "event_id": "e2366d34dceb22ce",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FNRrsFwHJkWoGuSsaftbNbtQxcLLbkdrrncXuTYGpump",
+      "alert_time": "2026-08-27T16:05:25+00:00",
+      "event_id": "de3581cf6a70ed55",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FPmZtrF6jSMKYsGRH7NMf5WNthxttkUfzBjmt4pbpump",
+      "alert_time": "2026-08-19T09:24:51+00:00",
+      "event_id": "907d9e50c060ae3e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FSwc3NbQtR1AK3LrVW11EZW7dmvimneEbYiVxGzy4eAW",
+      "alert_time": "2026-09-01T06:22:57+00:00",
+      "event_id": "74092c978804a0e8",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FTNAa4uRLuKdtQJZ5w6qBsuPDax88ZT8AcuBYw7Spump",
+      "alert_time": "2026-08-23T19:53:23+00:00",
+      "event_id": "3d6d4addf6521d5b",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "FTyYaLaMqZzS3EhfkPu8GE37rEYNedRLiwXG3CvVpump",
+      "alert_time": "2026-08-17T03:54:46+00:00",
+      "event_id": "22901bde2450309e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FWB6zoW7jksVAX43yFy8MRELYawipwuUJXhcoiwPpump",
+      "alert_time": "2026-08-31T01:53:24+00:00",
+      "event_id": "374ff302d566f003",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FWV3Y2nFo6GZUiYSfQX1JYmDkoLnPbv3AjoTWJVTpump",
+      "alert_time": "2026-08-20T20:53:36+00:00",
+      "event_id": "8d53805cbb145712",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FXYN9HpcYJDHXfjAPP7r8hh3taz1qureP1RQK2aPpump",
+      "alert_time": "2026-08-27T23:21:56+00:00",
+      "event_id": "73aff1108bb0db96",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Fcc5PpXkJCHAFuySUajCzahSb2J7gMyScdNaZjbopump",
+      "alert_time": "2026-08-17T22:08:58+00:00",
+      "event_id": "36c56a362e8f813e",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "FdtKqpPK99NiMyre48EADmWv51d7wwDGfWV6fzW9pump",
+      "alert_time": "2026-09-02T08:45:51+00:00",
+      "event_id": "046df249f019beff",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FfQ1fgJfsKkLn1gK3Y4BmyzutaiP2fT1FM8rBWKCpump",
+      "alert_time": "2026-08-17T17:41:57+00:00",
+      "event_id": "e21357d91cef693f",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "FfeDVN2nYbF8LKGaooaL1R1p9pTDC5SMU58EXFtTpump",
+      "alert_time": "2026-08-19T12:08:19+00:00",
+      "event_id": "cd2396477492690b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Fht82sWn9BzsUCSTpU8hAtNrfybfGDhhBn8oZs3Dpump",
+      "alert_time": "2026-08-26T03:18:46+00:00",
+      "event_id": "1e8ea111efe66243",
+      "path_sampling_probability": 0.652163,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "Fo2zTpwJxQaZcoggM4yVqcgnqDZtQ1x31aPivDjMftH8",
+      "alert_time": "2026-08-26T03:39:57+00:00",
+      "event_id": "c2a683f9407a4604",
+      "path_sampling_probability": 0.3663,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "Fpnv2hGJ1hjzcftjg86uPR3f4gMVhBri8KRt2RTypump",
+      "alert_time": "2026-09-01T08:57:23+00:00",
+      "event_id": "cb9d5ee8f5f7dd74",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Fpqy7zCAGKscJFyC1EfxPrxmYaTySp8eHAs9Y81vpump",
+      "alert_time": "2026-08-31T11:50:00+00:00",
+      "event_id": "71670ae83b11cc41",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Fs3BcrYEsZQ5zLo2B2PCXjPuc5JQGtxewH7X2N8Tpump",
+      "alert_time": "2026-08-28T16:52:18+00:00",
+      "event_id": "1abf377061655145",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FtwXiYg3bqbbNwmzNWi8bqxpfYXeWQEBKJFrF26apump",
+      "alert_time": "2026-09-04T01:14:26+00:00",
+      "event_id": "d554c38f96927494",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FuF2M5T79HJdpJUbp46qwWssLXQ1Xjf1yiNSfyo5UEGC",
+      "alert_time": "2026-09-03T11:45:20+00:00",
+      "event_id": "d7fe22162f564478",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FuQcKP2F5fJGNZQgZP8TBvHs7UVj29tKMrxsDALLpump",
+      "alert_time": "2026-08-19T18:10:02+00:00",
+      "event_id": "30f38ed67842e2c1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FwL2b97pnA1gUGrdcgRBLikmFb5V2TA1UDixZ21Cpump",
+      "alert_time": "2026-08-28T06:03:09+00:00",
+      "event_id": "7715de4b44ae42ea",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "FzJ1Cm4kwEjiPmfna8WXWwjC7i41KnB9oi9wz3nHpump",
+      "alert_time": "2026-08-26T09:30:46+00:00",
+      "event_id": "27f698221df1dedd",
+      "path_sampling_probability": 0.449527,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "G1XweP2oEs7XM1a4Lrvz5e9ciX462EfgvLUpTAGopump",
+      "alert_time": "2026-08-18T13:42:47+00:00",
+      "event_id": "ae144a7d85900b71",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "G28KkXGX1o7gEegysCL2yPxaEUif1gNwLPK8u5v9pump",
+      "alert_time": "2026-08-25T03:52:44+00:00",
+      "event_id": "022437d928564ec7",
+      "path_sampling_probability": 0.385588,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "G4e4v4CfpA4yFrMyBasMTZ88m1nT57TkPZihAV8dpump",
+      "alert_time": "2026-08-20T00:17:13+00:00",
+      "event_id": "674dd7419548fceb",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "G5pPFQoT8xHDrU5YPyTjtrYugd6YpHap9nCj1zMg6KF2",
+      "alert_time": "2026-09-02T01:34:45+00:00",
+      "event_id": "8d2da7c1f8914b5a",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "G8p2jGHsffrijSKLTYdDPuLPPVS116aGkJ2yyziupump",
+      "alert_time": "2026-08-28T21:26:50+00:00",
+      "event_id": "62e122d23b5f2099",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GBEE4pWqsKb6gjaf7AmMyMn5HjAyjLWWcrHAmQdnpump",
+      "alert_time": "2026-08-26T18:38:12+00:00",
+      "event_id": "7b1c7468f8c32a0a",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "GBzXkjjUnz3keEiXEzVpaXZhmzRb2YbU5ELqmZ5wpump",
+      "alert_time": "2026-08-22T20:48:01+00:00",
+      "event_id": "d7f9cadd3703d70e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GDAdCvjiRoGxA18ya3Qha1DD6bbzbR9Z9AGpMa9Tpump",
+      "alert_time": "2026-08-19T04:04:40+00:00",
+      "event_id": "fa2f5ec4e1a18319",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GFpDRu3tidtd1kfyThy38WSDiv3TwjSG8jqujas8pump",
+      "alert_time": "2026-08-18T12:45:09+00:00",
+      "event_id": "c2ac5e5863b99e81",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GLRGgpetTFGoetoD2A2CmTVCJTrnqfyxMGqPWFMcpump",
+      "alert_time": "2026-09-04T09:37:08+00:00",
+      "event_id": "e38a807e4856bee3",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GREKmorj6RHGuHKxx11TPEGGwsFFqLA8CW5VKGwKfY1S",
+      "alert_time": "2026-09-01T07:08:51+00:00",
+      "event_id": "0f40ca70d2a2a839",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GRRPDwqYr1JgK42p4f6cYKRNEawbUgZCdR7tavZgpump",
+      "alert_time": "2026-08-30T23:19:14+00:00",
+      "event_id": "ffdb4713d54c866f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GUZTCwJGeJ7dw1RLyGAM1etDBtx9qRJohujy279ipump",
+      "alert_time": "2026-08-23T08:02:13+00:00",
+      "event_id": "8b27b0909ac50cd9",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GVXhTtjmabMHtN8J7VmyYUHV13zn9MQhNDcoDBbmpump",
+      "alert_time": "2026-09-02T15:29:23+00:00",
+      "event_id": "9048c45193e6668f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Gd8QK9UdPrUYFipdHxLom7fAMRCxwdw6qbX83DSEpump",
+      "alert_time": "2026-08-26T02:47:26+00:00",
+      "event_id": "a68fea3b5f11122e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Gh9eNS4Xg7CvUKrDMwxoH99dc4gK36rBqPtMEJyipump",
+      "alert_time": "2026-08-24T17:11:16+00:00",
+      "event_id": "595de099f312e33b",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "GiWDgBnjzPgvRsBz7ioUcmg4CYcmFHQBe4DgyFShpump",
+      "alert_time": "2026-08-20T20:55:37+00:00",
+      "event_id": "aa6f7ac7ab445478",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GpopapsvyoXNd3wixFz59gNuBd11zf54iRarmnSMpump",
+      "alert_time": "2026-08-28T08:48:59+00:00",
+      "event_id": "6ef4bf4211c314e4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Gu29wuSbMdQKPpkmZ4wpiURgQbYohpBFpwPbzJLbz8Mr",
+      "alert_time": "2026-08-24T18:33:28+00:00",
+      "event_id": "3283c0df3346ad90",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "GvYLFc8pNZ7DawnEbRshNe6wzVS3fsgfXdNzDnZAL9Qh",
+      "alert_time": "2026-08-31T09:04:20+00:00",
+      "event_id": "b3c7c06e79f951d2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "GxqQ4V6mYWzPe3jyZQCJANDkq3tuyY1RcYRRZSg9pump",
+      "alert_time": "2026-08-31T00:44:01+00:00",
+      "event_id": "144fc4895dafae7f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Gz1ZsFzPCGDFkM5yJBRxpiJhqk2Kvq8QhyYj8TaRpump",
+      "alert_time": "2026-08-25T12:05:49+00:00",
+      "event_id": "e163ab42d5d064c5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "H28B9gjsP3oQioGYbRkU1UyopAcK45nXxLj7jftZ2h1J",
+      "alert_time": "2026-08-19T21:23:15+00:00",
+      "event_id": "f07e26847dd5e873",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "H33HnCHk8UCa6QXwJegD2ijCKaazFPBWViLVhPufpump",
+      "alert_time": "2026-08-22T14:22:22+00:00",
+      "event_id": "999c6724611fca6f",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "H4yk5dxwNvS8Rj9M1mdgnY8MKgLhHk8ag5nv47ued81b",
+      "alert_time": "2026-08-28T04:09:50+00:00",
+      "event_id": "df788a2af7ff377e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "H6hEPLdvcUHQttndoKy2CweJMp2nERpt4h4ZCCF8qRnf",
+      "alert_time": "2026-09-02T05:33:35+00:00",
+      "event_id": "b147719b54da8dcb",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "H7nXnPjXZyi6CJ5Uaj8F6159rB717ppmMSWLuG3dpump",
+      "alert_time": "2026-08-30T13:40:11+00:00",
+      "event_id": "cc02905fb52fd1f4",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "HJQYgCDdrNvtLhJLmw8bfW17tvrXqVbg8YCKqqTCpump",
+      "alert_time": "2026-08-16T21:57:25+00:00",
+      "event_id": "a9c2598f29386a83",
+      "path_sampling_probability": null,
+      "admission_reason": null
+    },
+    {
+      "token_address": "HJtjy9Cobn2PeF82R93tMAJRVvpJQM7rjRq2dALypump",
+      "alert_time": "2026-08-18T16:54:06+00:00",
+      "event_id": "dae92844c73f968e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "HLFvcmC7jGBWubQ3HfkvVYoHb1EkTxx9zwNJy1NEpump",
+      "alert_time": "2026-08-26T15:45:23+00:00",
+      "event_id": "7f235b6ef2cc7b47",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "HNc7nfZs5nCUVnFb5szrGJxrz5PirfTb2mAxfCp4pump",
+      "alert_time": "2026-08-17T04:33:23+00:00",
+      "event_id": "d25b034bffb21b0e",
+      "path_sampling_probability": 0.340358,
+      "admission_reason": "sampled_reject"
+    },
+    {
+      "token_address": "HTn6f5nuzSAxC6Pp7zNgSyHzvjQMigdSSMfXeQN8r3t8",
+      "alert_time": "2026-08-20T09:36:49+00:00",
+      "event_id": "748fb9c16b7c60d1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "HTxbgkRZ4CkioKebc4Dj3K4BhfpGVtcW8JK867i5oyYU",
+      "alert_time": "2026-09-02T16:22:03+00:00",
+      "event_id": "f66912700e537883",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "HYe74yPTcEfVWhCAfiv7yV9qprzsLGQuEmqPKaNhpump",
+      "alert_time": "2026-08-19T14:12:57+00:00",
+      "event_id": "9098c4f605dd8e96",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "HaGgKouCYHEnTAbB2Qu2Y8JSaRBj4msK85FWKNKkpump",
+      "alert_time": "2026-08-20T04:15:16+00:00",
+      "event_id": "b585e1d7d79c5ccf",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "HbjfwqMpnf6YkcSqAfJ5CduuqLJiieGbrLb1ZaAZpump",
+      "alert_time": "2026-08-31T21:47:16+00:00",
+      "event_id": "785136cc1c6b7910",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "He1VdiuNqRVD99SjQp7d1sk5RWuQ7WcxDijUhjowpump",
+      "alert_time": "2026-08-26T17:28:42+00:00",
+      "event_id": "31ce00fa622eae8d",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "HepBDAaqT9cs9kFokrQkz5ids2cMUAjgftGNZeP5pump",
+      "alert_time": "2026-08-26T00:39:26+00:00",
+      "event_id": "49022e0bc1149a8e",
+      "path_sampling_probability": 0.598745,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "Hf7mMK4gWYijr6Eju9SBiBUXqkCcLq5s9qYJ32Kdpump",
+      "alert_time": "2026-08-26T09:18:19+00:00",
+      "event_id": "49d2b58888432e81",
+      "path_sampling_probability": 0.814757,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "HhnTyPChabkvr6AQMQpHFm7yvjp3HkHMJQpk7yi1pump",
+      "alert_time": "2026-08-25T19:15:16+00:00",
+      "event_id": "64bb3257faf10190",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "HmaHhC9vBh43gZnNTUFGNGP1A72jH1MXKjhHRWw2Ja8F",
+      "alert_time": "2026-09-02T14:30:46+00:00",
+      "event_id": "e0658118713aa9ec",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "HwQPPGXMYQhNEujj2a3i6KyhH2ZfwBpoUYZ6eNBNpump",
+      "alert_time": "2026-08-17T22:41:44+00:00",
+      "event_id": "8508ae605fa080d3",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "HzSyd4yCoYLwbzhLnSxAVbWNV5FHtBZq5Ykw3PH6rC3z",
+      "alert_time": "2026-09-02T19:41:12+00:00",
+      "event_id": "13d7062b10b09473",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "J3phnsXUXFGScekdgocGfUx5iDbbVVZepMRErWCLpump",
+      "alert_time": "2026-08-24T07:23:36+00:00",
+      "event_id": "938a75599f16c0be",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "JCjnrFpoMoydfTf8cNhMZLzGftyoHoXkFk6eZFjzpump",
+      "alert_time": "2026-08-29T08:03:23+00:00",
+      "event_id": "bd7f67ceae8bbc74",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "JEBNRdDb1XnjCeNYyiD3DgfPEwYkAa1D39QY6tSQpump",
+      "alert_time": "2026-09-03T11:38:50+00:00",
+      "event_id": "dd5e7a5ac14f5905",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "NEW37tshbEuVKPZ6et9SDoMpumEy1PfQpX55Vcr8fUL",
+      "alert_time": "2026-09-03T11:50:15+00:00",
+      "event_id": "d7f5212e3292776b",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "R98kypwLdCb5vWpTy7cSeoqUqL6wXJnBsmvmpnopump",
+      "alert_time": "2026-09-02T00:08:47+00:00",
+      "event_id": "aed1930adc09f627",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "RpsiaF8caMedsoFxnFx13cdR2eEeu9RkfE5C8jCpump",
+      "alert_time": "2026-08-30T16:46:18+00:00",
+      "event_id": "c5a75c2f8620f7c0",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "Tx67Fs4TSEnYiPzZyThExpwLabNbDy74nof9JUdpump",
+      "alert_time": "2026-08-24T10:07:42+00:00",
+      "event_id": "fa9a78b05328f543",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "U29rFVTgvGpYuKRe2YYSkjzNkz9J1D5CCeUfVGopump",
+      "alert_time": "2026-09-01T17:01:34+00:00",
+      "event_id": "9de64a6352d917a1",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "VTZEKVLkMfGDP8tUDHAjw8ZkqwPYwucBSbX1oZhpump",
+      "alert_time": "2026-08-24T16:52:17+00:00",
+      "event_id": "06097e4ac0457478",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "aTUfRuPj3tp7FEpzAXLjs4VnQgAFbExD5JHGTyvpump",
+      "alert_time": "2026-08-30T18:43:51+00:00",
+      "event_id": "fb6303a5483cb774",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "cdJyi6jdG5DzdjQWLXtUqnjsbQH5LVcUtHJWXgLpump",
+      "alert_time": "2026-08-27T15:31:18+00:00",
+      "event_id": "fe057cc070192e0b",
+      "path_sampling_probability": 0.586772,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "fWSBvY32yLepaZs3knCqy7wJjKQtm9Wkinym1Kbpump",
+      "alert_time": "2026-08-19T20:12:08+00:00",
+      "event_id": "a83f290c316ca583",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "fWWXHkZpUKfpyHDabiXfjwb2GFszx6VGez7uStApump",
+      "alert_time": "2026-08-22T02:13:21+00:00",
+      "event_id": "33b654b21ef09557",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "gus23F52DW8Gs79kivjnjnTwvjHDmVPaiVnNePJpump",
+      "alert_time": "2026-09-01T07:17:36+00:00",
+      "event_id": "2b3e31e0036153fb",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "i3PW1jsBZu2okS3uhqn17SbNDFcScb9TXGRky82pump",
+      "alert_time": "2026-08-17T21:16:54+00:00",
+      "event_id": "776762dbc10212a8",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "ien4ePaLXPUaoWXUsgLuzUcrxmyq75hmebP6o7aJBMS",
+      "alert_time": "2026-08-19T15:50:43+00:00",
+      "event_id": "d1ca2440f692bc5e",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "kqLxcvzTX7sNtiTCLMU92NDjVgQAPRCViV9F6nopump",
+      "alert_time": "2026-08-20T09:31:32+00:00",
+      "event_id": "cc53966a868c6ba2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "nW1wJ3ZaQMqT5MYYSHns5Rr69Cfqj39oLTbnd5Hpump",
+      "alert_time": "2026-08-18T23:45:06+00:00",
+      "event_id": "4efab4de351302f5",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "posWsbD8rmmz6zUF6ADKuMVHWphvqFs8bHRovsgjFUN",
+      "alert_time": "2026-09-01T16:02:21+00:00",
+      "event_id": "04ab46088f150047",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "r1kjCBnWH8sjNFcFnGMLbzKnytG8M8rieD3wDh7pump",
+      "alert_time": "2026-08-22T16:44:07+00:00",
+      "event_id": "113076279b55f352",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "seLBudXVMU93SFimqdEFqbDVACdMQmmTDwBm59mpump",
+      "alert_time": "2026-08-26T09:09:42+00:00",
+      "event_id": "d37f1fbf934fd3f2",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "te4dUxQQHBsLXDMXcf6g6MNKWR2CYeye3jxNNkwbJQZ",
+      "alert_time": "2026-08-29T15:29:42+00:00",
+      "event_id": "9b9e35c698ed5206",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    },
+    {
+      "token_address": "wraeuVRXjp5YibVC7zRY6xMjz35GrZnQttqSJAgpump",
+      "alert_time": "2026-08-26T03:11:42+00:00",
+      "event_id": "12d6b16f86c6bbd3",
+      "path_sampling_probability": 0.905994,
+      "admission_reason": "sampled_admit"
+    },
+    {
+      "token_address": "xhmaxtbqWMfiDg1jS9S5Dz1Se2s1p5WsN623LWX69Av",
+      "alert_time": "2026-08-17T22:24:43+00:00",
+      "event_id": "3ab7a75f6bca86fe",
+      "path_sampling_probability": 0.0,
+      "admission_reason": "daily_cap_hard_stop"
+    },
+    {
+      "token_address": "zxRjdghPoqkc7fEMyNWTA7mByUG1M3rjaE8GZBepump",
+      "alert_time": "2026-09-01T12:08:53+00:00",
+      "event_id": "eaa18a475421e017",
+      "path_sampling_probability": 1.0,
+      "admission_reason": "under_hourly_pace"
+    }
+  ]
+}
