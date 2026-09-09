@@ -4479,3 +4479,72 @@ are untouched — the reconstructed corpus is additive, found via
 state.
 
 **T2/T3 status: COMPLETE.**
+
+### THR-BATCH T5 — E0-E3 replayed on the combined corpus: real, sobering finding
+
+`research/thr_run_t5.py` replayed V8-P0's and V8-P3's combined
+(forward+reconstructed) mint sets against all four frozen exit specs
+(E0-E3), via the one sanctioned full-EV entrypoint
+(`replay_strategy_for_full_ev`, which itself refuses anything not
+path-integrity VALID) and the existing entry-alignment resolver (no
+`path[0]==entry` assumption). Applied the real, already-measured -1.99%
+round-trip execution cost as a flat haircut on realized pnl — reused,
+not invented.
+
+**First pass produced a misleading blended number** (mean_net≈-10%,
+win_rate≈2.4%) — diagnosed live before reporting it: reconstructed paths
+(T3's own finding — ~8 ticks/few seconds average) mostly exit via
+`path_end` almost immediately regardless of exit spec, because the data
+runs out, not because any strategy logic decided to exit. Fixed by
+splitting every stat by path source.
+
+**Reconstructed subset** (V8-P0 n=120, V8-P3 n=59): 100% `path_end`,
+win_rate=0%, mean≈-1.7% to -1.96% — essentially just the round-trip cost
+floor with near-zero real price movement in the available window.
+Confirms T1's finding again: too short to be informative for exit
+design, though still useful for clearing `MIN_PATH_N` and the
+entry-side representativeness work.
+
+**Forward subset — the real result** (V8-P0 n=90, V8-P3 n=52, real long
+tick paths, hundreds-to-thousands of ticks over 15+ minutes):
+
+| Candidate | Exit | n | win_rate | median_net | hard_stop hits | trail_stop hits |
+|---|---|---|---|---|---|---|
+| V8-P0 | E0 | 90 | 5.6% | -37.78% | 66/90 | 15/90 |
+| V8-P0 | E1 | 90 | 3.3% | -36.93% | 58/90 | 29/90 |
+| V8-P0 | E2 | 90 | 5.6% | -52.47% | 60/90 | 16/90 |
+| V8-P0 | E3 | 90 | 5.6% | -37.16% | 58/90 | 15/90 |
+| V8-P3 | E0 | 52 | 7.7% | -37.38% | 37/52 | 10/52 |
+| V8-P3 | E1 | 52 | 1.9% | -36.56% | 33/52 | 18/52 |
+| V8-P3 | E2 | 52 | 7.7% | -52.51% | 34/52 | 11/52 |
+| V8-P3 | E3 | 52 | 7.7% | -36.93% | 34/52 | 10/52 |
+
+Real, verified live on individual mints (not just the aggregate) — e.g.
+`A3Ez3BxM...` (958 real ticks, 908s held): entered, price genuinely fell
+-38.18% before any later recovery, hard_stop fired exactly as designed.
+This is not a bug — every E0-E3 spec's hard_stop (-35% for E0/E1/E3,
+-50% for E2) is getting hit on 60-73% of real forward-collected
+trajectories, with median losses of -37% to -52% once stopped.
+
+**What this means, stated plainly:** entry-EV's earlier +178%/+159%
+mean *peak* numbers (`docs/RECEIPTS.md`'s entry-EV entry) and this
+result are not contradictory — they're answering different questions.
+Peak asks "how high did the token ever go" (unbounded, no execution).
+This asks "what would a real exit strategy following E0-E3's current
+rules have actually captured" — and the answer, for the first time
+backed by real n=90/52 forward-collected samples instead of a 48-row
+cohort or nothing, is: **the current hard-stop calibration (-35%/-50%)
+is getting run over by real early shakeout depth far more often than it
+survives to capture the peak.** This is exactly the "shakeout depth"
+question `docs/EXIT_EVIDENCE.md` flagged as needing real tick data to
+answer — now answered, and the answer is that E0-E3 as currently frozen
+look poorly calibrated for this population, not that the entry filters
+are wrong.
+
+**Not decided here:** whether/how to retune hard_stop depth. That is
+explicitly a threshold change requiring the same rigor as every other
+threshold in this project (written provenance, no silent move) — this
+receipt documents the evidence, not a decision. `research/thr_t5_results.json`
+holds the full per-token breakdown for whoever designs that next step.
+
+**T5 status: COMPLETE.** THR-BATCH (T1-T5) status: **COMPLETE.**

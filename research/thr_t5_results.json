@@ -1,0 +1,355 @@
+{
+  "generated_at": "2026-09-09T20:24:17.983096+00:00",
+  "round_trip_cost_pct": -1.99,
+  "trade_size_usd": 5.0,
+  "candidates": {
+    "BASELINE-0": {
+      "combined_n": 12,
+      "below_MIN_PATH_N_floor": true
+    },
+    "V8-P0": {
+      "combined_n": 258,
+      "below_MIN_PATH_N_floor": false,
+      "real_venue_qualified_n": 2189,
+      "era_days": 17.9,
+      "trades_per_day_assumed": 122.576,
+      "exits": {
+        "E0": {
+          "n": 210,
+          "exclusion_reasons": {
+            "NO_EXECUTABLE_TICK_AFTER_TARGET": 26,
+            "REPLAY_REFUSED_OR_TOO_SHORT": 22
+          },
+          "by_source": {
+            "forward": {
+              "n": 90,
+              "win_rate_pct": 5.56,
+              "mean_pnl_pct_net": -21.08,
+              "median_pnl_pct_net": -37.78,
+              "exit_reasons": {
+                "hard_stop": 66,
+                "trail_stop": 15,
+                "profit_lock": 3,
+                "path_end": 6
+              }
+            },
+            "reconstructed": {
+              "n": 120,
+              "win_rate_pct": 0.0,
+              "mean_pnl_pct_net": -1.72,
+              "median_pnl_pct_net": -1.96,
+              "exit_reasons": {
+                "path_end": 120
+              }
+            }
+          },
+          "exit_reasons": {
+            "hard_stop": 66,
+            "trail_stop": 15,
+            "profit_lock": 3,
+            "path_end": 126
+          },
+          "win_rate_pct": 2.38,
+          "mean_pnl_pct_net": -10.02,
+          "median_pnl_pct_net": -3.29,
+          "dollars_per_day": -61.4105
+        },
+        "E1": {
+          "n": 210,
+          "exclusion_reasons": {
+            "NO_EXECUTABLE_TICK_AFTER_TARGET": 26,
+            "REPLAY_REFUSED_OR_TOO_SHORT": 22
+          },
+          "by_source": {
+            "forward": {
+              "n": 90,
+              "win_rate_pct": 3.33,
+              "mean_pnl_pct_net": -21.58,
+              "median_pnl_pct_net": -36.93,
+              "exit_reasons": {
+                "hard_stop": 58,
+                "trail_stop": 29,
+                "path_end": 2,
+                "time_stop": 1
+              }
+            },
+            "reconstructed": {
+              "n": 120,
+              "win_rate_pct": 0.0,
+              "mean_pnl_pct_net": -1.72,
+              "median_pnl_pct_net": -1.96,
+              "exit_reasons": {
+                "path_end": 120
+              }
+            }
+          },
+          "exit_reasons": {
+            "hard_stop": 58,
+            "trail_stop": 29,
+            "path_end": 122,
+            "time_stop": 1
+          },
+          "win_rate_pct": 1.43,
+          "mean_pnl_pct_net": -10.23,
+          "median_pnl_pct_net": -2.79,
+          "dollars_per_day": -62.6975
+        },
+        "E2": {
+          "n": 210,
+          "exclusion_reasons": {
+            "NO_EXECUTABLE_TICK_AFTER_TARGET": 26,
+            "REPLAY_REFUSED_OR_TOO_SHORT": 22
+          },
+          "by_source": {
+            "forward": {
+              "n": 90,
+              "win_rate_pct": 5.56,
+              "mean_pnl_pct_net": -27.89,
+              "median_pnl_pct_net": -52.47,
+              "exit_reasons": {
+                "hard_stop": 60,
+                "trail_stop": 16,
+                "path_end": 10,
+                "profit_lock": 4
+              }
+            },
+            "reconstructed": {
+              "n": 120,
+              "win_rate_pct": 0.0,
+              "mean_pnl_pct_net": -1.72,
+              "median_pnl_pct_net": -1.96,
+              "exit_reasons": {
+                "path_end": 120
+              }
+            }
+          },
+          "exit_reasons": {
+            "hard_stop": 60,
+            "trail_stop": 16,
+            "path_end": 130,
+            "profit_lock": 4
+          },
+          "win_rate_pct": 2.38,
+          "mean_pnl_pct_net": -12.94,
+          "median_pnl_pct_net": -2.98,
+          "dollars_per_day": -79.3065
+        },
+        "E3": {
+          "n": 210,
+          "exclusion_reasons": {
+            "NO_EXECUTABLE_TICK_AFTER_TARGET": 26,
+            "REPLAY_REFUSED_OR_TOO_SHORT": 22
+          },
+          "by_source": {
+            "forward": {
+              "n": 90,
+              "win_rate_pct": 5.56,
+              "mean_pnl_pct_net": -19.77,
+              "median_pnl_pct_net": -37.16,
+              "exit_reasons": {
+                "hard_stop": 58,
+                "trail_stop": 15,
+                "profit_lock": 3,
+                "time_stop": 10,
+                "path_end": 4
+              }
+            },
+            "reconstructed": {
+              "n": 120,
+              "win_rate_pct": 0.0,
+              "mean_pnl_pct_net": -1.72,
+              "median_pnl_pct_net": -1.96,
+              "exit_reasons": {
+                "path_end": 120
+              }
+            }
+          },
+          "exit_reasons": {
+            "hard_stop": 58,
+            "trail_stop": 15,
+            "profit_lock": 3,
+            "time_stop": 10,
+            "path_end": 124
+          },
+          "win_rate_pct": 2.38,
+          "mean_pnl_pct_net": -9.45,
+          "median_pnl_pct_net": -3.29,
+          "dollars_per_day": -57.917
+        }
+      }
+    },
+    "V8-P1": {
+      "combined_n": 12,
+      "below_MIN_PATH_N_floor": true
+    },
+    "V8-P3": {
+      "combined_n": 125,
+      "below_MIN_PATH_N_floor": false,
+      "real_venue_qualified_n": 885,
+      "era_days": 17.9,
+      "trades_per_day_assumed": 49.556,
+      "exits": {
+        "E0": {
+          "n": 111,
+          "exclusion_reasons": {
+            "REPLAY_REFUSED_OR_TOO_SHORT": 7,
+            "NO_EXECUTABLE_TICK_AFTER_TARGET": 7
+          },
+          "by_source": {
+            "forward": {
+              "n": 52,
+              "win_rate_pct": 7.69,
+              "mean_pnl_pct_net": -17.19,
+              "median_pnl_pct_net": -37.38,
+              "exit_reasons": {
+                "path_end": 3,
+                "hard_stop": 37,
+                "trail_stop": 10,
+                "profit_lock": 2
+              }
+            },
+            "reconstructed": {
+              "n": 59,
+              "win_rate_pct": 0.0,
+              "mean_pnl_pct_net": -1.36,
+              "median_pnl_pct_net": -1.67,
+              "exit_reasons": {
+                "path_end": 59
+              }
+            }
+          },
+          "exit_reasons": {
+            "path_end": 62,
+            "hard_stop": 37,
+            "trail_stop": 10,
+            "profit_lock": 2
+          },
+          "win_rate_pct": 3.6,
+          "mean_pnl_pct_net": -8.78,
+          "median_pnl_pct_net": -3.46,
+          "dollars_per_day": -21.7551
+        },
+        "E1": {
+          "n": 111,
+          "exclusion_reasons": {
+            "REPLAY_REFUSED_OR_TOO_SHORT": 7,
+            "NO_EXECUTABLE_TICK_AFTER_TARGET": 7
+          },
+          "by_source": {
+            "forward": {
+              "n": 52,
+              "win_rate_pct": 1.92,
+              "mean_pnl_pct_net": -21.58,
+              "median_pnl_pct_net": -36.56,
+              "exit_reasons": {
+                "trail_stop": 18,
+                "hard_stop": 33,
+                "path_end": 1
+              }
+            },
+            "reconstructed": {
+              "n": 59,
+              "win_rate_pct": 0.0,
+              "mean_pnl_pct_net": -1.36,
+              "median_pnl_pct_net": -1.67,
+              "exit_reasons": {
+                "path_end": 59
+              }
+            }
+          },
+          "exit_reasons": {
+            "trail_stop": 18,
+            "hard_stop": 33,
+            "path_end": 60
+          },
+          "win_rate_pct": 0.9,
+          "mean_pnl_pct_net": -10.83,
+          "median_pnl_pct_net": -3.12,
+          "dollars_per_day": -26.8346
+        },
+        "E2": {
+          "n": 111,
+          "exclusion_reasons": {
+            "REPLAY_REFUSED_OR_TOO_SHORT": 7,
+            "NO_EXECUTABLE_TICK_AFTER_TARGET": 7
+          },
+          "by_source": {
+            "forward": {
+              "n": 52,
+              "win_rate_pct": 7.69,
+              "mean_pnl_pct_net": -23.76,
+              "median_pnl_pct_net": -52.51,
+              "exit_reasons": {
+                "path_end": 4,
+                "hard_stop": 34,
+                "trail_stop": 11,
+                "profit_lock": 3
+              }
+            },
+            "reconstructed": {
+              "n": 59,
+              "win_rate_pct": 0.0,
+              "mean_pnl_pct_net": -1.36,
+              "median_pnl_pct_net": -1.67,
+              "exit_reasons": {
+                "path_end": 59
+              }
+            }
+          },
+          "exit_reasons": {
+            "path_end": 63,
+            "hard_stop": 34,
+            "trail_stop": 11,
+            "profit_lock": 3
+          },
+          "win_rate_pct": 3.6,
+          "mean_pnl_pct_net": -11.85,
+          "median_pnl_pct_net": -3.12,
+          "dollars_per_day": -29.3619
+        },
+        "E3": {
+          "n": 111,
+          "exclusion_reasons": {
+            "REPLAY_REFUSED_OR_TOO_SHORT": 7,
+            "NO_EXECUTABLE_TICK_AFTER_TARGET": 7
+          },
+          "by_source": {
+            "forward": {
+              "n": 52,
+              "win_rate_pct": 7.69,
+              "mean_pnl_pct_net": -15.89,
+              "median_pnl_pct_net": -36.93,
+              "exit_reasons": {
+                "path_end": 2,
+                "hard_stop": 34,
+                "trail_stop": 10,
+                "time_stop": 4,
+                "profit_lock": 2
+              }
+            },
+            "reconstructed": {
+              "n": 59,
+              "win_rate_pct": 0.0,
+              "mean_pnl_pct_net": -1.36,
+              "median_pnl_pct_net": -1.67,
+              "exit_reasons": {
+                "path_end": 59
+              }
+            }
+          },
+          "exit_reasons": {
+            "path_end": 61,
+            "hard_stop": 34,
+            "trail_stop": 10,
+            "time_stop": 4,
+            "profit_lock": 2
+          },
+          "win_rate_pct": 3.6,
+          "mean_pnl_pct_net": -8.16,
+          "median_pnl_pct_net": -3.4,
+          "dollars_per_day": -20.2188
+        }
+      }
+    }
+  }
+}
