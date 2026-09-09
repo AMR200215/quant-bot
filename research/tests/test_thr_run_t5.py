@@ -54,8 +54,9 @@ class TestTypeRows(unittest.TestCase):
 
             by_mint = {"MINT1": {"path_file": None}}
             with patch("research.thr_run_t5.RECONSTRUCTED_DIR", Path(td)):
-                rows, event = _load_path_rows("MINT1", by_mint, Path(td))
+                rows, event, source = _load_path_rows("MINT1", by_mint, Path(td))
             self.assertIsNotNone(rows)
+            self.assertEqual(source, "reconstructed")
             self.assertIsInstance(rows[0]["ts_ms"], int)
             self.assertIsInstance(rows[0]["price_usd"], float)
 
@@ -162,19 +163,21 @@ class TestReplayCandidateExit(unittest.TestCase):
         exit_spec_dict = {"exit_id": "E0", "spec": {
             "hard_stop": -0.99, "trail_tiers": [], "tp_levels": [], "time_stop_min": 999999,
         }}
-        with patch("research.thr_run_t5._load_path_rows", return_value=(rows, event)):
+        with patch("research.thr_run_t5._load_path_rows", return_value=(rows, event, "forward")):
             stats = replay_candidate_exit(_V8_P0, exit_spec_dict, {"MINT1"}, by_mint, set(), None)
         self.assertEqual(stats["n"], 1)
         # raw gain should be large positive; net = raw + ROUND_TRIP_COST_PCT
         self.assertLess(stats["mean_pnl_pct_net"], 100 * 1.0)  # sanity: not absurd
         self.assertGreater(stats["mean_pnl_pct_net"], 0)
+        self.assertEqual(stats["by_source"]["forward"]["n"], 1)
+        self.assertEqual(stats["by_source"]["reconstructed"]["n"], 0)
 
     def test_no_path_rows_counted_as_exclusion_not_crash(self):
         by_mint = {"MINT1": {"event_id": "e0", "token_address": "MINT1",
                               "alert_time": _ALERT_TIME}}
         exit_spec_dict = {"exit_id": "E0", "spec": {"hard_stop": -0.35, "trail_tiers": [], "tp_levels": [],
                                                       "time_stop_min": 90}}
-        with patch("research.thr_run_t5._load_path_rows", return_value=(None, by_mint["MINT1"])):
+        with patch("research.thr_run_t5._load_path_rows", return_value=(None, by_mint["MINT1"], None)):
             stats = replay_candidate_exit(_V8_P0, exit_spec_dict, {"MINT1"}, by_mint, set(), None)
         self.assertEqual(stats["n"], 0)
         self.assertIn("NO_PATH_ROWS", stats["exclusion_reasons"])
@@ -185,10 +188,30 @@ class TestReplayCandidateExit(unittest.TestCase):
         by_mint = {"MINT1": event}
         exit_spec_dict = {"exit_id": "E0", "spec": {"hard_stop": -0.35, "trail_tiers": [], "tp_levels": [],
                                                       "time_stop_min": 90}}
-        with patch("research.thr_run_t5._load_path_rows", return_value=(rows, event)):
+        with patch("research.thr_run_t5._load_path_rows", return_value=(rows, event, "forward")):
             stats = replay_candidate_exit(_V8_P0, exit_spec_dict, {"MINT1"}, by_mint, {"MINT1"}, None)
         self.assertEqual(stats["n"], 0)
         self.assertIn("AMBIGUOUS_PATH_EVENT_JOIN", stats["exclusion_reasons"])
+
+    def test_by_source_split_keeps_forward_and_reconstructed_separate(self):
+        rows = self._synthetic_rows([1.0, 1.05, 1.02])
+        event1 = {"event_id": "e0", "token_address": "MINT1", "alert_time": _ALERT_TIME}
+        event2 = {"event_id": "e1", "token_address": "MINT2", "alert_time": _ALERT_TIME}
+        by_mint = {"MINT1": event1, "MINT2": event2}
+        exit_spec_dict = {"exit_id": "E0", "spec": {"hard_stop": -0.99, "trail_tiers": [], "tp_levels": [],
+                                                      "time_stop_min": 999999}}
+
+        def fake_load(mint, by_mint_arg, root_arg):
+            if mint == "MINT1":
+                return rows, event1, "forward"
+            return rows, event2, "reconstructed"
+
+        with patch("research.thr_run_t5._load_path_rows", side_effect=fake_load):
+            stats = replay_candidate_exit(_V8_P0, exit_spec_dict, {"MINT1", "MINT2"}, by_mint, set(), None)
+        self.assertEqual(stats["n"], 2)
+        self.assertEqual(stats["by_source"]["forward"]["n"], 1)
+        self.assertEqual(stats["by_source"]["reconstructed"]["n"], 1)
+        self.assertIn("path_end", stats["exit_reasons"])
 
 
 if __name__ == "__main__":

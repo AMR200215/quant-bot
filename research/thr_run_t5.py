@@ -143,7 +143,14 @@ def _type_rows(rows: list) -> list:
 
 def _load_path_rows(mint: str, by_mint: dict, root: Path):
     """Forward path (research_tokens.path_file) if present and loadable,
-    else the reconstructed path (logs/research_paths/reconstructed/)."""
+    else the reconstructed path (logs/research_paths/reconstructed/).
+    Returns (rows, event, path_source) -- path_source in
+    ("forward", "reconstructed", None) is load-bearing: forward and
+    reconstructed paths differ enormously in typical length/duration
+    (T3: reconstructed paths average ~8 ticks over seconds; forward paths
+    routinely run to hundreds/thousands of ticks over 15+ minutes), so
+    any aggregate replay stat that doesn't distinguish them conflates two
+    very different data qualities."""
     from research.path_schema import load_path_file
 
     event = by_mint.get(mint)
@@ -157,28 +164,49 @@ def _load_path_rows(mint: str, by_mint: dict, root: Path):
             rows, _w = load_path_file(full)
             typed = _type_rows(rows) if rows else []
             if typed:
-                return typed, event
+                return typed, event, "forward"
 
     recon_path = RECONSTRUCTED_DIR / f"{mint}.csv.gz"
     if recon_path.exists():
         rows, _w = load_path_file(recon_path)
         typed = _type_rows(rows) if rows else []
         if typed:
-            return typed, event
-    return None, event
+            return typed, event, "reconstructed"
+    return None, event, None
+
+
+def _source_stats(pnls: list, exit_reasons: dict) -> dict:
+    if not pnls:
+        return {"n": 0}
+    wins = sum(1 for p in pnls if p >= WINNER_THRESHOLD_PCT)
+    return {
+        "n": len(pnls), "win_rate_pct": round(100 * wins / len(pnls), 2),
+        "mean_pnl_pct_net": round(statistics.mean(pnls), 2),
+        "median_pnl_pct_net": round(statistics.median(pnls), 2),
+        "exit_reasons": dict(exit_reasons),
+    }
 
 
 def replay_candidate_exit(candidate: dict, exit_spec_dict: dict, mints: set, by_mint: dict,
                            ambiguous: set, root: Path) -> dict:
+    """Returns overall stats PLUS a by_source breakdown (forward vs
+    reconstructed) -- required context, not optional detail: T3 found
+    reconstructed paths average ~8 ticks over a few seconds (real trading
+    dies fast), so replay against them routinely exits via 'path_end'
+    almost immediately regardless of exit spec, while forward paths run
+    long enough for hard_stop/trail_stop/time_stop to actually fire. An
+    aggregate that doesn't separate these conflates two very different
+    data qualities into one misleading number."""
     from research.v8_entry_alignment import resolve_entry_alignment, EntryAlignmentExclusion
     from research.v8_replay_engine import replay_strategy_for_full_ev, FixedLagExecutionModel
 
     exec_model = FixedLagExecutionModel()
-    pnls = []
     exclusion_reasons: dict = {}
+    pnls_by_source: dict = {"forward": [], "reconstructed": []}
+    exit_reasons_by_source: dict = {"forward": {}, "reconstructed": {}}
 
     for mint in mints:
-        rows, event = _load_path_rows(mint, by_mint, root)
+        rows, event, source = _load_path_rows(mint, by_mint, root)
         if not rows or event is None:
             exclusion_reasons["NO_PATH_ROWS"] = exclusion_reasons.get("NO_PATH_ROWS", 0) + 1
             continue
@@ -194,19 +222,34 @@ def replay_candidate_exit(candidate: dict, exit_spec_dict: dict, mints: set, by_
             continue
 
         net_pnl_pct = result.pnl_pct + ROUND_TRIP_COST_PCT
-        pnls.append(net_pnl_pct)
+        pnls_by_source[source].append(net_pnl_pct)
+        er = exit_reasons_by_source[source]
+        er[result.exit_reason] = er.get(result.exit_reason, 0) + 1
 
-    n = len(pnls)
-    if n == 0:
-        return {"n": 0, "exclusion_reasons": exclusion_reasons}
+    all_pnls = pnls_by_source["forward"] + pnls_by_source["reconstructed"]
+    n = len(all_pnls)
+    combined_exit_reasons: dict = {}
+    for src_reasons in exit_reasons_by_source.values():
+        for k, v in src_reasons.items():
+            combined_exit_reasons[k] = combined_exit_reasons.get(k, 0) + v
 
-    wins = sum(1 for p in pnls if p >= WINNER_THRESHOLD_PCT)
-    return {
-        "n": n, "win_rate_pct": round(100 * wins / n, 2),
-        "mean_pnl_pct_net": round(statistics.mean(pnls), 2),
-        "median_pnl_pct_net": round(statistics.median(pnls), 2),
-        "exclusion_reasons": exclusion_reasons,
+    result_out = {
+        "n": n, "exclusion_reasons": exclusion_reasons,
+        "by_source": {
+            "forward": _source_stats(pnls_by_source["forward"], exit_reasons_by_source["forward"]),
+            "reconstructed": _source_stats(pnls_by_source["reconstructed"], exit_reasons_by_source["reconstructed"]),
+        },
     }
+    if n == 0:
+        return result_out
+
+    pnls = all_pnls
+    result_out["exit_reasons"] = combined_exit_reasons
+    wins = sum(1 for p in pnls if p >= WINNER_THRESHOLD_PCT)
+    result_out["win_rate_pct"] = round(100 * wins / n, 2)
+    result_out["mean_pnl_pct_net"] = round(statistics.mean(pnls), 2)
+    result_out["median_pnl_pct_net"] = round(statistics.median(pnls), 2)
+    return result_out
 
 
 def _era_days(era_start_iso: str) -> float:
@@ -284,6 +327,10 @@ def run():
 
     print(f"\n{'=' * 90}")
     print("  THR-BATCH T5 -- E0-E3 exit evaluation, combined corpus")
+    print("  (by_source split is load-bearing: reconstructed paths average ~8 ticks/"
+          "few seconds -- T3 -- and mostly exit via path_end; forward paths run long")
+    print("   enough for hard_stop/trail_stop/time_stop to actually fire. Don't read")
+    print("   the combined row alone.)")
     print(f"{'=' * 90}")
     for cid, cdata in out["candidates"].items():
         print(f"\n  {cid}  combined_n={cdata['combined_n']}"
@@ -292,9 +339,17 @@ def run():
             if stats["n"] == 0:
                 print(f"    {exit_id}: n=0  exclusions={stats['exclusion_reasons']}")
                 continue
-            print(f"    {exit_id}: n={stats['n']:>4}  win_rate={stats['win_rate_pct']:>6.1f}%  "
+            print(f"    {exit_id} COMBINED: n={stats['n']:>4}  win_rate={stats['win_rate_pct']:>6.1f}%  "
                   f"mean_net={stats['mean_pnl_pct_net']:>+7.2f}%  median_net={stats['median_pnl_pct_net']:>+7.2f}%  "
-                  f"$/day={stats.get('dollars_per_day', 'n/a')}")
+                  f"$/day={stats.get('dollars_per_day', 'n/a')}  exit_reasons={stats.get('exit_reasons')}")
+            for src in ("forward", "reconstructed"):
+                s = stats["by_source"].get(src, {})
+                if s.get("n", 0) == 0:
+                    print(f"      {src}: n=0")
+                    continue
+                print(f"      {src}: n={s['n']:>4}  win_rate={s['win_rate_pct']:>6.1f}%  "
+                      f"mean_net={s['mean_pnl_pct_net']:>+7.2f}%  median_net={s['median_pnl_pct_net']:>+7.2f}%  "
+                      f"exit_reasons={s['exit_reasons']}")
     print(f"\n{'=' * 90}\n")
     return out
 
