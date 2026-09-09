@@ -1,0 +1,82 @@
+[
+  {
+    "finding_id": "F1",
+    "severity": "INFO",
+    "component": "xval pilot / T1 claim vs evidence scope",
+    "claim": "T1 status: COMPLETE. Exact reconstruction proven (byte-identical, twice), 2 pre-existing bugs found and fixed (new module only), xval gate redesigned and validated with a real, provenance-backed tolerance.",
+    "observed_ground_truth": "No evidence item (EV001-EV007) in the ground-truth summary references compute_interpolated_xval, thr_reconstruct_paths.py, XVAL_TOLERANCE_PCT, the 20-token pilot, or any byte-identical reconstruction test. This entire claim originates solely from EV007 receipts_tail text, which is documentation/assertion, not independently-verified evidence in this audit.",
+    "expected_ground_truth": "If T1 were truly complete and verified, corroborating evidence (e.g. passing test counts for the new module, a git commit for thr_reconstruct_paths.py, or a check result) would be expected somewhere in the watchdog/test-collection evidence.",
+    "evidence_ids": [
+      "EV007"
+    ],
+    "operational_impact": "The claim of T1 completion cannot be independently corroborated from watchdog/test/state evidence; it rests entirely on self-reported documentation text.",
+    "suggested_next_step": "Run the module's test suite directly (e.g. pytest research/thr_reconstruct_paths.py and related xval tests) and diff HEAD against the commit referenced in RECEIPTS.md to confirm the described code exists at the deployed SHA.",
+    "confidence": "high",
+    "audit_id": "audit-20260909T081643Z",
+    "timestamp": 1788941874.3758888
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "Test suite count consistency",
+    "claim": "Full suite green (580 local, 32+37 module-specific).",
+    "observed_ground_truth": "Ground truth (EV005) reports test collection counts of 304 (memecoin), 595 (research), 103 (watchdog), 39 (layer2), 56 (quant-bot root) \u2014 none of which is 580, and no breakdown matching '32+37 module-specific' appears in the evidence.",
+    "expected_ground_truth": "If the claim's '580 local' figure refers to a specific suite (e.g. memecoin or research), it should be reconcilable with one of the watchdog's reported collection counts; as stated it does not match any of the five reported totals.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "Test count discrepancy raises doubt about whether the claimed test run was against the same codebase/suite the watchdog is currently validating, or whether counts are stale/from a different scope.",
+    "suggested_next_step": "Run the full test suite locally (pytest --collect-only) at current HEAD and compare exact counts per module against both the watchdog's collection numbers and the 580/32/37 figures in the claim.",
+    "confidence": "medium",
+    "audit_id": "audit-20260909T081643Z",
+    "timestamp": 1788941874.375898
+  },
+  {
+    "finding_id": "F3",
+    "severity": "WARN",
+    "component": "Dirty working tree vs. claimed completed/committed work",
+    "claim": "RESOLVED 2026-09-09 \u2014 T1 complete. Built compute_interpolated_xval ... research/thr_reconstruct_paths.py ...",
+    "observed_ground_truth": "EV002 shows the working tree is not clean, with 25 modified/untracked entries including ad-hoc scripts and data files, and no commit history is provided to confirm the described module changes were committed. HEAD SHA e37d8ea3... also does not match SHAs on recent cron receipts or rc_closure commit db32f53.",
+    "expected_ground_truth": "A 'COMPLETE' and 'RESOLVED' claim about new production code (a new module, new tests, a new constant) would typically correspond to a clean, committed working tree state, or at minimum the new files would be visible/tracked in the diff evidence.",
+    "evidence_ids": [
+      "EV002"
+    ],
+    "operational_impact": "Uncommitted or partially-tracked changes claimed as 'complete' create risk that the described xval gate logic is not actually the code running in production, or could be lost/inconsistent across environments.",
+    "suggested_next_step": "Run git status and git diff --stat against thr_reconstruct_paths.py and related test files to confirm whether the described T1 work is committed, staged, or still untracked.",
+    "confidence": "medium",
+    "audit_id": "audit-20260909T081643Z",
+    "timestamp": 1788941874.3759022
+  },
+  {
+    "finding_id": "F4",
+    "severity": "INFO",
+    "component": "funnel.v8 vs xval claim scope",
+    "claim": "(implicit) T1 work is presented as resolving/addressing path-reconstruction quality issues related to the broader V8 pipeline.",
+    "observed_ground_truth": "Ground truth shows funnel.v8 is currently FIRING CRITICAL with 4162 consecutive failures, tied to a specific stuck-candidate failure mode (telegram_received with no terminal disposition) \u2014 a distinct issue from the xval/path-reconstruction tolerance work described in the claim.",
+    "expected_ground_truth": "The claim does not assert it fixes funnel.v8, so no direct contradiction exists, but a reader could conflate 'xval pilot resolved' with 'V8 funnel issues resolved' \u2014 this is worth flagging as a scope boundary.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "Readers should not interpret the xval/T1 completion claim as evidence that the actively-firing funnel.v8 CRITICAL incident is resolved; it is a separate mechanism.",
+    "suggested_next_step": "Check whether thr_reconstruct_paths.py or compute_interpolated_xval is invoked anywhere in the funnel.v8 check code path to confirm they are unrelated systems.",
+    "confidence": "medium",
+    "audit_id": "audit-20260909T081643Z",
+    "timestamp": 1788941874.3759203
+  },
+  {
+    "finding_id": "F5",
+    "severity": "INFO",
+    "component": "Claim internal consistency (not independently verifiable)",
+    "claim": "p50=2.106% p75=8.319% p90=72.584% mean=18.569%; XVAL_TOLERANCE_PCT = 15.0 set at ~2x p75; Pilot pass rate at this tolerance: 9/11 tokens (82%).",
+    "observed_ground_truth": "No evidence item in the audit bundle contains these statistics, the tolerance constant, or pass-rate figures; this is purely narrative from EV007 documentation text with no corroborating check output, log, or test artifact in the ground-truth evidence set.",
+    "expected_ground_truth": "Quantitative claims of this specificity would ideally be traceable to a logged pilot-run artifact or test fixture referenced elsewhere in evidence.",
+    "evidence_ids": [
+      "EV007"
+    ],
+    "operational_impact": "These statistics cannot be verified or falsified from the audit evidence; they must be treated as unverified assertions pending direct inspection of pilot run outputs.",
+    "suggested_next_step": "Locate and inspect the raw pilot run output/log file (or re-run the pilot script) to confirm the p50/p75/p90/mean figures and 9/11 pass rate.",
+    "confidence": "low",
+    "audit_id": "audit-20260909T081643Z",
+    "timestamp": 1788941874.3759232
+  }
+]
