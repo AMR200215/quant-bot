@@ -1,0 +1,4295 @@
+{
+  "generated_at": "2026-09-09T05:22:04.695499+00:00",
+  "sample_file": "/root/quant-bot/research/thr_t2_sample.json",
+  "sample_seed": 20260909,
+  "n_attempted": 500,
+  "n_reconstructed": 224,
+  "n_valid_usable_path": 178,
+  "out_dir": "logs/research_paths/reconstructed",
+  "results": [
+    {
+      "token_address": "12pckin3imvmMJQZsEUuRcy8xT3MitmwJzmJpGQipump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "13f8VrCFV6ak2jZKtr3EBW7sCcNy7EDwdtaA9v3Q6Nc5",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "161FPsYkSaSAbV9YdRjKQiagwmPf9atrvgtGppspump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/161FPsYkSaSAbV9YdRjKQiagwmPf9atrvgtGppspump.csv.gz"
+    },
+    {
+      "token_address": "17dnmka1Ty9uSMNnN1oXoRGpVCGHe3PwjMXQXT3pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "1EaGq2PtdsxhZicYsrMXcVMLXMdyqpbUNQJjfZBpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 44.67696353684877,
+      "xval_n_comparable": 6,
+      "path_file": null
+    },
+    {
+      "token_address": "21V6xbaG675M1qummZTvJvfAGUFKoASzzc6hMpebsWbP",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.296380548776647,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/21V6xbaG675M1qummZTvJvfAGUFKoASzzc6hMpebsWbP.csv.gz"
+    },
+    {
+      "token_address": "25LRj6Sqm2TEw6rxz5NRp789NpebAhh5sEwY3ukrpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "26iuiZnCX7zVqyCX27Dfh22jm1t5i6EZyhErKfpspump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 0.30074178662793627,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/26iuiZnCX7zVqyCX27Dfh22jm1t5i6EZyhErKfpspump.csv.gz"
+    },
+    {
+      "token_address": "28qTgAWraGg5ziXjTHm6ArDAvNBV9W3B2Y6DgYJTpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "2Agb3R77tGRGfsm9PAytzBd3WEgamqNsfzLP2Fa6pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "2F5Z8EeSYbdgeybD8ixeubZeqkKcrp1LfF5QRTesmL8N",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 16,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 94.70145482388975,
+      "xval_n_comparable": 16,
+      "path_file": null
+    },
+    {
+      "token_address": "2HDWPZzyb5u8VtU3nEEPKaR38c4zAkUurjrpDWCzcYsD",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 10.187019519667045,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/2HDWPZzyb5u8VtU3nEEPKaR38c4zAkUurjrpDWCzcYsD.csv.gz"
+    },
+    {
+      "token_address": "2MDXbiHrUfG2Ko1GQiczah8wH6rdzRhVyUK1hojqpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "2MZ1GCezJwRMdDUnSHnVzXbv1s13idA6SrXF56Fspump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 31.14855608492399,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "2P9weU7SKrBXJu8MaHezXRBuaDrGUYZGwduyKZwBpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "2Sx47cq4Z4TVYiZgZnoZMJFB8WtcoTzopDTZDE1Lpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "2Tg1RFtLaQvNYDKLevLNC9C7GCoALy3vdPCyehvXpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 1,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/2Tg1RFtLaQvNYDKLevLNC9C7GCoALy3vdPCyehvXpump.csv.gz"
+    },
+    {
+      "token_address": "2VLVnUfyU4UNvbZCZUfVRLGJKQRJS9UQ5mRSswwgpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 8.523154063451349,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/2VLVnUfyU4UNvbZCZUfVRLGJKQRJS9UQ5mRSswwgpump.csv.gz"
+    },
+    {
+      "token_address": "2VVBKWfWTpAwdkDFLCz5SsAeZDxFrzmsKHvchLc5pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "2WG6mgKMx97jYCCoiHGcJndvQXjwDgyFeVRAnKH2pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "2WujBAAnETRNkfSbGpkCbpdYYiv3QmzsFmb1ZVFZpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "2ZC3qvafFaMrJ5hKTZniMPBsZhgdrVfJB9ce4nuypump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "2ZVKH8FpNvmqaFhaH3Apgw1rctNzmfyVRSz4SaFFpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "2b4fuwXmwqY8c12ScBa1RakBz2CQgNgPNpvbo3vUpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 14,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.42912872990411,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/2b4fuwXmwqY8c12ScBa1RakBz2CQgNgPNpvbo3vUpump.csv.gz"
+    },
+    {
+      "token_address": "2cxCB5Ydp5B5PcgcmRQCnhVfKV9wfVyvuKLJ6jWTpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 0.40728567391696124,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/2cxCB5Ydp5B5PcgcmRQCnhVfKV9wfVyvuKLJ6jWTpump.csv.gz"
+    },
+    {
+      "token_address": "2d8ZWNM39gyhPD4L5SVmkYMakZaQYgdD3qHh283tpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.261447957784501,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/2d8ZWNM39gyhPD4L5SVmkYMakZaQYgdD3qHh283tpump.csv.gz"
+    },
+    {
+      "token_address": "2fE81nZZHFnPFWtheQrcY5o3DCiVRGwA9ghsUgCJpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 11.37741328960702,
+      "xval_n_comparable": 9,
+      "path_file": "logs/research_paths/reconstructed/2fE81nZZHFnPFWtheQrcY5o3DCiVRGwA9ghsUgCJpump.csv.gz"
+    },
+    {
+      "token_address": "2hGybziEkFPFmSXJJtt7jPR1NEuoSD9RriP69uQxpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.249788512150088,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/2hGybziEkFPFmSXJJtt7jPR1NEuoSD9RriP69uQxpump.csv.gz"
+    },
+    {
+      "token_address": "2hSYFFK9S9gwKjnZnPdiN1GZFLNvYTPCCcqNLBDMpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 18
+    },
+    {
+      "token_address": "2ibd5V3BptgZXaycSCnQcuXcYW4JKw56Ye2dVzXuJkrZ",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "2j43cNANCLFe9NrV5X2BZeJBbkbigtFhmpeqqqgZpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "2oQBjm3bvghDZmRNZthkYxCLhGUgHBEZcejTLgte8Rnc",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "2p39btwzkc4AfCFqjNNwfBby5abvreaeBsZakjtKpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.710214059435594,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/2p39btwzkc4AfCFqjNNwfBby5abvreaeBsZakjtKpump.csv.gz"
+    },
+    {
+      "token_address": "2u4HKh44c4Pps8v2KFcgczEYZZNrSgreheBcXMCupump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "33aXu1kk1KwMmzPPhEKG1UxFwixHYdZ5oenKixrUCX56",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "355yZV9nwdha3Uv1a9oh3YtALuf2AAPv3vzYx65kpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 11.658364738231342,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/355yZV9nwdha3Uv1a9oh3YtALuf2AAPv3vzYx65kpump.csv.gz"
+    },
+    {
+      "token_address": "36j5MKbcNyd9vjHePhZLu8rNt7RXW2HU89sKyVvApump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "379HHMsUSfovg38PFDsbZ4qBQNRqFxmj6UCxQk2Kpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 16.120861680830128,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "3CF1EmxFZWqjXBQxxvy16RwvQSxhz8ro12Tu2ZCRpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "3K2VgXbJRXGvpvo1e3wCA57m2WFe3MGubr8tFpXppump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 95.57554157931516,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "3KBTuU4dSfn5hvD5e51TS5YJDuYDoDm9Sd3tbsfBpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "3KVxrNkRMnGCaTgpAv2zvADADUBMFjFt2ayrZe3Lpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 18
+    },
+    {
+      "token_address": "3PkXvrHSpbJB4wFryEXG8HrgiKmNJZASiEf28GBrpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "3QhHyv3qC82e6AmUUsGEEG2iSenfYFr42ZYufyWkpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.214385865195534,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/3QhHyv3qC82e6AmUUsGEEG2iSenfYFr42ZYufyWkpump.csv.gz"
+    },
+    {
+      "token_address": "3SjCJ2SyanaUjj4spQmBHY9i4rA4nEzwzqN6aawmpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "3UWgqBEk8HHtnyftdLaE8DG52xuxUwQRxvZdYDEzpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.247477588191224,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/3UWgqBEk8HHtnyftdLaE8DG52xuxUwQRxvZdYDEzpump.csv.gz"
+    },
+    {
+      "token_address": "3VMQDucDn6fhEEDYfsVUhhuBm5Vj2REwwt8J5MMYpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/3VMQDucDn6fhEEDYfsVUhhuBm5Vj2REwwt8J5MMYpump.csv.gz"
+    },
+    {
+      "token_address": "3Xb9KafJsBkzLykKbW7hTrZysTV8N1TMBsfpNoR7pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "3Z3NJp9GuasHPh6akoKAFhyzitLWh8A53rigEmUk7zG3",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 5
+    },
+    {
+      "token_address": "3Z72sNaaLwNqGx9Gkw8Do6owAggZAVXh5ZjavZQ5pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "3aYE9aXX5pJefCzdfNzZdgui9MBnDz1bWM6GgoTEpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.295290495537873,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/3aYE9aXX5pJefCzdfNzZdgui9MBnDz1bWM6GgoTEpump.csv.gz"
+    },
+    {
+      "token_address": "3eP3JkeCkRpuReMMy8SJkfZ5xuKrYwVDxjC5XGVapump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "3eSiycqBow8tQA5fCmHMMwwbgh1DFrnoNeZUja7Gpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "3eXf3HS1y2W62E3A33SkgXURwQUokbxSDyCM4oTT4SkQ",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "3eY3fYwqwrLxFWqvw8xiurre6qg7U5YmvDanS3Lj1VoT",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "3ecKs2oo4RXwJf16pcANBuJtZVhA8xwEi6Ewu2sLpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "3f11NAwS7Yn5MkbYr5u3UGZqmEP4WQkLdacuhRKNpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 1,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.3291056405140802,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/3f11NAwS7Yn5MkbYr5u3UGZqmEP4WQkLdacuhRKNpump.csv.gz"
+    },
+    {
+      "token_address": "3gS22AU5UjGT8JFCed7cbhFE5B74XTChWFL5jBSTpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "3ig2BjrmfVttEzC1FTFJWyZ7RE4xA2Bp154sjzKY5AFy",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "3mZWPfnfDPcaCddXZPN16BBMDDtc5NGEwekpTfSMpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "3ngyhYu55s1MJFE9c1JNrUPPn1e4ZLti27zM8dfFpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 19.752095915296547,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "3oY5NnNAbnRK4eNzPWZFmtAWVW4RNumpni4XtGarpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "3qr42gxEWffvpwPe3GLTvBKYomNDHPsyVevz8gA2pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "3s7PVGDT2UqJELChtESJBHSuYP33dYaneF3TXoiKEZhR",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/3s7PVGDT2UqJELChtESJBHSuYP33dYaneF3TXoiKEZhR.csv.gz"
+    },
+    {
+      "token_address": "3tHeTHVcWiCsWFxEacxUkvJAybLkV2Ph7hPmpCSNpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.749699453826517,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/3tHeTHVcWiCsWFxEacxUkvJAybLkV2Ph7hPmpCSNpump.csv.gz"
+    },
+    {
+      "token_address": "3tgwHbthufLT2ur1zxXyZZ1qoTA2iXtb8rkXC1Wkpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.320439239390714,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/3tgwHbthufLT2ur1zxXyZZ1qoTA2iXtb8rkXC1Wkpump.csv.gz"
+    },
+    {
+      "token_address": "3uwfUnEo9uJ8s7CqpmNw9jEjcFAf3zgQyNsJb2K1jLiJ",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 4,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/3uwfUnEo9uJ8s7CqpmNw9jEjcFAf3zgQyNsJb2K1jLiJ.csv.gz"
+    },
+    {
+      "token_address": "3xCDRsr83PLdJ2voLQ2Pq36jGWtvw2fT4oZYqHKnpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "42JJanV8Jb5moYLsGvWCBXWSSMAAVKSTozhmb4uoQaxj",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "42VaiAQJnpXLpfzyC3GnTzudnEPHHkctZWQW4aaWpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 12.060408993853846,
+      "xval_n_comparable": 9,
+      "path_file": "logs/research_paths/reconstructed/42VaiAQJnpXLpfzyC3GnTzudnEPHHkctZWQW4aaWpump.csv.gz"
+    },
+    {
+      "token_address": "43FTCiHG6gKk9AqDsP6WgdoyBndvp4gG7G5kroPreuET",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/43FTCiHG6gKk9AqDsP6WgdoyBndvp4gG7G5kroPreuET.csv.gz"
+    },
+    {
+      "token_address": "43nS2WbBYgwUot7nSWZeik8nCpDkUksDADMwa81Ppump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.7453988961440166,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/43nS2WbBYgwUot7nSWZeik8nCpDkUksDADMwa81Ppump.csv.gz"
+    },
+    {
+      "token_address": "46SLneUXXDn7qvngYXrL5EzM5P1A9994RRfCWHEkpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.074970465563387,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/46SLneUXXDn7qvngYXrL5EzM5P1A9994RRfCWHEkpump.csv.gz"
+    },
+    {
+      "token_address": "48ZGLrze6a59kgEDVsfQ6Vq8ZrFLuuEw4jt3Rg7kpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "49DbBgC9Z385FzJqtdTBdDHPRzcD5GoUUeYCRNdYpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "4AiqyJ8X5b8PrDVirREvP83uhPeKYAWsqRKUj4GSpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 4,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/4AiqyJ8X5b8PrDVirREvP83uhPeKYAWsqRKUj4GSpump.csv.gz"
+    },
+    {
+      "token_address": "4GCmJ87xRchBREMVpgZWiyJPUgzkhkyzt8MbddsDULx7",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "4HKGqTLEj6ERc4JLwL561aJJ3eqAXfUrHE5WfifNpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.156367653542099,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/4HKGqTLEj6ERc4JLwL561aJJ3eqAXfUrHE5WfifNpump.csv.gz"
+    },
+    {
+      "token_address": "4JWztng3c6J5f6gPh7brpdLpAfEj6D8UWipiDY7Bpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "4PJ8wZpyKEL4QoiVKc5NpbhvopmZLUhxXpaSPVimpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "4QV31UeJJyUVWP2f1qgEz8gUPkf6WyPZyAmGdT8UD8Ld",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 12.31364504995049,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/4QV31UeJJyUVWP2f1qgEz8gUPkf6WyPZyAmGdT8UD8Ld.csv.gz"
+    },
+    {
+      "token_address": "4R6eExsK4dxBXHPBUz89RxiRMY7MfxyBhMauAtLeJn5f",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 110.55360458749624,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "4SU5ZMCrfgmZYw6HhTFcxA9MfRs1NzGYgRrXDtL2pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "4UwqaSJ9JjNW3DQnNqE9s6vjLUsb2hnqvBFHDDt5pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "4VhVX2vybeUCPBKKvy7x4Aj3THeNei3x9E1mq1PQpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.064681386760931,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/4VhVX2vybeUCPBKKvy7x4Aj3THeNei3x9E1mq1PQpump.csv.gz"
+    },
+    {
+      "token_address": "4Vq3fwDfTvynU2ABMFnPdBdEEcMB2Y4XzSVQCHkF4bBr",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 128.9051986948883,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "4afRrQG9CJ8EN5hc97UubvNRCny6cxcExgYk5W45pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "4aqNfcKAHnWmqTNC5q5FjdNP5vEke6L4qhFDXx1Bpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.328172682203559,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/4aqNfcKAHnWmqTNC5q5FjdNP5vEke6L4qhFDXx1Bpump.csv.gz"
+    },
+    {
+      "token_address": "4bgPRCQAZz1mBAe8WSuY9od5t6AjFSyGqrijBbJDpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "4dj32Zb2YAjpuJVaBZorWhmRehA9se4VvqR68SEypump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "4dpL1YkGPuEKgEjRfP7TrmU96nQvpgEQc78iiYQapump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 9.654532967215957,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/4dpL1YkGPuEKgEjRfP7TrmU96nQvpgEQc78iiYQapump.csv.gz"
+    },
+    {
+      "token_address": "4dwc8JDjNzn8FHwiPXNhgbAhAyL8tfTX73mb5TR9pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 107.19052298608185,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "4eNkqqxC4iJ6gugYqWRJXfzgDT4KXQujV7xKgMaxpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "4eNyg56io8Z7HAchVieZ6bsfr6rbZ6Y6ASNFD6Whpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "4fC2GLYnLvqy6zuZF3GreiUHFamwz5jiYDUfmcPKXwp9",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "4j5nQBLXszoKzqNiTbpfeHwaLvc2QBKSc8R8GNtYpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "4jmkzvn9t5kEMBuh3uEj1L49XYBJbcEm1LPL2ddfpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "4qiP21qHTXyvXks8ErgXJdCWNrRP48yXHcvaNdX3pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "4r9pAJYisxDw7zevNBQUaA2Wr7KUfbXZyjeb9nG1pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "4rSRTTJWSr6Rc2SLH5Uibmja8dtmuBBwkm46LQuPpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 10.653535079889727,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/4rSRTTJWSr6Rc2SLH5Uibmja8dtmuBBwkm46LQuPpump.csv.gz"
+    },
+    {
+      "token_address": "4rsd2NBg2Gq72QpQgu3mgXCko7s1T4LNGbZN8Bwhpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 5,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 39.514318512260736,
+      "xval_n_comparable": 5,
+      "path_file": null
+    },
+    {
+      "token_address": "4tGYC8sVTCvdqCH43rYW3ckiPuXJbdKTENyXUaD9pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "4vewR2UHGVWNPYfqJCq27DmREq1HgvVYiMvyB14Ppump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "4wXP83KvMNHBRqczkqwNfCgj7kuUqnYZ6TgnxrMWpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.333032941965281,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/4wXP83KvMNHBRqczkqwNfCgj7kuUqnYZ6TgnxrMWpump.csv.gz"
+    },
+    {
+      "token_address": "4wgn7wZCspYYjcB8ccfVjjguff8yUt9aywCa8fyEpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "51oFpBmndopoh1nLuFa2JVqFehXYjrcYrkLbuqSppump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "52FmhRcQoYxdfPgjEuuCVjPmz9zpkkGWg1Fmqu8kpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "549CD7fGQTEnHphZyQboNzaVb4LQ5CQBE3Cn8Xyepump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "559Fh5RqCBSgrL65wtSeUyz56f3ibi8S9eLTXcqs2aCB",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.922296366292251,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/559Fh5RqCBSgrL65wtSeUyz56f3ibi8S9eLTXcqs2aCB.csv.gz"
+    },
+    {
+      "token_address": "5DvguvyfNA1fN94o21ac3Lhz9AZrLbPQSDbB7UDrpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "5HDneDrhYGR1f7upQeKwrAT5hCg9DosAH94LNs4Tpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.8856799882988646,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/5HDneDrhYGR1f7upQeKwrAT5hCg9DosAH94LNs4Tpump.csv.gz"
+    },
+    {
+      "token_address": "5KDizJH8AWnBiNRrXvSfUfamEkW9ESawK5TXicgGpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "5L3upAqpYQ3od45eHLD4HgHd8TrVmWnEqYescPQr5GkM",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "5Liyzb8xsX7v5s3LiHNEAzuUTjwoanTLE7FG6AsKpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 11.065513165838786,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/5Liyzb8xsX7v5s3LiHNEAzuUTjwoanTLE7FG6AsKpump.csv.gz"
+    },
+    {
+      "token_address": "5Lm6yjvckqjgpHDfAsTuRLLvc4mH4jDF7ihc6E3xpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "5NKDZgzM4Adb212qo2quNiShRLqR9ND6VxxvgssEAAph",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.8481687634817439,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/5NKDZgzM4Adb212qo2quNiShRLqR9ND6VxxvgssEAAph.csv.gz"
+    },
+    {
+      "token_address": "5QUf78bnfJPqPRyMsHfE51Qv7hEKx6yGB2CGUYU3BrUq",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "5R8bVvKrdotCukqqYb9emndQ9rqMiMfCVRTWWVdipump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "5RViTjU4Rt6B3Gkd4vNbYUJ2nDAL8MBiZHQ9CD4Jpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.3231374204479938,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/5RViTjU4Rt6B3Gkd4vNbYUJ2nDAL8MBiZHQ9CD4Jpump.csv.gz"
+    },
+    {
+      "token_address": "5V9t5eGs5ASdhUasDpWrgZsbPbipyhHzpEPLhcBFNffN",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "5WnxLprZhMVmQZxqs1aakeGkY1F7nGdPkYE28mjUpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "5Wr3m8QpTqqn1idrQvp3iNPa4f8hviBji5A9aEVapump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.3157456301912718,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/5Wr3m8QpTqqn1idrQvp3iNPa4f8hviBji5A9aEVapump.csv.gz"
+    },
+    {
+      "token_address": "5ZRCtHhskzRjREqyg7siJB9iqNZ5m9GQU5pYfskjpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 8.428754021411734,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/5ZRCtHhskzRjREqyg7siJB9iqNZ5m9GQU5pYfskjpump.csv.gz"
+    },
+    {
+      "token_address": "5ZqaMgN32z2UuvWKQDVpPvbFpAKmayhBKRuW4PYqasxB",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.8311010086527486,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/5ZqaMgN32z2UuvWKQDVpPvbFpAKmayhBKRuW4PYqasxB.csv.gz"
+    },
+    {
+      "token_address": "5ahQGfjUNC9tPX9kdCf1fVQkdDGMKTyeQMbrViw5pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "5eNTra94PT3NSoQNFqZpV73kA7aoCehjDTxE6Drkpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 18.37575419141922,
+      "xval_n_comparable": 5,
+      "path_file": null
+    },
+    {
+      "token_address": "5fdjSdqFicNhx6prANMZxGTc1GiCNpjZVMHWT9KTpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.690144736582101,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/5fdjSdqFicNhx6prANMZxGTc1GiCNpjZVMHWT9KTpump.csv.gz"
+    },
+    {
+      "token_address": "5frJycEGZ4opxvok4qSJyLgEHkSw4USrSnJHQwGdpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 18
+    },
+    {
+      "token_address": "5g7Q3rC8Hvf3toRzujsYq1GSBxNdv9pZKx1muXaVpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.09796583493985,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/5g7Q3rC8Hvf3toRzujsYq1GSBxNdv9pZKx1muXaVpump.csv.gz"
+    },
+    {
+      "token_address": "5geVBi3XgVwtW6A9xtTmno7KL6cpoMvwzJzK15Lpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.051104560255922,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/5geVBi3XgVwtW6A9xtTmno7KL6cpoMvwzJzK15Lpump.csv.gz"
+    },
+    {
+      "token_address": "5hxhtFH77vFccxVtFSJMEkvAbPhRcFjM1NMSHFcXpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.450206949263648,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/5hxhtFH77vFccxVtFSJMEkvAbPhRcFjM1NMSHFcXpump.csv.gz"
+    },
+    {
+      "token_address": "5mni69zBTGhcVXRAJYf5W4xXpeKXCRFkJLvuC39Fpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 3,
+      "n_heuristic_fallback_tx": 6,
+      "integrity_status": "INVALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": null
+    },
+    {
+      "token_address": "5qmSaFVw2PzUqk3Ab9f6DZBuk35ZsLp3EVwWNfCVpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "5rPuiKKbEXLxzssjuKHzGeuKuuHRuJf6aYhVLNtepump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 47.72699492616647,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "5te4qXdCWkXPCHQiEtRLGzX6eWnuemJ9Hy2Zp9rYpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.7525742091813226,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/5te4qXdCWkXPCHQiEtRLGzX6eWnuemJ9Hy2Zp9rYpump.csv.gz"
+    },
+    {
+      "token_address": "5uE4quvCeo2fKaMTweDiy54FYYPCn3vA9e3sHQfqpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 2
+    },
+    {
+      "token_address": "5v6z7wfY4XFSzei1mYpqACxfNhrQdkJ71tD1LoUhpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "5vP9iAr4omW6j14L3LZemXpJ8aZbJ3oWiE4hwq7epump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.205961805565882,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/5vP9iAr4omW6j14L3LZemXpJ8aZbJ3oWiE4hwq7epump.csv.gz"
+    },
+    {
+      "token_address": "5xDwbQcVDjqXsuJUm84Pqu2JaSuEYgeRN6o4WFzDpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "5yv5w1uf4ramg4L3QH5Z4tg1i6KLKEWTU9puYTwUpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 0.6526618977983993,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/5yv5w1uf4ramg4L3QH5Z4tg1i6KLKEWTU9puYTwUpump.csv.gz"
+    },
+    {
+      "token_address": "67QTyapnkr6V4BU5D3equN6G3Bv2hJgt8yrYbbmpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "68GpHP3M6VSArzpRzqX3MMV9VnLcadZhrpKENo85pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "68QzftmYA3xW2Y3WTe7TP9QN985Vv9SG63uUtfidpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 5
+    },
+    {
+      "token_address": "68fn2tLABKmS7VA9Eaz3n6RfoXM3iBWUACckT9dwpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 5,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.588171062044448,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/68fn2tLABKmS7VA9Eaz3n6RfoXM3iBWUACckT9dwpump.csv.gz"
+    },
+    {
+      "token_address": "69PcfUNvqhJagdfjoW2CyWr5qUKWxvtnqXqofTa9pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6AToH4XM14eQZeRtbX4JvaaFN2AFUS3D44AjfiWzpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "6BKQQrLrNtegxjVVhCGoHj4hWjefzWDAU5WqkQJwpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "6DGgsCCoyJehBbJzUoLcYeukHJoqJDrBCjNcZDar1Mjt",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6E8UmPnQVsYD7utPUbZdGBowisR41HFyehB4NtREpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 16
+    },
+    {
+      "token_address": "6G3jeSMJzfDinWSnKLsCho5BCa8i9CHKWg8jizwKpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "6JJ5VejCCdRW4eHeKNtCsrgQspnPky5tBF6oSc85GNPf",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6JZfJw1ufSgU9Bt3mAsKQBCo5rtHi6hJuGzmKwhGwv8",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6RdfnFL9SdJdoruxYz3tJuZHQXPLGG8Uy1LoDgSZpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6RpG9B7srVPZaccAr8YUQRMefFBvwC15kNCrkeBHpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6RvxMucD3nEhNTQCWtm4F3SfET1CnsQbSjQdr3Jrpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.764072156739943,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/6RvxMucD3nEhNTQCWtm4F3SfET1CnsQbSjQdr3Jrpump.csv.gz"
+    },
+    {
+      "token_address": "6SvnHC1T1dRTY1MogpCg4PMLZLvpD5MJLi9pDTt2pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.511086883227844,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/6SvnHC1T1dRTY1MogpCg4PMLZLvpD5MJLi9pDTt2pump.csv.gz"
+    },
+    {
+      "token_address": "6T6APFk43FoZjNXSsBRhMYyVinsntzTGAUpZeP8hpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 3,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 10.035896424851176,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/6T6APFk43FoZjNXSsBRhMYyVinsntzTGAUpZeP8hpump.csv.gz"
+    },
+    {
+      "token_address": "6TpjcLmBm9Vy9hL39TrCRibVY4NJv6tpdu8o9kvzpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.475802206715956,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/6TpjcLmBm9Vy9hL39TrCRibVY4NJv6tpdu8o9kvzpump.csv.gz"
+    },
+    {
+      "token_address": "6WmCmv4RErtiCtTX7RCyq8f4cCmzPfXtBehENiMtpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 16,
+      "n_heuristic_fallback_tx": 2,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 59.56395936604779,
+      "xval_n_comparable": 15,
+      "path_file": null
+    },
+    {
+      "token_address": "6WsYJF6qTqc9A3vzP2pLbr3RgG5j9Xrhx3gaiVutpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "6X4eXm1WWom2eidjnT6XxW8CHUVbaqU8kFsTXeL7pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6bPhpAh7SZKzxAywyZ6yR95QXU6MBAi4DwkEWzy3pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 3
+    },
+    {
+      "token_address": "6fjdzxBZuf2AFCaCffmqbzqLPehTtTezFHqoKcYvpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "6mcu9Sdt4ZvUV8U1HqfK4Ug1hkoc23odH2LkgHnUpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "6nWbQH6aSjG83JizxiYKwBRK5njaKvqgm1EWu7rPpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 22.51398541689791,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "6o4d4XDQPuhzNNVRszgcNbWtfgVEBFzwBoLgJxJTpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "6oQjSA4eVA9hhManYFcQCqga6GXGqfd1aTbAMWAxpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 68.72188601307715,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "6pfKqojhCUYsvNvrHpyMFRvVks61jXadzVuM1gcpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 4
+    },
+    {
+      "token_address": "6pg5uegVbhjZkZ7xA8v55JX1RgeqGKHW96QQZVwLpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 23.930384874520342,
+      "xval_n_comparable": 5,
+      "path_file": null
+    },
+    {
+      "token_address": "6rtKeLE89kPfqLyWUtnsRtAGimCDk3SNQoLfszSXpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6t2KrNYfGoKtu1uFu2byRFZoKrXTY9fJ7ojHaETupump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.1290390814014324,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/6t2KrNYfGoKtu1uFu2byRFZoKrXTY9fJ7ojHaETupump.csv.gz"
+    },
+    {
+      "token_address": "6w8VHx63RJ74AQvMbStk7fatPbaDgAj9b7k7B74vpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6wcyE46tT6p4LJfrLXGe1uhbhKyfuRw4ciYCRFXopump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "6x8nA5P6XYJhwtS2XodDKUte5hA8E88xrPsqNAyuFJpr",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 18,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 48.11220000654469,
+      "xval_n_comparable": 17,
+      "path_file": null
+    },
+    {
+      "token_address": "6xbZRQ1New1bHvVjk9GwY2JFNCZwd4HuVGWGgwjEpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "717UTy9TDaiKf9fgtJyJwtfV4bneGz4fVDSGaZfFpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 11.470657316902791,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/717UTy9TDaiKf9fgtJyJwtfV4bneGz4fVDSGaZfFpump.csv.gz"
+    },
+    {
+      "token_address": "733VHwbMSw3ARpMuxL3ZZX2wKD6GrsmGeDceUs3Lpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "77YnBCb2nAgEPrjw71VpCDcbhiiZE4n78JFUS8f9pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.444797938403959,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/77YnBCb2nAgEPrjw71VpCDcbhiiZE4n78JFUS8f9pump.csv.gz"
+    },
+    {
+      "token_address": "79Z56ijKdhGRSdifkQJ1LFX3aJfH7tMTNKMATw1jpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 213.46741049125728,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "7E2eVyu2FMjoieEEMtFJ6yrWf9a4FXnydMLwqFoXpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 4
+    },
+    {
+      "token_address": "7E8UAqKaNNN7xpgna5qFYmAqMfhNsUJUgLcwfX2ypump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "7G5QwVrFkRu4QmDB3nAkqjxJFsBx9WYwm1eGBGmMpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 5,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/7G5QwVrFkRu4QmDB3nAkqjxJFsBx9WYwm1eGBGmMpump.csv.gz"
+    },
+    {
+      "token_address": "7GtzdDUgjSKCPu8NJ61trND7wJ73TBvVHbkCMwgzpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 8.096257989590196,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/7GtzdDUgjSKCPu8NJ61trND7wJ73TBvVHbkCMwgzpump.csv.gz"
+    },
+    {
+      "token_address": "7HzdWh634nVKY88CWT7imR3isimmmWZg5oJnwwN2pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 80.56344789349811,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "7J1YWS62H63dz2UGtYKv3pbHevRxHtVeRaUN8nVjWC5J",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/7J1YWS62H63dz2UGtYKv3pbHevRxHtVeRaUN8nVjWC5J.csv.gz"
+    },
+    {
+      "token_address": "7LawQbDn1EfgGRQAizzj12EwVjwuGy8AE2poWNrnpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 4,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/7LawQbDn1EfgGRQAizzj12EwVjwuGy8AE2poWNrnpump.csv.gz"
+    },
+    {
+      "token_address": "7SecUUhKVK8qGGFC1vfGytNkxeMhaTPz1eQ8mJMxpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "7Vk5dEgApb3sDB4rDtzEx3DXeFptiLPEYQmsqHZypump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 19.751162353122844,
+      "xval_n_comparable": 7,
+      "path_file": null
+    },
+    {
+      "token_address": "7VpVi2JbZBy3dNBr8Vt7ciYq18JFVWBWaLLxvgZZpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "7WVLWSc3PuYdZ13MRq7KZSWXFc2zarYR4kV7YK1mpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "7Yn7UhVQvDggsEKE1jRABr4SNAaBAR43dgtV1r3Tpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "7bCQsrVrvsfhWU7G8g6948mimmzE8687HM5TYaBmpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 1,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/7bCQsrVrvsfhWU7G8g6948mimmzE8687HM5TYaBmpump.csv.gz"
+    },
+    {
+      "token_address": "7e7BoAWtCBi5gHpGo4Cvz5tyJz2SZVUkVb8r9rFNpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.3120877796525838,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/7e7BoAWtCBi5gHpGo4Cvz5tyJz2SZVUkVb8r9rFNpump.csv.gz"
+    },
+    {
+      "token_address": "7gUNjdsLRavTNY28cX3ztdLwM7NSqs11LoR8oGvvpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "7iQp58BeS2JjJKa1QihgDT9CrWtL4Eceu1Tzn5t6pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 2,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/7iQp58BeS2JjJKa1QihgDT9CrWtL4Eceu1Tzn5t6pump.csv.gz"
+    },
+    {
+      "token_address": "7iX7xSgVoy7YQVuSh9GQrP2s4C6DxWMcX5p72ZMcpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "7mPePj49y6nRjj6bGmXoRU1iXMrGFgdF7tkRJtSFpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "7sTjqCiai43Kym1RuiZsGwUAXARebxvjRUmrNgG5pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.9899163249592946,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/7sTjqCiai43Kym1RuiZsGwUAXARebxvjRUmrNgG5pump.csv.gz"
+    },
+    {
+      "token_address": "81hb1tsS17EUMeKdJGL3CYg4A3eMuvZnN1p1QzJupump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 9.09889502830991,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/81hb1tsS17EUMeKdJGL3CYg4A3eMuvZnN1p1QzJupump.csv.gz"
+    },
+    {
+      "token_address": "82HxvW1K7kqEakBoqKaUwUr5zRpNrQK7BBjQvq7spump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "82cdF7Vg6zQfjGZFSyWApfKaxnUQJyw3CMxjfEDGpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "83opTP8HEZHHjuUKTobdPzXMxorDhgUgG5WhJxECpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "87jMwGkpF8tpWaUfhmcPzfM9uew2rXLiZVdu8bEqpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.682269459184478,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/87jMwGkpF8tpWaUfhmcPzfM9uew2rXLiZVdu8bEqpump.csv.gz"
+    },
+    {
+      "token_address": "88a7JX9aZdXg5Uip7F6RcPi2fzR6mR4vAzQkBVBpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "89HmhRtVHqeSnDMVZYvHWGPckwA5oa1Ds52zMaEQpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.038172925737208,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/89HmhRtVHqeSnDMVZYvHWGPckwA5oa1Ds52zMaEQpump.csv.gz"
+    },
+    {
+      "token_address": "89d4U7qHT2G3rSWeCr29fwWnmxz9s61sKpcbdXKzpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.049060059781216,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/89d4U7qHT2G3rSWeCr29fwWnmxz9s61sKpcbdXKzpump.csv.gz"
+    },
+    {
+      "token_address": "8BXGfS8vUza6RaLxjtweXg9eySw6DxcfkevBJpDTpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.4079043733181975,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/8BXGfS8vUza6RaLxjtweXg9eySw6DxcfkevBJpDTpump.csv.gz"
+    },
+    {
+      "token_address": "8C1TCuWEXnWhW2UPdeQfq2WwPkJA5rDR3bbHM329pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "8DDegriQVvjCxj5UtkLZ2iBx4DBJDuskijKFQ7wipump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 12.2811175450423,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/8DDegriQVvjCxj5UtkLZ2iBx4DBJDuskijKFQ7wipump.csv.gz"
+    },
+    {
+      "token_address": "8Do5g718wVppdu5XCvJ97uT3fnpSvRo9miqnUhqZsHU8",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.118108612599589,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/8Do5g718wVppdu5XCvJ97uT3fnpSvRo9miqnUhqZsHU8.csv.gz"
+    },
+    {
+      "token_address": "8GZQoF1CSjasXo65iLLj38kB1VQWiQaNvPrD7sNzpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 11.67730087529332,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/8GZQoF1CSjasXo65iLLj38kB1VQWiQaNvPrD7sNzpump.csv.gz"
+    },
+    {
+      "token_address": "8LNxXCAbpoUAJ9jaJLvE4UntZwLQbbeY9CPUp87Ppump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.440549983327166,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/8LNxXCAbpoUAJ9jaJLvE4UntZwLQbbeY9CPUp87Ppump.csv.gz"
+    },
+    {
+      "token_address": "8Mx7jdrgshEykYrL4dYgw5UjSU8mHsKkrsRXww1Gpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 19.5259269256051,
+      "xval_n_comparable": 7,
+      "path_file": null
+    },
+    {
+      "token_address": "8NZWZJcHEsRDqfs1MzEzRQcEmxf8KN3pkhLSAom9pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "8PA6W7h5UaNinVExYEZF6zuWDjEP2vd6A6xkM7cNpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.205530805784621,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/8PA6W7h5UaNinVExYEZF6zuWDjEP2vd6A6xkM7cNpump.csv.gz"
+    },
+    {
+      "token_address": "8TX939Z5iifN8EjbaXSuLD1N2yZTKHeAApEFVsnipump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 4,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 15.145150715492559,
+      "xval_n_comparable": 4,
+      "path_file": null
+    },
+    {
+      "token_address": "8UBwyJJMuqQfWBbiek9RaY6uN1epFpp8dJRKinzEpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "8YXB7GV72Xay7nP5oaLoWkG2VBko7M1Yk2NokdzZpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 10.865680424373938,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/8YXB7GV72Xay7nP5oaLoWkG2VBko7M1Yk2NokdzZpump.csv.gz"
+    },
+    {
+      "token_address": "8awPKLE47m4EbyMEZPXhusbHpEzbv2GRJpGPfqNApump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "8cWEJk8KwPGv8mTqgcAEdd6LYTXSLtk4SJTD2bJwpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.890169007708746,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/8cWEJk8KwPGv8mTqgcAEdd6LYTXSLtk4SJTD2bJwpump.csv.gz"
+    },
+    {
+      "token_address": "8dcEdmQC8A9AiiHwpTG1pUf7DqH3XkXhZHAUtr2KUXg4",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 15.847845512280362,
+      "xval_n_comparable": 7,
+      "path_file": null
+    },
+    {
+      "token_address": "8fRhgKcTCNeXt5AVUdZ7BkGJ74y9vbUbGJaKt5Kpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.6901856552208825,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/8fRhgKcTCNeXt5AVUdZ7BkGJ74y9vbUbGJaKt5Kpump.csv.gz"
+    },
+    {
+      "token_address": "8fmZ7i4mVQ6iUTR8U3hg3bFt1hzznkqHbBc9qCt8pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "8gFywdHpEQBRSB7WF1BGJFWabYdfsFrLN4RxSFdpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "8iHB4wqa1hBUkZXFqa1qTsUkk1NzUza9QFciUabkpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "8k6YidRtD893CYRRKeWvGp2ixwTVU2haf5ymrwwZpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 3,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/8k6YidRtD893CYRRKeWvGp2ixwTVU2haf5ymrwwZpump.csv.gz"
+    },
+    {
+      "token_address": "8np28cjujPCNWswWCxSRBYso7i43zqpWKN7RwtUkpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "8p1bp9H1X4YEXUePuBwqJHJfXDjcA8m18wrpmjgqqrHy",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "8tzKmbAHmwaac4ZrHS339LZUhssbXZJ6CYAwv1qXpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "8vWsFgTrwNG22mEH4rzYpz4mN5mrvUZ8VhwLLHYpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "8vhvDujF2uFBtRSfRoK7xY6JCJGyEqHSTzbCUVz6pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.319682069577165,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/8vhvDujF2uFBtRSfRoK7xY6JCJGyEqHSTzbCUVz6pump.csv.gz"
+    },
+    {
+      "token_address": "8yRnzRAPtNwnupaSKBmBRwnUGBfu7u1JKLnsUdUzpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 5,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.074866599173592,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/8yRnzRAPtNwnupaSKBmBRwnUGBfu7u1JKLnsUdUzpump.csv.gz"
+    },
+    {
+      "token_address": "92hRpoTx8GWPZDyKxKjgMRjFStrDq6M9VkMfAshoZ8Ct",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "931wvs24jszzA2TDashukRoqK9A71KzUE54m29G5pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "94MumCye7uvNiggHKY4zPiwn18NUbAirV3BJWrSGpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.0411689722054651,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/94MumCye7uvNiggHKY4zPiwn18NUbAirV3BJWrSGpump.csv.gz"
+    },
+    {
+      "token_address": "9CjqabSD83y7eACCDbxRe9gMew1EqmrT7vxbjoAXpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 14.276450811020624,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/9CjqabSD83y7eACCDbxRe9gMew1EqmrT7vxbjoAXpump.csv.gz"
+    },
+    {
+      "token_address": "9ENMRcpQNzTZtQJSBQgoPsjJPySbo35pj17kcLkwpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 16,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 87.69111705143786,
+      "xval_n_comparable": 14,
+      "path_file": null
+    },
+    {
+      "token_address": "9Ejro7H645QgDwSQkryzbMvDQXAjfpZ9omuadeKLpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/9Ejro7H645QgDwSQkryzbMvDQXAjfpZ9omuadeKLpump.csv.gz"
+    },
+    {
+      "token_address": "9HDGFCJNrsVAjYJ9qD8sy7rnFwE4yzLxEVn6ek6Dpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 46.66407334030464,
+      "xval_n_comparable": 7,
+      "path_file": null
+    },
+    {
+      "token_address": "9JydyXyoXCssdFPkm6nTEYzK5KDoxy5LSg7E8EYLpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.310857292077106,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/9JydyXyoXCssdFPkm6nTEYzK5KDoxy5LSg7E8EYLpump.csv.gz"
+    },
+    {
+      "token_address": "9KDwXBf7patui1Hr1CVUaCzzNidPRopNxCT2BXZSpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.452280796043083,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/9KDwXBf7patui1Hr1CVUaCzzNidPRopNxCT2BXZSpump.csv.gz"
+    },
+    {
+      "token_address": "9KLsemencnUAtBNRb4f5kojva3KdK33VT8NbyGgVbPAT",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 17.761145990780793,
+      "xval_n_comparable": 2,
+      "path_file": null
+    },
+    {
+      "token_address": "9KXdg4SSmGDwphgK5CDpmxHnuHnrJHQA5ra3j7tbpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "9NmdgmLXNrrPqb3YygvTTxyqMeXf7p43CB1ADH92pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.855153881953237,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/9NmdgmLXNrrPqb3YygvTTxyqMeXf7p43CB1ADH92pump.csv.gz"
+    },
+    {
+      "token_address": "9Q56WiU3utVffR6i63jNgsumhaR5rthAx2R2rtJxpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "9Rf6DTf9xXEnJVQQVL3uQ5hkYdJuZPjx8V9rTCbZpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.174492541577587,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/9Rf6DTf9xXEnJVQQVL3uQ5hkYdJuZPjx8V9rTCbZpump.csv.gz"
+    },
+    {
+      "token_address": "9XEh9DLsi8tS1Q37znTR8Fv2w5VzNWahkxLVPwtTpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 9.425165589219406,
+      "xval_n_comparable": 9,
+      "path_file": "logs/research_paths/reconstructed/9XEh9DLsi8tS1Q37znTR8Fv2w5VzNWahkxLVPwtTpump.csv.gz"
+    },
+    {
+      "token_address": "9YWiwGWv799mADiLeCoHL3ynVB7hmUbzP1npRvsbpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "9cRujSWK3eRhnFFatb5hxZTzzPPXeNfs6sqbXem7pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 17,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 28.87513024244716,
+      "xval_n_comparable": 14,
+      "path_file": null
+    },
+    {
+      "token_address": "9d7ZKT9Cc1NDQVCPkXnCD9gMQDZoppMrKzXEwFoApump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "9dpqWx5hQg4Bk7amL8GcEmTJbwsw8CucNNMDDzPppump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "9pa87pMwv1LNrvJRndqPpyu7UmBWqQjsGWiEj4tdpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 3
+    },
+    {
+      "token_address": "9xPYzgAonj2Z2Utkurfj7nM2C5Hqd8nS5ZoUiFcCpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "9xt1mevKYgvzhov4taPS3zAkZmu3v2PePFzTgwQxpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "A4uLVUvEaxKuju4skJSeXijn7jBADULuqjensguWpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 18.678045239224915,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "ABBFYPowMmMKsfLtAHGAkpmhU4pZgLFggLkpDBepump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "ACL9ooDZ66UdiuHqQqsemmYKfcUghtYMVbZToKxEpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.362922665158724,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/ACL9ooDZ66UdiuHqQqsemmYKfcUghtYMVbZToKxEpump.csv.gz"
+    },
+    {
+      "token_address": "AD2VX8ZpvKDapxnVMZqrkuGoq9WVqGSzv2Xj3PmFnvZD",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/AD2VX8ZpvKDapxnVMZqrkuGoq9WVqGSzv2Xj3PmFnvZD.csv.gz"
+    },
+    {
+      "token_address": "AD9NFXGM4bf9U16EoJXGdoX8ueAG1MNrbaaGVFmSpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "ANpL9wPqn8MYJXj9WtCDZfdGYCNYfi6m7TJqGRPrpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.481108155635385,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/ANpL9wPqn8MYJXj9WtCDZfdGYCNYfi6m7TJqGRPrpump.csv.gz"
+    },
+    {
+      "token_address": "AP8Wnu37Gf9RHgugPKGvpHe6LcTE2yp5GDy7pL5Upump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "AV2YabfxMoLu13Kji8yTPAZ2PjrxLuHG8hNUJwaHpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 52.57113833077069,
+      "xval_n_comparable": 7,
+      "path_file": null
+    },
+    {
+      "token_address": "AW7EARjTzcRCj5RKstttgn4zXvosUEvdGM9sMS2Mpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "AXqh8NbPzcr9M6U3FgdGbEhW81apYdg3rY2QhDw8pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "Ac5LSKqNeV1PFeJAHwdi2wfSXXNAAfLVmeEEcKuLpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "AckB4GuVx2vmNtaibcTL6Po1jfavx5hAdKs1aP2r7qeq",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 5
+    },
+    {
+      "token_address": "AdvYhFSCPudscjVXVZjA5NfgHQEFdEaPj7dF5gC2pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.9792173377017344,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/AdvYhFSCPudscjVXVZjA5NfgHQEFdEaPj7dF5gC2pump.csv.gz"
+    },
+    {
+      "token_address": "AjJXwigo6pZsxq2kpDVKQGxjEBejtv2hZzDVceFopump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 2,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/AjJXwigo6pZsxq2kpDVKQGxjEBejtv2hZzDVceFopump.csv.gz"
+    },
+    {
+      "token_address": "Ajz8hHstxm4LENccToraxpc9dRftAWwzB5VYDLMzds9k",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 3
+    },
+    {
+      "token_address": "AnH4BQrETiaoeaAbL82qDa6Vf16BrvJZ2uGtVLszpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/AnH4BQrETiaoeaAbL82qDa6Vf16BrvJZ2uGtVLszpump.csv.gz"
+    },
+    {
+      "token_address": "AoKz8FAx6kU2CqHiUpS6cUBtEz1romekEBs6R3xRpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "AoymGqVBEoDeS1ypcfqWCYwNSb4iJWqorGMx76kppump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/AoymGqVBEoDeS1ypcfqWCYwNSb4iJWqorGMx76kppump.csv.gz"
+    },
+    {
+      "token_address": "ApYYfiFpppHPWha6zP7WJT1L82HoksBYaWicz6Nkpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 16.345715950109565,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "ArK6tw2bHtEW6ShYmam778HBrCjzN6v9Tc6sEMuRpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 4,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 33.07751022861519,
+      "xval_n_comparable": 4,
+      "path_file": null
+    },
+    {
+      "token_address": "AscmmKPEMM4K2fSB2virRrmRTpAXXWZpngvhdhqKpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "Asp3yp5zeimaBkPqfpo4g6FHxtGBZgaim7sQ3132pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 8.111815643380481,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/Asp3yp5zeimaBkPqfpo4g6FHxtGBZgaim7sQ3132pump.csv.gz"
+    },
+    {
+      "token_address": "Au6T2JHiEAr1WFJraK4eNFCdFYE7Y33QkcVehnJ4uVTW",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.649088022416373,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/Au6T2JHiEAr1WFJraK4eNFCdFYE7Y33QkcVehnJ4uVTW.csv.gz"
+    },
+    {
+      "token_address": "Aw4a7y2BjZPhxGjV4N45JqXuhAVpgfx95hUrGVrtupxx",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.561889164273287,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/Aw4a7y2BjZPhxGjV4N45JqXuhAVpgfx95hUrGVrtupxx.csv.gz"
+    },
+    {
+      "token_address": "AxDBCnwQ7u5w5omDb7iNQxzZtCouarPEMnGmP9W9pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "AynSkeXtUM7tkBGhDd9x2XaeJ1RNJM8wQeaVY5SRpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 4
+    },
+    {
+      "token_address": "B1i92YZ4khDCoqDJPcQmPz4iSineB8qbgc8uC7gQpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "B3K4qx7pvMCs4cDV3r4f9wLSPNxViAtxxCErKi4ppump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "B6UM3ubEsjLssgoPhKPN4bG9kNfQ2DLx4xvvXz9Apump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "B6iPFNDCTnW6kzfWPCiAFtJdsZCgJBKRWUaJfHcjpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.353553412439257,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/B6iPFNDCTnW6kzfWPCiAFtJdsZCgJBKRWUaJfHcjpump.csv.gz"
+    },
+    {
+      "token_address": "B7WPFwb37h1vE1CTHS1mjed3LXnCDZKFLGPiL5Pupump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.108624929743485,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/B7WPFwb37h1vE1CTHS1mjed3LXnCDZKFLGPiL5Pupump.csv.gz"
+    },
+    {
+      "token_address": "BFLuu3KxHtiJvCTKrb3EkHLnggm1gacbYejaTC9Xpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 1,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.5040775527241703,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/BFLuu3KxHtiJvCTKrb3EkHLnggm1gacbYejaTC9Xpump.csv.gz"
+    },
+    {
+      "token_address": "BFjiU4de6VC8HwUQxjBtAUJMTNR9TsdZ7Kt7VWEMpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.635692539142685,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/BFjiU4de6VC8HwUQxjBtAUJMTNR9TsdZ7Kt7VWEMpump.csv.gz"
+    },
+    {
+      "token_address": "BKRoPpAHMnPfSTFXtq1ffU4K5gnxVF54iuURnPwjpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "BKnKfpqBR8KJQj59gX3UZ7QFodnBvVCgkHMssah2pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "BM5UxWDrY2tVxHA6H9xMGcnbki2V8N1TRKkKyQYNpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "BNAJpb6MjunztkunSQS2KuBzspqd8R3Q61kvipL5pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "BNr9ReNanVCCW6VX8J8CcRkPp4AyeEeYXMiYs6T4TdPm",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/BNr9ReNanVCCW6VX8J8CcRkPp4AyeEeYXMiYs6T4TdPm.csv.gz"
+    },
+    {
+      "token_address": "BP1Lq7UVPgBCw5QU2bxwP3JdCuV3LbsNSdJUDhibpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "BQEJVZRWiivXDdwLCG5UCjabXcLAH3DkWkCwfXqCpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 20.90718158184382,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "BUny5DF7yX2dzHJudjq8HWP7DkfX3TkzNjP1b4btpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 9.405547961202531,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/BUny5DF7yX2dzHJudjq8HWP7DkfX3TkzNjP1b4btpump.csv.gz"
+    },
+    {
+      "token_address": "BVqXfpZPKCSUbViP969iJoBWbQV5KA1U1xJN7Cx6pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 13.629339459610938,
+      "xval_n_comparable": 9,
+      "path_file": "logs/research_paths/reconstructed/BVqXfpZPKCSUbViP969iJoBWbQV5KA1U1xJN7Cx6pump.csv.gz"
+    },
+    {
+      "token_address": "BXCosYpBXpiWznAEbYm93pTu81b82SoSkRVCw7Bcpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.841435791452811,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/BXCosYpBXpiWznAEbYm93pTu81b82SoSkRVCw7Bcpump.csv.gz"
+    },
+    {
+      "token_address": "BbGcaeFpwhshH1EJTbh4KJzrgRgjLajx1afMTnRVpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 17,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.004701120091701,
+      "xval_n_comparable": 13,
+      "path_file": "logs/research_paths/reconstructed/BbGcaeFpwhshH1EJTbh4KJzrgRgjLajx1afMTnRVpump.csv.gz"
+    },
+    {
+      "token_address": "BbgeqPHTCHqariNRUvwNUrj4GRUhnRJCuKnLyuDrpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "BcMYDqxzY64h6iSmxeEQWLzk6o84iPQUutc1Pewx9nHQ",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 13.017330283928851,
+      "xval_n_comparable": 9,
+      "path_file": "logs/research_paths/reconstructed/BcMYDqxzY64h6iSmxeEQWLzk6o84iPQUutc1Pewx9nHQ.csv.gz"
+    },
+    {
+      "token_address": "BcsUMB2AV2ZzapEwNEY2VjbpxzYsquzAsNNVGyLApump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "BdEWVJ16bP3VRtYssSUHtoU5GojviaMBFdZEJS3Ppump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 5
+    },
+    {
+      "token_address": "BeSeZHr6axZLzPcSWhpADzHHQQitFmT1ndLtbU58pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 23.56969333281507,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "BenZ4V7BHcUy8sN2CdtXHY4sjESvG3beJSi2c9oxpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "BfHXMwoX28ox4n76tk7Xdxbk8R4H5qrafFRw1cc6pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 10.12666550287144,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/BfHXMwoX28ox4n76tk7Xdxbk8R4H5qrafFRw1cc6pump.csv.gz"
+    },
+    {
+      "token_address": "BhdgMUP915ogPPFQZ1YUVGnUKDDr3Tajgmtzjao2pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 18,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 28.683004104190214,
+      "xval_n_comparable": 12,
+      "path_file": null
+    },
+    {
+      "token_address": "BhqGYqy2qP8kze668hPQCRioLXLV866jVubKcyZZpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "BsbsB3WLq7vbY5En3MBCAsTrcwaCxNKY2Mp5pGuLpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 13.556241475597202,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/BsbsB3WLq7vbY5En3MBCAsTrcwaCxNKY2Mp5pGuLpump.csv.gz"
+    },
+    {
+      "token_address": "BsdQxb427UCTcxwSjRc8VpXHRvDNsTdbuNbZgXhSpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "BxcJp66TNRohNK7i5qu1KsoZva35VWpXDfGWDe1Cpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "ByojUxNyb3Dz7f1aFGjH8gg5UwYPwuFmgadkrdxgPXqE",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "C1Q8Gau8EDNJrmhR4F5G4cNQsQz23E2uaVR5cRsVpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.400468491554047,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/C1Q8Gau8EDNJrmhR4F5G4cNQsQz23E2uaVR5cRsVpump.csv.gz"
+    },
+    {
+      "token_address": "C1TsRMAcm911NdBoR1NseWqPku2qd1aW2CupsuMvpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "C5L12t4ivPKJErCr2SC8pEsvZZZsZuRYaAcmhR4Apa3f",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.5091107684738254,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/C5L12t4ivPKJErCr2SC8pEsvZZZsZuRYaAcmhR4Apa3f.csv.gz"
+    },
+    {
+      "token_address": "C67JvvriGSCivc9xhr5E6B6X8gcsjqWXZvigdXoYpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/C67JvvriGSCivc9xhr5E6B6X8gcsjqWXZvigdXoYpump.csv.gz"
+    },
+    {
+      "token_address": "C6R3o7saUf8mGD7qbPpTHuFJbPPFSfNvzL89VBjEpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "C6dx4ZKPdfmtAC1cymGxkbSAZ6aDWCpqmSnekWNopump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "C8BtrmhKqp9ryzC75yz5HQwtzb13PPb63q6TWoLrpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "CBftYjJC7XEwh1r2hD87zsLudwAb7Y3TyUvWcacXpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "CCDtWh2mbs8NziLjhchJf4JSGpzqkzmCjAY1Nn9Xpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "CRDQDjsfGp8WtZS8M59r1Jq3KmF1abf4W6qKeDn5pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.333476126268162,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/CRDQDjsfGp8WtZS8M59r1Jq3KmF1abf4W6qKeDn5pump.csv.gz"
+    },
+    {
+      "token_address": "CSCSRbGAJxgDhzGDaiKUH2v7djzVtFAPmETEiNhZpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "CTHx7fen9TKZ51TRSkMm3G4F6DvFY5ZweJHk12dKpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.818208709922693,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/CTHx7fen9TKZ51TRSkMm3G4F6DvFY5ZweJHk12dKpump.csv.gz"
+    },
+    {
+      "token_address": "CV6p2itrfbRfCEahpxUANDAmTWR8E2gAGSbNbeVUpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 8.843724356884422,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/CV6p2itrfbRfCEahpxUANDAmTWR8E2gAGSbNbeVUpump.csv.gz"
+    },
+    {
+      "token_address": "CaAYBGo6efKkrV1A9cL2Jd7VpfrNzN5ri1khLgdypump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "CbvkyT49XSXk9JEeBsrien97ycnWYwmoyRGmJrzK6kR8",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 3,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/CbvkyT49XSXk9JEeBsrien97ycnWYwmoyRGmJrzK6kR8.csv.gz"
+    },
+    {
+      "token_address": "CcWVFqrwzkEdHH1YpfZRjkdbKrxYQbU9BRqeC6ZGpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "CfBYu1dsy6nC3oiYmxE3Kxds6auwpoxcErvSMVykVEPH",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "CoQoM8Se9wbX6VThDkkKgZXzWWjsz8XyPYPqLFqWpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 10.830240060433354,
+      "xval_n_comparable": 9,
+      "path_file": "logs/research_paths/reconstructed/CoQoM8Se9wbX6VThDkkKgZXzWWjsz8XyPYPqLFqWpump.csv.gz"
+    },
+    {
+      "token_address": "CrcHj9H6yDUkqZ3iy6t1aZL1Si8MZaNevhH5d8DVpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "CsaBHbqvkLSDi9fuFpoHj6ATwD2SbTUNH6dx9KCtpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.1853297070544373,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/CsaBHbqvkLSDi9fuFpoHj6ATwD2SbTUNH6dx9KCtpump.csv.gz"
+    },
+    {
+      "token_address": "CtjPQSDXTwUEs1mv72KeMCMNGW8WYXzHGofbU99wV4hm",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "Cu5a6oVDtDjwYVo17aaBK5rgsRJgnTKLDyvXvj45pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "CwJa5HR3p5fL8Ms4KFASsPbioGs4qGjdF8Bk53Wmpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 17.72328691680278,
+      "xval_n_comparable": 7,
+      "path_file": null
+    },
+    {
+      "token_address": "CwftESNDph8JgN51D3jua2g4BgrLnGSDitcpeKx8pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "CybSRsmzi8A9yDEd5zBQkbYzJhxyBJfRDLGZeR7ypump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "CzhiGmwb4nEz3aNy9tNF8ACByu6Djit261DCmxrspump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "CzyEJ2zcz5FoR9EFBKhrWjpaotoPnvVzqyFoeX1dpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "D2FEt3akyEjC8RVue4rKf37GkqcgYUaVNtKAmbB2pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "D7EzLhhDcuXGrgb95iv1ScXtvXzk6Un8aawBRvb6pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "D7L9pvxnzhh3M9wFWFATiHX4y7iEbjnmKB9LTsWDpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "D8RHobSRJcvuxD5w24bM41WQHew4m32EJ9rWCSuWpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.497223222073724,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/D8RHobSRJcvuxD5w24bM41WQHew4m32EJ9rWCSuWpump.csv.gz"
+    },
+    {
+      "token_address": "D9xsVSVrW9VeWVSm67iiRvsAueCp1Dc4B2pVWPABpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 9.054753740266602,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/D9xsVSVrW9VeWVSm67iiRvsAueCp1Dc4B2pVWPABpump.csv.gz"
+    },
+    {
+      "token_address": "DAHWBpP6QJCBLpuWRtRsYZm11ArxwuBb1B7THZa8pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "DCyeKUFjDYszHhip74K8BWseCGA5e5uT72qJjJKEpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/DCyeKUFjDYszHhip74K8BWseCGA5e5uT72qJjJKEpump.csv.gz"
+    },
+    {
+      "token_address": "DD6ebCCCn2JahKve1LubomR84HJjnY1zvjmfeoQapump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 12,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 133.50329562021315,
+      "xval_n_comparable": 10,
+      "path_file": null
+    },
+    {
+      "token_address": "DECCvbB1dSDMSbXdHJTUDE9AFCPJCRjzwcrCQTUK6BXR",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 13.203057102548524,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/DECCvbB1dSDMSbXdHJTUDE9AFCPJCRjzwcrCQTUK6BXR.csv.gz"
+    },
+    {
+      "token_address": "DNu3FAYNNccYxH2ED21Xs8Bvufdej6CDsHAypqYWpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.738529622303247,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/DNu3FAYNNccYxH2ED21Xs8Bvufdej6CDsHAypqYWpump.csv.gz"
+    },
+    {
+      "token_address": "DSDvBY17VQoEWMaZxivedBeGxetBTbNru7fF2KNX5y2F",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.067396818369311,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/DSDvBY17VQoEWMaZxivedBeGxetBTbNru7fF2KNX5y2F.csv.gz"
+    },
+    {
+      "token_address": "DWX5YZEFmPapoL3NDzPmbpnDc5Dq23dDWjQcwhu1pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 16.69919325733698,
+      "xval_n_comparable": 7,
+      "path_file": null
+    },
+    {
+      "token_address": "Da9TrRXf69zR5FU1nvwwPyA3DwiJYxv4ZXtnaWNzpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "DapBXxje2ux4eHsruD7NjA1B6vvvsHw2SKLCJwp9pump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "Db6nZzeqgvip16MpXV33GVoNku9DHGFGNyWsR4bAeiLw",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.1426573531403275,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/Db6nZzeqgvip16MpXV33GVoNku9DHGFGNyWsR4bAeiLw.csv.gz"
+    },
+    {
+      "token_address": "DddajcZPHJ2LVM6e3Ey9Q4DB2vfi7UnitoMn4S97pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 41.39938443065968,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "DfvXmcXWo8VYzXKLV5CLfFKUWzC7RmUAMKBhFqxNpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "Dhc4cPrYxT6FhzVxn8gUMs5vocLA6SDvAjfJzKNcpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/Dhc4cPrYxT6FhzVxn8gUMs5vocLA6SDvAjfJzKNcpump.csv.gz"
+    },
+    {
+      "token_address": "Dj2WeeaTWdPJHMYqzKBwHJBU27XDVBfGmtiPvQzzpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.425378336125196,
+      "xval_n_comparable": 9,
+      "path_file": "logs/research_paths/reconstructed/Dj2WeeaTWdPJHMYqzKBwHJBU27XDVBfGmtiPvQzzpump.csv.gz"
+    },
+    {
+      "token_address": "DmF6YKupSjvdquo2PoKHsAZiX4mQogP15CGaGdkEpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.866574353112969,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/DmF6YKupSjvdquo2PoKHsAZiX4mQogP15CGaGdkEpump.csv.gz"
+    },
+    {
+      "token_address": "DnJffmBQE5qiG3JWWMWi78b5Unbh5CwxdDg6BRmtPDBw",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "DoEqH7JpYT3XP84Qc8a6poKGqHxXEZA6GpnYG1sKpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.517384710629708,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/DoEqH7JpYT3XP84Qc8a6poKGqHxXEZA6GpnYG1sKpump.csv.gz"
+    },
+    {
+      "token_address": "DoTMzBpSRPEwaycrSUzgSaDEs42PaiQVvYXAmLkcHr5X",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.0781440790021675,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/DoTMzBpSRPEwaycrSUzgSaDEs42PaiQVvYXAmLkcHr5X.csv.gz"
+    },
+    {
+      "token_address": "DpfucJCdvWYxrVNvoVTciQ3AG14oPpYEdUAGvamypump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "DsrZm5VXhQRPcZ4thjUcJpbizga5q96w9gT54XnCpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 20.027899653244408,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "DtHH4ZvyDusSzecfWnYxN1L68Jc31bN7nx8bckEmpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 68.98448815736651,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "DuGf6g7hoKf62bLfqUS2Mr8jVa3FMzJqVEtyd9VUpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "DunmmJnoafguSQM4BAGifD5scF6gEWa5Gse46F7fpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 18
+    },
+    {
+      "token_address": "DyF87PdxGCh9xrZTYRCR35f146dCLFHbtTdiby3Fpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "E1hFukZCh9C1GYRN3paX7J4NBwvfZq5MposWURbdpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 3,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 0.6001260495510777,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/E1hFukZCh9C1GYRN3paX7J4NBwvfZq5MposWURbdpump.csv.gz"
+    },
+    {
+      "token_address": "E36kEqRNYtKRCf3Qh8QaMT4yXininjf6eRf9DXSmpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "E3XqNdjdiZcA1gSQyhjy9GJvhgcYTNbyMVWam23Gpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 4
+    },
+    {
+      "token_address": "E571NnFXsVpTrTKD9AadoXpnQn8pRgi1oXABTzeC5JaV",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "E8MnCtZVxk6EZAxQBAfzrWTPoCQfyEm7dghbSrMQpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 3,
+      "n_heuristic_fallback_tx": 4,
+      "integrity_status": "INVALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 22.043393636561007,
+      "xval_n_comparable": 1,
+      "path_file": null
+    },
+    {
+      "token_address": "E8jr3TtEEa6gwvcJ7EoeKg7VSFACjHifQuwLZAh2pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 0.7631829162543372,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/E8jr3TtEEa6gwvcJ7EoeKg7VSFACjHifQuwLZAh2pump.csv.gz"
+    },
+    {
+      "token_address": "EDE9scnnyNvcv9DpCfvVDHuRhpULAt5snwJ5krQLrYQ8",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "EDMusteWGdi1CMhqFQqUwWhCwEB9Zf4X9DRVTXHspump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.560698525186835,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/EDMusteWGdi1CMhqFQqUwWhCwEB9Zf4X9DRVTXHspump.csv.gz"
+    },
+    {
+      "token_address": "EFXB8SyGF2yKed31zL2eoAqDgzTucve2GH2PFGXPpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 5,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.254443150675247,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/EFXB8SyGF2yKed31zL2eoAqDgzTucve2GH2PFGXPpump.csv.gz"
+    },
+    {
+      "token_address": "EH5scbBRuDnFLWnzJC91sCQ382TVg1qBgb5FzSQ9pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 1
+    },
+    {
+      "token_address": "EHTJSJ97kDfwtb6qCv5AWgSn18cBAtGbwLSquxqMpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/EHTJSJ97kDfwtb6qCv5AWgSn18cBAtGbwLSquxqMpump.csv.gz"
+    },
+    {
+      "token_address": "EN57jp1J5FErMSezopd5BXid4YKuPYTSPfsoKjBL3xFS",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "ENzjkHHNgb7X4eB2pvZ5pQ7B8KUGoD8M7fZtnJsppump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "EUqvfNJ9gSvAzC4guV8xkG3ifhPtxQR1aDi1QtfVpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.5016737628991055,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/EUqvfNJ9gSvAzC4guV8xkG3ifhPtxQR1aDi1QtfVpump.csv.gz"
+    },
+    {
+      "token_address": "EXYEkUiKhy7vcgMJktCWGygkCiEAh2GBBntWDLnApump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/EXYEkUiKhy7vcgMJktCWGygkCiEAh2GBBntWDLnApump.csv.gz"
+    },
+    {
+      "token_address": "EZaKeZcosDoUFMPEAyjUfsNE7BbWxTiQ3mzRLdgYpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 18
+    },
+    {
+      "token_address": "Ea7jPMTNHzazhoPBSEqZgqsMkcbDLY2TEDnNnsRjx1wE",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "EcLg1ww1u1EFEC5nH5gK7KFTZjMXwrqGSmgB2gp3pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 13.218427324900073,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/EcLg1ww1u1EFEC5nH5gK7KFTZjMXwrqGSmgB2gp3pump.csv.gz"
+    },
+    {
+      "token_address": "EeXWZbLXTWcK9n3aHJ44Hujk8Zczx9chJD9v9EANpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "Eme822muEhzokFAv281vkxQA95QHusrzRmsNmD4pVQz5",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "EoEZ8gDkEDMQd8iE4XJULhQ5rD6FiCUmxpfCvr8cpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "ErQN3R5QRBZ4qnP4AdH5fS9X5kei16hVFyFzNCVspump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "Ex2rpMv7WzvYhpKUkiyPmj2tGb4dbFMpNHiBbqbcpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/Ex2rpMv7WzvYhpKUkiyPmj2tGb4dbFMpNHiBbqbcpump.csv.gz"
+    },
+    {
+      "token_address": "EzsbYaeEGZmz3pbpzWYBqhR7BG3SP2PBG5vSY84epump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 30.72655520043822,
+      "xval_n_comparable": 7,
+      "path_file": null
+    },
+    {
+      "token_address": "F24fp4pfkQmSuZFkNwh8YpXpVZP1TA5ZttizFe3Qpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.371002826765684,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/F24fp4pfkQmSuZFkNwh8YpXpVZP1TA5ZttizFe3Qpump.csv.gz"
+    },
+    {
+      "token_address": "F2h5W5AwoRcQXb2anKHXUA9JJ5QchjXq1sk4eP7xppHF",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "F3PBDtZBq9mLo1PEsP6Ax9ACJY7SfFCufjTA97eEpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "F4UyY11dxPMmacFTEM3PwuzpHdXjPtnntjbfoYnCpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "F4ZN8VTUkzFpEwxGt5z3cTt6jfoXSuCLoCNtAMyNpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "F4paGkpzqWsB3GEGHHE2H86cKcNxB4y72aU859xspump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 3
+    },
+    {
+      "token_address": "F5qnZ9qxdkvXSTECQ2MoGRvUDQGsKiMw59YhkWz4pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.920416320829474,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/F5qnZ9qxdkvXSTECQ2MoGRvUDQGsKiMw59YhkWz4pump.csv.gz"
+    },
+    {
+      "token_address": "F9oUz5Qs1zZuNq5VHQjxCNFSbBh7mJdDYd3qwLaPpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "FAP71JACFwdtueZR7xkNx84JuFPkwuHab8asAYW1uwN",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.157350803103387,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/FAP71JACFwdtueZR7xkNx84JuFPkwuHab8asAYW1uwN.csv.gz"
+    },
+    {
+      "token_address": "FBpGzj2VN7Us4retrDPd5C2yJexruhqvB5TYtQCEpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "FD5GJQ2Js26rm7E9zicY2R3ZHGqKwRNthTpsLFf8pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 0.6113658200580174,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/FD5GJQ2Js26rm7E9zicY2R3ZHGqKwRNthTpsLFf8pump.csv.gz"
+    },
+    {
+      "token_address": "FDXoALsMioumuyjit61e8wFMY3tEmBfdMuyzCnULcZMS",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "FDjGQWUZV5PbuoNaXiETDvPjqExuHnDAByBAXyNbpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/FDjGQWUZV5PbuoNaXiETDvPjqExuHnDAByBAXyNbpump.csv.gz"
+    },
+    {
+      "token_address": "FEFtdbDo5atXqNTyY9of3reV1t7NUt2t4x3xU1AQpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 16.73258803141225,
+      "xval_n_comparable": 8,
+      "path_file": null
+    },
+    {
+      "token_address": "FESTnFCJ2Gh8CqGrwyk8s26t4f8CsQXtTYg6J7vjpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.36887970039828,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/FESTnFCJ2Gh8CqGrwyk8s26t4f8CsQXtTYg6J7vjpump.csv.gz"
+    },
+    {
+      "token_address": "FHqHtemiNLu6WNy35wQaebQrayKHVifH2TuJsNq1pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "FLwoiKDq6pKT5so68Xx74p94DDtdvQW7WZy5WK6Epump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/FLwoiKDq6pKT5so68Xx74p94DDtdvQW7WZy5WK6Epump.csv.gz"
+    },
+    {
+      "token_address": "FNBZJ6PG5pBukbC8EiKRAUtjwupX5vQg9KroYZ3bpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.892240833494434,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/FNBZJ6PG5pBukbC8EiKRAUtjwupX5vQg9KroYZ3bpump.csv.gz"
+    },
+    {
+      "token_address": "FNRrsFwHJkWoGuSsaftbNbtQxcLLbkdrrncXuTYGpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "FPmZtrF6jSMKYsGRH7NMf5WNthxttkUfzBjmt4pbpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "FSwc3NbQtR1AK3LrVW11EZW7dmvimneEbYiVxGzy4eAW",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/FSwc3NbQtR1AK3LrVW11EZW7dmvimneEbYiVxGzy4eAW.csv.gz"
+    },
+    {
+      "token_address": "FTNAa4uRLuKdtQJZ5w6qBsuPDax88ZT8AcuBYw7Spump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "FTyYaLaMqZzS3EhfkPu8GE37rEYNedRLiwXG3CvVpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "FWB6zoW7jksVAX43yFy8MRELYawipwuUJXhcoiwPpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "FWV3Y2nFo6GZUiYSfQX1JYmDkoLnPbv3AjoTWJVTpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 5
+    },
+    {
+      "token_address": "FXYN9HpcYJDHXfjAPP7r8hh3taz1qureP1RQK2aPpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/FXYN9HpcYJDHXfjAPP7r8hh3taz1qureP1RQK2aPpump.csv.gz"
+    },
+    {
+      "token_address": "Fcc5PpXkJCHAFuySUajCzahSb2J7gMyScdNaZjbopump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "FdtKqpPK99NiMyre48EADmWv51d7wwDGfWV6fzW9pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.894256388811293,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/FdtKqpPK99NiMyre48EADmWv51d7wwDGfWV6fzW9pump.csv.gz"
+    },
+    {
+      "token_address": "FfQ1fgJfsKkLn1gK3Y4BmyzutaiP2fT1FM8rBWKCpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/FfQ1fgJfsKkLn1gK3Y4BmyzutaiP2fT1FM8rBWKCpump.csv.gz"
+    },
+    {
+      "token_address": "FfeDVN2nYbF8LKGaooaL1R1p9pTDC5SMU58EXFtTpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "Fht82sWn9BzsUCSTpU8hAtNrfybfGDhhBn8oZs3Dpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 0.3173044257799883,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/Fht82sWn9BzsUCSTpU8hAtNrfybfGDhhBn8oZs3Dpump.csv.gz"
+    },
+    {
+      "token_address": "Fo2zTpwJxQaZcoggM4yVqcgnqDZtQ1x31aPivDjMftH8",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 2,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.0577891375429789,
+      "xval_n_comparable": 1,
+      "path_file": "logs/research_paths/reconstructed/Fo2zTpwJxQaZcoggM4yVqcgnqDZtQ1x31aPivDjMftH8.csv.gz"
+    },
+    {
+      "token_address": "Fpnv2hGJ1hjzcftjg86uPR3f4gMVhBri8KRt2RTypump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "Fpqy7zCAGKscJFyC1EfxPrxmYaTySp8eHAs9Y81vpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "Fs3BcrYEsZQ5zLo2B2PCXjPuc5JQGtxewH7X2N8Tpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "FtwXiYg3bqbbNwmzNWi8bqxpfYXeWQEBKJFrF26apump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 1,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.680573566851491,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/FtwXiYg3bqbbNwmzNWi8bqxpfYXeWQEBKJFrF26apump.csv.gz"
+    },
+    {
+      "token_address": "FuF2M5T79HJdpJUbp46qwWssLXQ1Xjf1yiNSfyo5UEGC",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "FuQcKP2F5fJGNZQgZP8TBvHs7UVj29tKMrxsDALLpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "FwL2b97pnA1gUGrdcgRBLikmFb5V2TA1UDixZ21Cpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "FzJ1Cm4kwEjiPmfna8WXWwjC7i41KnB9oi9wz3nHpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "G1XweP2oEs7XM1a4Lrvz5e9ciX462EfgvLUpTAGopump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.2323437333805227,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/G1XweP2oEs7XM1a4Lrvz5e9ciX462EfgvLUpTAGopump.csv.gz"
+    },
+    {
+      "token_address": "G28KkXGX1o7gEegysCL2yPxaEUif1gNwLPK8u5v9pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "G4e4v4CfpA4yFrMyBasMTZ88m1nT57TkPZihAV8dpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "G5pPFQoT8xHDrU5YPyTjtrYugd6YpHap9nCj1zMg6KF2",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "G8p2jGHsffrijSKLTYdDPuLPPVS116aGkJ2yyziupump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "GBEE4pWqsKb6gjaf7AmMyMn5HjAyjLWWcrHAmQdnpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "GBzXkjjUnz3keEiXEzVpaXZhmzRb2YbU5ELqmZ5wpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.314023005410928,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/GBzXkjjUnz3keEiXEzVpaXZhmzRb2YbU5ELqmZ5wpump.csv.gz"
+    },
+    {
+      "token_address": "GDAdCvjiRoGxA18ya3Qha1DD6bbzbR9Z9AGpMa9Tpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "GFpDRu3tidtd1kfyThy38WSDiv3TwjSG8jqujas8pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.103028116048431,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/GFpDRu3tidtd1kfyThy38WSDiv3TwjSG8jqujas8pump.csv.gz"
+    },
+    {
+      "token_address": "GLRGgpetTFGoetoD2A2CmTVCJTrnqfyxMGqPWFMcpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "GREKmorj6RHGuHKxx11TPEGGwsFFqLA8CW5VKGwKfY1S",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "GRRPDwqYr1JgK42p4f6cYKRNEawbUgZCdR7tavZgpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "GUZTCwJGeJ7dw1RLyGAM1etDBtx9qRJohujy279ipump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 2.0791303383254784,
+      "xval_n_comparable": 2,
+      "path_file": "logs/research_paths/reconstructed/GUZTCwJGeJ7dw1RLyGAM1etDBtx9qRJohujy279ipump.csv.gz"
+    },
+    {
+      "token_address": "GVXhTtjmabMHtN8J7VmyYUHV13zn9MQhNDcoDBbmpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.84273620888201,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/GVXhTtjmabMHtN8J7VmyYUHV13zn9MQhNDcoDBbmpump.csv.gz"
+    },
+    {
+      "token_address": "Gd8QK9UdPrUYFipdHxLom7fAMRCxwdw6qbX83DSEpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "Gh9eNS4Xg7CvUKrDMwxoH99dc4gK36rBqPtMEJyipump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/Gh9eNS4Xg7CvUKrDMwxoH99dc4gK36rBqPtMEJyipump.csv.gz"
+    },
+    {
+      "token_address": "GiWDgBnjzPgvRsBz7ioUcmg4CYcmFHQBe4DgyFShpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.560039032320048,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/GiWDgBnjzPgvRsBz7ioUcmg4CYcmFHQBe4DgyFShpump.csv.gz"
+    },
+    {
+      "token_address": "GpopapsvyoXNd3wixFz59gNuBd11zf54iRarmnSMpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 8.784660926543516,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/GpopapsvyoXNd3wixFz59gNuBd11zf54iRarmnSMpump.csv.gz"
+    },
+    {
+      "token_address": "Gu29wuSbMdQKPpkmZ4wpiURgQbYohpBFpwPbzJLbz8Mr",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 7.926218014787918,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/Gu29wuSbMdQKPpkmZ4wpiURgQbYohpBFpwPbzJLbz8Mr.csv.gz"
+    },
+    {
+      "token_address": "GvYLFc8pNZ7DawnEbRshNe6wzVS3fsgfXdNzDnZAL9Qh",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "INSUFFICIENT_DATA",
+      "xval_max_abs_pct_diff": null,
+      "xval_n_comparable": 0,
+      "path_file": "logs/research_paths/reconstructed/GvYLFc8pNZ7DawnEbRshNe6wzVS3fsgfXdNzDnZAL9Qh.csv.gz"
+    },
+    {
+      "token_address": "GxqQ4V6mYWzPe3jyZQCJANDkq3tuyY1RcYRRZSg9pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "Gz1ZsFzPCGDFkM5yJBRxpiJhqk2Kvq8QhyYj8TaRpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "H28B9gjsP3oQioGYbRkU1UyopAcK45nXxLj7jftZ2h1J",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 8,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 19.102120027636822,
+      "xval_n_comparable": 3,
+      "path_file": null
+    },
+    {
+      "token_address": "H33HnCHk8UCa6QXwJegD2ijCKaazFPBWViLVhPufpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.019022968411105,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/H33HnCHk8UCa6QXwJegD2ijCKaazFPBWViLVhPufpump.csv.gz"
+    },
+    {
+      "token_address": "H4yk5dxwNvS8Rj9M1mdgnY8MKgLhHk8ag5nv47ued81b",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "H6hEPLdvcUHQttndoKy2CweJMp2nERpt4h4ZCCF8qRnf",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 8.139921639414545,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/H6hEPLdvcUHQttndoKy2CweJMp2nERpt4h4ZCCF8qRnf.csv.gz"
+    },
+    {
+      "token_address": "H7nXnPjXZyi6CJ5Uaj8F6159rB717ppmMSWLuG3dpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "HJQYgCDdrNvtLhJLmw8bfW17tvrXqVbg8YCKqqTCpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "HJtjy9Cobn2PeF82R93tMAJRVvpJQM7rjRq2dALypump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "HLFvcmC7jGBWubQ3HfkvVYoHb1EkTxx9zwNJy1NEpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 9.782382661462442,
+      "xval_n_comparable": 4,
+      "path_file": "logs/research_paths/reconstructed/HLFvcmC7jGBWubQ3HfkvVYoHb1EkTxx9zwNJy1NEpump.csv.gz"
+    },
+    {
+      "token_address": "HNc7nfZs5nCUVnFb5szrGJxrz5PirfTb2mAxfCp4pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "HTn6f5nuzSAxC6Pp7zNgSyHzvjQMigdSSMfXeQN8r3t8",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "HTxbgkRZ4CkioKebc4Dj3K4BhfpGVtcW8JK867i5oyYU",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "HYe74yPTcEfVWhCAfiv7yV9qprzsLGQuEmqPKaNhpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.3848480742809315,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/HYe74yPTcEfVWhCAfiv7yV9qprzsLGQuEmqPKaNhpump.csv.gz"
+    },
+    {
+      "token_address": "HaGgKouCYHEnTAbB2Qu2Y8JSaRBj4msK85FWKNKkpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 4,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 6.311352188952453,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/HaGgKouCYHEnTAbB2Qu2Y8JSaRBj4msK85FWKNKkpump.csv.gz"
+    },
+    {
+      "token_address": "HbjfwqMpnf6YkcSqAfJ5CduuqLJiieGbrLb1ZaAZpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "He1VdiuNqRVD99SjQp7d1sk5RWuQ7WcxDijUhjowpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "HepBDAaqT9cs9kFokrQkz5ids2cMUAjgftGNZeP5pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "Hf7mMK4gWYijr6Eju9SBiBUXqkCcLq5s9qYJ32Kdpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "HhnTyPChabkvr6AQMQpHFm7yvjp3HkHMJQpk7yi1pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "HmaHhC9vBh43gZnNTUFGNGP1A72jH1MXKjhHRWw2Ja8F",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "HwQPPGXMYQhNEujj2a3i6KyhH2ZfwBpoUYZ6eNBNpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "HzSyd4yCoYLwbzhLnSxAVbWNV5FHtBZq5Ykw3PH6rC3z",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "J3phnsXUXFGScekdgocGfUx5iDbbVVZepMRErWCLpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.963502792991795,
+      "xval_n_comparable": 6,
+      "path_file": "logs/research_paths/reconstructed/J3phnsXUXFGScekdgocGfUx5iDbbVVZepMRErWCLpump.csv.gz"
+    },
+    {
+      "token_address": "JCjnrFpoMoydfTf8cNhMZLzGftyoHoXkFk6eZFjzpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "JEBNRdDb1XnjCeNYyiD3DgfPEwYkAa1D39QY6tSQpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "NEW37tshbEuVKPZ6et9SDoMpumEy1PfQpX55Vcr8fUL",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "R98kypwLdCb5vWpTy7cSeoqUqL6wXJnBsmvmpnopump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "RpsiaF8caMedsoFxnFx13cdR2eEeu9RkfE5C8jCpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "Tx67Fs4TSEnYiPzZyThExpwLabNbDy74nof9JUdpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "U29rFVTgvGpYuKRe2YYSkjzNkz9J1D5CCeUfVGopump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "VTZEKVLkMfGDP8tUDHAjw8ZkqwPYwucBSbX1oZhpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 7
+    },
+    {
+      "token_address": "aTUfRuPj3tp7FEpzAXLjs4VnQgAFbExD5JHGTyvpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "cdJyi6jdG5DzdjQWLXtUqnjsbQH5LVcUtHJWXgLpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 4.901707020115033,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/cdJyi6jdG5DzdjQWLXtUqnjsbQH5LVcUtHJWXgLpump.csv.gz"
+    },
+    {
+      "token_address": "fWSBvY32yLepaZs3knCqy7wJjKQtm9Wkinym1Kbpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "fWWXHkZpUKfpyHDabiXfjwb2GFszx6VGez7uStApump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.2941044206923344,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/fWWXHkZpUKfpyHDabiXfjwb2GFszx6VGez7uStApump.csv.gz"
+    },
+    {
+      "token_address": "gus23F52DW8Gs79kivjnjnTwvjHDmVPaiVnNePJpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": false,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "FAIL",
+      "xval_max_abs_pct_diff": 53.15773232669871,
+      "xval_n_comparable": 9,
+      "path_file": null
+    },
+    {
+      "token_address": "i3PW1jsBZu2okS3uhqn17SbNDFcScb9TXGRky82pump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 6,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 3.379375767038342,
+      "xval_n_comparable": 5,
+      "path_file": "logs/research_paths/reconstructed/i3PW1jsBZu2okS3uhqn17SbNDFcScb9TXGRky82pump.csv.gz"
+    },
+    {
+      "token_address": "ien4ePaLXPUaoWXUsgLuzUcrxmyq75hmebP6o7aJBMS",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 4,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 1.260514492981244,
+      "xval_n_comparable": 3,
+      "path_file": "logs/research_paths/reconstructed/ien4ePaLXPUaoWXUsgLuzUcrxmyq75hmebP6o7aJBMS.csv.gz"
+    },
+    {
+      "token_address": "kqLxcvzTX7sNtiTCLMU92NDjVgQAPRCViV9F6nopump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    },
+    {
+      "token_address": "nW1wJ3ZaQMqT5MYYSHns5Rr69Cfqj39oLTbnd5Hpump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "posWsbD8rmmz6zUF6ADKuMVHWphvqFs8bHRovsgjFUN",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 9,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 5.888273230492012,
+      "xval_n_comparable": 8,
+      "path_file": "logs/research_paths/reconstructed/posWsbD8rmmz6zUF6ADKuMVHWphvqFs8bHRovsgjFUN.csv.gz"
+    },
+    {
+      "token_address": "r1kjCBnWH8sjNFcFnGMLbzKnytG8M8rieD3wDh7pump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 0
+    },
+    {
+      "token_address": "seLBudXVMU93SFimqdEFqbDVACdMQmmTDwBm59mpump",
+      "status": "RECONSTRUCTED",
+      "valid_usable_path": true,
+      "n_exact_rows": 7,
+      "n_heuristic_fallback_tx": 0,
+      "integrity_status": "VALID",
+      "xval_status": "PASS",
+      "xval_max_abs_pct_diff": 11.02301993415739,
+      "xval_n_comparable": 7,
+      "path_file": "logs/research_paths/reconstructed/seLBudXVMU93SFimqdEFqbDVACdMQmmTDwBm59mpump.csv.gz"
+    },
+    {
+      "token_address": "te4dUxQQHBsLXDMXcf6g6MNKWR2CYeye3jxNNkwbJQZ",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 8
+    },
+    {
+      "token_address": "wraeuVRXjp5YibVC7zRY6xMjz35GrZnQttqSJAgpump",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "xhmaxtbqWMfiDg1jS9S5Dz1Se2s1p5WsN623LWX69Av",
+      "status": "NO_SIGS",
+      "valid_usable_path": false
+    },
+    {
+      "token_address": "zxRjdghPoqkc7fEMyNWTA7mByUG1M3rjaE8GZBepump",
+      "status": "NO_EXACT_ROWS",
+      "valid_usable_path": false,
+      "n_tx": 9
+    }
+  ]
+}

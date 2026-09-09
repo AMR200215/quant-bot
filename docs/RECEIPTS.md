@@ -4416,3 +4416,66 @@ twice), 2 pre-existing bugs found and fixed (new module only), xval gate
 redesigned and validated with a real, provenance-backed tolerance. Ready
 for T2 (pre-registered ~500-token sample + Helius credit dry-run) pending
 the dry-run numbers being presented before any real credit spend.
+
+### THR-BATCH T2/T3 — pre-registered sample + the reconstruction run
+
+**T2**: `research/thr_sample_t2.py` drew a uniform simple random sample
+(fixed seed=20260909, target n=500) from the full clean-era CURVE_ACTIVE
+train+validation population (1,913 unique mints; 241 holdout mints
+excluded and asserted). Frozen to `research/thr_t2_sample.json` and
+committed BEFORE any reconstruction ran against it. Dry-run: **0 Helius
+credits** (public RPC only, same design proven in T1) — presented to the
+user before the real run, per the batch's own requirement.
+
+**T3**: `research/thr_run_t3.py` ran the full 500-token reconstruction,
+detached (`nohup`+`disown`) so it survived independent of the SSH
+session, ~3 hours real wall-clock (429-throttled public RPC, same
+retry/fallback logic K3 already proved). Real result:
+
+```
+attempted=500  reconstructed=224 (44.8%)  valid_usable_path=178 (35.6% of attempted)
+  NO_SIGS=60 (12.0%)  NO_EXACT_ROWS=216 (43.2%)
+  integrity: VALID=222 INVALID=2 (99.1% of reconstructed)
+  xval: PASS=145 FAIL=45 INSUFFICIENT_DATA=34 (of 224 reconstructed)
+  xval pass rate (of evaluable, n=190): 145/190 = 76.3%
+  n_exact_rows per valid path: min=1 max=17 mean=7.93
+```
+
+**178 valid usable paths, comfortably clearing `MIN_PATH_N=100`** (78%
+above floor) — the FIRST time in the entire project this floor has been
+cleared for exit-derivation, from a single, pre-registered, holdout-safe
+sample. Compare to the full forward-collection corpus's entire history:
+V8-P0 has 73 valid usable paths total (6.13% path-coverage yield);
+this single 500-token reconstruction pass alone produced more than double
+that, at nearly 6x the yield rate (35.6% vs 6.13%) — direct confirmation
+of THR-BATCH's founding premise ("the chain is the path archive").
+
+**Representativeness check (required by T3, not skipped):** compared the
+178-valid subset against the full 500-attempted population on alert-time
+observables.
+- `progress_at_signal`: essentially identical (mean 0.863 vs 0.864) — no bias.
+- `vsol_at_signal` buckets: close (60-100/100+ split 59.0%/41.0% in the
+  valid subset vs 54.6%/44.6% in the full population) — small, not a
+  material bias.
+- `pct_change_peak` (outcome): **real, mechanistically-explained
+  divergence.** Full population median +86.2% (mean +167.0%); valid
+  subset median +58.9% (mean +96.2%); the 322 NOT-valid tokens skew the
+  opposite way, median +119.2% (mean +204.4%). Reconstruction only
+  captures ON-CURVE trades (T1's scope) — the biggest, fastest-pumping
+  winners graduate off-curve soonest, so proportionally more of their
+  real trade history falls outside this method's reach and they're
+  more likely to land in NOT-valid. **This is the honest residual risk
+  that must travel with any exit-EV conclusion drawn from this corpus**:
+  it systematically underrepresents the most extreme winners, and any
+  time-stop/TP calibration from it likely understates upside tail
+  behavior relative to the true population, not overstates it.
+
+Reconstructed paths persisted to
+`logs/research_paths/reconstructed/<mint>.csv.gz`
+(`source="reconstructed_curve_exact"`, schema-compatible with the
+forward corpus). `research_tokens.path_file` and every frozen registry
+are untouched — the reconstructed corpus is additive, found via
+`research/thr_t3_results.json`, not by mutating shared live-pipeline
+state.
+
+**T2/T3 status: COMPLETE.**
