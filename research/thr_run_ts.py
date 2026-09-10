@@ -251,6 +251,60 @@ def qualifies(cell_stats: dict, e0_stats: dict, hard_stop_tolerance_pp: float = 
     return {"qualifies": len(reasons) == 0, "reasons": reasons}
 
 
+def select_proposals(cells: list) -> list:
+    """TS3: the qualifying subset, sorted by combined-corpus pessimistic
+    EV (best first). Empty is a valid, honest result -- it means nothing
+    in the tested grid beat E0 under censoring-pessimism, and no proposal
+    should be drafted on weak/absent evidence (this project's own
+    standing discipline, see docs/RECEIPTS.md's hard_stop CORRECTION)."""
+    qualifying = [c for c in cells if c["qualifies"]]
+    qualifying.sort(key=lambda c: c["stats"]["combined"]["net_mean_ev_pct_pessimistic"], reverse=True)
+    return qualifying
+
+
+# TS4: temporal validation gate. Pre-registered NOW (this module's own
+# run, per-candidate cutoff = the population snapshot time) -- cannot be
+# EVALUATED until fresh forward collection accrues real winners after
+# this cutoff. If TS3 ever produces a qualifying cell in a future grid
+# run, this is the mechanism that must pass before it stops being a
+# draft: fresh-winner capture (computed the SAME way as
+# score_cell/winner_mean_capture, restricted to winners whose alert_time
+# is strictly after the cutoff) must fall within TEMPORAL_CAPTURE_TOLERANCE
+# of the derivation-set capture. Proposed here with reasoning, not
+# invented blind: a wide band because the derivation set itself is only
+# 16-9 winners -- a tight tolerance would fail on sampling noise alone,
+# not genuine drift.
+TEMPORAL_CAPTURE_TOLERANCE = 0.15  # +/- 15 percentage points of captured_fraction
+
+
+def temporal_validation_gate(candidate_spec: dict, derivation_capture: float, cutoff_iso: str,
+                              population_after_cutoff: list) -> dict:
+    """Evaluates a proposed spec's captured_fraction against winners
+    whose alert_time is strictly after cutoff_iso. Returns
+    {"passed": bool, "n_fresh_winners": int, "fresh_capture": float|None,
+    "reason": str} -- "passed" is always False (and reason states why)
+    when there isn't yet enough fresh data, never silently treated as a
+    pass."""
+    fresh_winners = [p for p in population_after_cutoff if p["is_winner"]]
+    if len(fresh_winners) < 5:
+        return {"passed": False, "n_fresh_winners": len(fresh_winners), "fresh_capture": None,
+                "reason": f"insufficient fresh winners ({len(fresh_winners)} < 5) -- not evaluable yet"}
+
+    stats = score_cell(fresh_winners, candidate_spec)
+    fresh_capture = stats["combined"]["winner_mean_capture_pessimistic"]
+    if fresh_capture is None:
+        return {"passed": False, "n_fresh_winners": len(fresh_winners), "fresh_capture": None,
+                "reason": "no comparable capture computed"}
+
+    within_tolerance = abs(fresh_capture - derivation_capture) <= TEMPORAL_CAPTURE_TOLERANCE
+    return {
+        "passed": within_tolerance, "n_fresh_winners": len(fresh_winners), "fresh_capture": fresh_capture,
+        "reason": ("within tolerance" if within_tolerance else
+                   f"fresh capture {fresh_capture} vs derivation {derivation_capture} "
+                   f"exceeds +/-{TEMPORAL_CAPTURE_TOLERANCE}"),
+    }
+
+
 def run():
     from research.config import SUPABASE_URL, SUPABASE_KEY
     from supabase import create_client
@@ -286,13 +340,30 @@ def run():
             if i % 8 == 0:
                 log.info("%s: %d/%d cells scored", cid, i, len(grid))
 
+        proposals = select_proposals(cells_out)
         out["candidates"][cid] = {
             "n_population": len(population), "n_winners": n_winners,
             "e0_baseline": e0_stats, "cells": cells_out,
+            "proposals": proposals,
         }
 
     OUTPUT_FILE.write_text(json.dumps(out, indent=2))
     log.info("Wrote %s", OUTPUT_FILE)
+
+    print(f"\n{'=' * 90}")
+    print("  TS-BATCH grid derivation result")
+    print(f"{'=' * 90}")
+    for cid, cdata in out["candidates"].items():
+        e0 = cdata["e0_baseline"]
+        print(f"\n  {cid}  n_population={cdata['n_population']}  n_winners={cdata['n_winners']}")
+        print(f"    E0 baseline: fwd_pess_EV={e0['forward_only']['net_mean_ev_pct_pessimistic']:.2f}%  "
+              f"comb_pess_EV={e0['combined']['net_mean_ev_pct_pessimistic']:.2f}%  "
+              f"fwd_hard_stop={e0['forward_only']['hard_stop_hit_rate_pct']:.1f}%")
+        if cdata["proposals"]:
+            print(f"    {len(cdata['proposals'])} cell(s) qualify -- best: {cdata['proposals'][0]['label']}")
+        else:
+            print("    0/{} cells qualify -- no proposal drafted (data doesn't support one)".format(len(grid)))
+    print(f"\n{'=' * 90}\n")
     return out
 
 

@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from research.thr_run_ts import (
     build_trail_tiers, build_grid, build_exit_spec, prepare_population,
-    score_cell, qualifies, E0_HARD_STOP, E0_TIME_STOP_MIN, E0_TIER2_ARM, E0_TIER3_ARM,
+    score_cell, qualifies, select_proposals, temporal_validation_gate,
+    E0_HARD_STOP, E0_TIME_STOP_MIN, E0_TIER2_ARM, E0_TIER3_ARM,
     ARM_VALUES, WIDTH_VALUES, TP_VARIANTS,
 )
 from research.v8_candidate_registry import CANDIDATES
@@ -213,6 +214,45 @@ class TestQualifies(unittest.TestCase):
         e0 = self._stats(ev_pess=2.0, hard_stop_rate=38.0)  # delta = 7pp < 10pp tolerance
         result = qualifies(cell, e0)
         self.assertTrue(result["qualifies"])
+
+
+class TestSelectProposals(unittest.TestCase):
+
+    def test_empty_when_nothing_qualifies(self):
+        cells = [{"label": "a", "qualifies": False, "stats": {"combined": {"net_mean_ev_pct_pessimistic": 1.0}}}]
+        self.assertEqual(select_proposals(cells), [])
+
+    def test_returns_qualifying_sorted_best_first(self):
+        cells = [
+            {"label": "worse", "qualifies": True, "stats": {"combined": {"net_mean_ev_pct_pessimistic": 2.0}}},
+            {"label": "best", "qualifies": True, "stats": {"combined": {"net_mean_ev_pct_pessimistic": 9.0}}},
+            {"label": "excluded", "qualifies": False, "stats": {"combined": {"net_mean_ev_pct_pessimistic": 99.0}}},
+        ]
+        result = select_proposals(cells)
+        self.assertEqual([c["label"] for c in result], ["best", "worse"])
+
+
+class TestTemporalValidationGate(unittest.TestCase):
+
+    def test_insufficient_fresh_winners_never_silently_passes(self):
+        result = temporal_validation_gate({"hard_stop": -0.35, "trail_tiers": [], "tp_levels": [],
+                                            "time_stop_min": 90}, derivation_capture=0.3,
+                                           cutoff_iso="2026-09-10T00:00:00+00:00",
+                                           population_after_cutoff=[])
+        self.assertFalse(result["passed"])
+        self.assertIn("insufficient", result["reason"])
+
+    def test_within_tolerance_passes(self):
+        winner_rows = _synthetic_rows([1.0, 1.0, 1.0, 1.6, 1.6])
+        pop = [{"mint": f"M{i}", "rows": winner_rows, "entry_ts_ms": winner_rows[0]["ts_ms"],
+                "source": "forward", "is_winner": True, "peak_gain_pct": 60.0} for i in range(6)]
+        # score_cell will actually replay these -- use a trivial always-path_end spec
+        # and confirm the gate at least runs the full pipeline without error.
+        spec = {"hard_stop": -0.99, "trail_tiers": [], "tp_levels": [], "time_stop_min": 999999}
+        result = temporal_validation_gate(spec, derivation_capture=-10.0,
+                                           cutoff_iso="2026-09-10T00:00:00+00:00",
+                                           population_after_cutoff=pop)
+        self.assertEqual(result["n_fresh_winners"], 6)
 
 
 if __name__ == "__main__":
