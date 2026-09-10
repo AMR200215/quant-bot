@@ -27,7 +27,6 @@ from unittest.mock import patch
 from memecoin.alert_event import TelegramAlertEvent
 from memecoin.progress_capture import ProgressCapture
 from memecoin.v8_paper import (
-    V8_PROGRESS_MAX,
     V8PaperBook,
     passes_v8_gate,
 )
@@ -76,10 +75,11 @@ _PATCH_TARGET = "memecoin.progress_capture.wait_for_capture"
 
 
 class TestPassesV8GateVenueState(unittest.TestCase):
-    """VF7 tests 1-7. Unaffected by V8-REWIRE: passes_v8_gate() only ever
-    reads .chain/.token_address/.event_id, so a SimpleNamespace signal
-    stand-in still exercises the exact same code a real
-    TelegramAlertEvent would."""
+    """VF7 tests 1-7 (test 6 rewritten 2026-09-10 for the V8-P0 gate
+    switch -- see its own docstring). Unaffected by V8-REWIRE itself:
+    passes_v8_gate() only ever reads .chain/.token_address/.event_id, so
+    a SimpleNamespace signal stand-in still exercises the exact same code
+    a real TelegramAlertEvent would."""
 
     def test_1_low_progress_dex_id_pumpfun_curve_active_passes(self):
         with patch(_PATCH_TARGET, return_value=_cap(0.50, "CURVE_ACTIVE")):
@@ -112,13 +112,18 @@ class TestPassesV8GateVenueState(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("UNKNOWN", reason)
 
-    def test_6_progress_over_threshold_rejects(self):
+    def test_6_high_progress_still_passes_v8p0_has_no_progress_condition(self):
+        """SWITCHED 2026-09-10: V8-P0 (research/v8_candidate_registry.py)
+        has no progress_at_signal condition at all -- only venue_state_
+        at_signal == CURVE_ACTIVE gates entry. This is the regression
+        test that would catch a progress gate silently creeping back in.
+        High progress (0.80, close to graduation) must still PASS as long
+        as the venue is CURVE_ACTIVE."""
         with patch(_PATCH_TARGET, return_value=_cap(0.80, "CURVE_ACTIVE")):
             passed, reason, progress = passes_v8_gate(_signal())
-        self.assertFalse(passed)
-        self.assertIn("over", reason)
-        self.assertLess(V8_PROGRESS_MAX, 1.0)   # sanity: threshold unchanged (0.70)
-        self.assertEqual(V8_PROGRESS_MAX, 0.70)
+        self.assertTrue(passed)
+        self.assertEqual(reason, "ok")
+        self.assertEqual(progress, 0.80)
 
     def test_7_no_capture_rejects_progress_unknown(self):
         with patch(_PATCH_TARGET, return_value=None):
@@ -238,8 +243,11 @@ class TestV8BookPersistenceAndIsolation(unittest.TestCase):
         self.assertNotIn("memecoin.scanner.Signal", src)
 
     def test_gate_fail_produces_no_position_and_no_journal_row(self):
+        # SWITCHED 2026-09-10: V8-P0 has no progress condition, so a high
+        # progress value alone no longer fails the gate (see test_6) --
+        # GRADUATED venue is the genuinely gate-failing scenario now.
         book = V8PaperBook()
-        with patch(_PATCH_TARGET, return_value=_cap(0.90, "CURVE_ACTIVE")):  # over threshold
+        with patch(_PATCH_TARGET, return_value=_cap(0.90, "GRADUATED")):
             book._evaluate_alert(_event(token_address="MintReject111111111111111111111111111",
                                          event_id="ev_reject"))
         self.assertEqual(len(book._positions), 0)

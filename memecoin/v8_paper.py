@@ -23,32 +23,50 @@ it fails silent, and maybe_open_from_alert() dispatches onto its own
 thread so a slow price wait can never add latency to V7's live-buy
 critical path.
 
-V8 candidate rule (entry gate)
--------------------------------
-  progress_at_signal < 0.70   AND   no-dex (token has no dex_id yet, i.e.
-  still pre-graduation / not indexed by a DEX aggregator).
+V8 candidate rule (entry gate) — SWITCHED 2026-09-10 to V8-P0
+----------------------------------------------------------------
+  venue_state_at_signal == CURVE_ACTIVE. No progress_at_signal condition
+  at all — matches research/v8_candidate_registry.py's V8-P0 exactly
+  ("no numerical progress cutoff beyond valid CURVE_ACTIVE venue").
+
+  Previously this gate was progress_at_signal < 0.70 AND CURVE_ACTIVE
+  (matching V8-REWIRE/V8-TWIN-FIX's original scaffold rule, which is
+  closer to the frozen registry's BASELINE-0 than to any candidate that
+  was ever actually validated with sufficient data). Real validated
+  numbers exist now for two candidates (research/v8_entry_ev_report.py,
+  docs/RECEIPTS.md): V8-P0 (n=1145, win_rate=67.1%, mean_peak=+178.0%,
+  ~122.6 real signals/day) and V8-P3 (progress<0.85 AND CURVE_ACTIVE,
+  n=458, win_rate=62.2%, mean_peak=+158.7%, ~49.6 signals/day). V8-P0
+  chosen for its decisively larger validated sample and signal volume;
+  V8-P3 scored narrowly better on several exit-side metrics (see
+  docs/RECEIPTS.md's TS-BATCH entry) and remains a candidate for a
+  second parallel twin later, not ruled out.
 
   progress_at_signal is computed live from PumpPortal's cached vsol for the
   token (pumpportal_monitor.get_screening_state) — zero new Helius calls,
   reuses data the scanner already collects for the research snapshot.
+  Still read here (not removed) because venue_state_at_signal's own
+  capture is joined via the same ProgressCapture lookup as progress --
+  see _get_capture_for_gate.
 
-  SCOPE LIMITATION: the "smart-money-v1" half of the spec's gate
-  ("progress<70 + smart-money-v1/no-dex gate") is NOT applied live here.
-  Live smart-money classification requires research/smart_wallets.py's
-  fetch_first_buyers(), which is a dedicated Helius call — adding it to the
-  live signal path would increase Helius RPC volume under SOCIAL_ALERT_ONLY,
-  which CLAUDE.md explicitly rules out. smart_money_hit is joined in later
-  for REPORTING only, from research_tokens (offline pipeline), not as an
-  entry gate. This is a real, deliberate scope cut, not an oversight.
+  SCOPE LIMITATION unchanged from before: the "smart-money-v1" half of
+  the original spec's gate is NOT applied live here. Live smart-money
+  classification requires research/smart_wallets.py's
+  fetch_first_buyers(), a dedicated Helius call — adding it to the live
+  signal path would increase Helius RPC volume under SOCIAL_ALERT_ONLY,
+  which CLAUDE.md explicitly rules out. smart_money_hit is joined in
+  later for REPORTING only, from research_tokens (offline pipeline), not
+  as an entry gate. This is a real, deliberate scope cut, not an
+  oversight.
 
-Exit config
------------
-  V8_EXIT_CONFIG below is a PLACEHOLDER — the spec calls for "exit config =
-  the replay winner", but replay_exits.py has no results yet (blocked on the
-  PC2 backfill per docs/V8_INPUTS.md N4d). Until a real winner is chosen,
-  this mirrors the current v7 social_alert production config so the twin is
-  at least a like-for-like comparison. Swap V8_EXIT_CONFIG once replay_exits
-  produces a winner — nothing else in this file needs to change.
+Exit config — CONFIRMED 2026-09-10, no longer a placeholder
+----------------------------------------------------------------
+  V8_EXIT_CONFIG below is E0 (research/v8_exit_registry.py) -- the same
+  values it always mirrored from v7 social_alert prod config, but now
+  confirmed rather than assumed: TS-BATCH (docs/RECEIPTS.md, 2026-09-10)
+  tested a 32-cell trail/TP grid against E0 with censoring-aware scoring
+  and found nothing beat it, on real data, for either V8-P0 or V8-P3.
+  No change needed here as a result.
 """
 
 import json
@@ -66,8 +84,7 @@ log = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
-V8_CONFIG_TAG      = "v8_candidate_2026-07-30"
-V8_PROGRESS_MAX    = 0.70          # gate: progress_at_signal must be below this
+V8_CONFIG_TAG      = "v8_candidate_2026-09-10_v8p0"   # bumped from v8_candidate_2026-07-30 when the gate switched to V8-P0 -- old and new rows stay distinguishable, never silently blended
 _MONITOR_INTERVAL_S = 5.0
 
 # V8-REWIRE VR12/VR13: era tag written to every journal row. Anything
@@ -220,10 +237,15 @@ def compute_progress_at_signal(chain: str, token_address: str, event_id: str = "
 def passes_v8_gate(signal) -> tuple[bool, str, float | None]:
     """Returns (passed, reason, progress_at_signal).
 
-    V8-TWIN-FIX VF2: gate is progress_at_signal < V8_PROGRESS_MAX AND
-    venue_state_at_signal == CURVE_ACTIVE. Never dex_id — see
-    _get_capture_for_gate's docstring for why that was wrong. UNKNOWN
-    venue state fails closed (rejected), same as unknown progress.
+    SWITCHED 2026-09-10 to V8-P0 (research/v8_candidate_registry.py):
+    gate is venue_state_at_signal == CURVE_ACTIVE only -- no
+    progress_at_signal condition (previously progress < V8_PROGRESS_MAX,
+    removed along with that constant; see module docstring for the real,
+    validated numbers behind this choice). progress_at_signal is still
+    captured and returned (journaled, used for reporting/representativeness,
+    never allowed_for_exit per research/v8_feature_registry.yaml) even
+    though it no longer gates entry. UNKNOWN venue state fails closed
+    (rejected), same as unknown progress.
 
     V8-REWIRE VR3/VR4: pure with respect to strategy identity -- only
     ever reads .chain/.token_address/.event_id off `signal`, so it works
@@ -231,7 +253,9 @@ def passes_v8_gate(signal) -> tuple[bool, str, float | None]:
     memecoin.alert_event.TelegramAlertEvent (the real V8-REWIRE call
     path). This is deliberately duck-typed rather than given two
     signatures: the point is that the candidate rule itself never changed
-    and never needed to know which object shape it was fed.
+    identity, and never needed to know which object shape it was fed --
+    only the CONTENT of the rule (this function's body) changed with the
+    2026-09-10 switch.
     """
     cap = _get_capture_for_gate(
         signal.chain, signal.token_address, getattr(signal, "event_id", ""),
@@ -239,8 +263,6 @@ def passes_v8_gate(signal) -> tuple[bool, str, float | None]:
     if cap is None:
         return False, "progress_unknown", None
     progress = cap.progress_at_signal
-    if progress >= V8_PROGRESS_MAX:
-        return False, f"progress_{progress:.2f}_over_{V8_PROGRESS_MAX:.2f}", progress
     venue = cap.venue_state_at_signal
     if venue != "CURVE_ACTIVE":
         return False, f"venue_state:{venue}", progress
@@ -642,8 +664,8 @@ class V8PaperBook:
     def start(self, daemon: bool = True) -> None:
         threading.Thread(target=self._monitor_loop, daemon=daemon,
                          name="v8-paper-monitor").start()
-        log.info("v8_paper: monitor thread started (interval=%.0fs, gate=progress<%.0f%%+no-dex)",
-                 _MONITOR_INTERVAL_S, V8_PROGRESS_MAX * 100)
+        log.info("v8_paper: monitor thread started (interval=%.0fs, gate=CURVE_ACTIVE [V8-P0], config_tag=%s)",
+                 _MONITOR_INTERVAL_S, V8_CONFIG_TAG)
 
 
 # Module-level singleton, mirroring memecoin.portfolio's `portfolio` convention.
