@@ -4733,3 +4733,46 @@ full suite green (635 local).
 **TS-BATCH status: COMPLETE.** Result: E0's current trail/TP
 configuration is not beaten by anything tested in the wider/later-arming
 direction, once scored honestly. No exit-spec change made or proposed.
+
+## V8_PAPER_ENTRY_GATE_SWITCH — LIVE_VERIFIED (2026-09-10)
+
+`memecoin/v8_paper.py`'s independent paper-trading twin (see
+`docs/V8_COMPLETE_SETUP_2026-09-10.md`) had been running an unvalidated
+placeholder entry gate (`progress_at_signal < 0.70 AND CURVE_ACTIVE`,
+matching BASELINE-0) since its VR-BATCH deployment — never updated once
+V8-P0/V8-P3 were actually derived and compared. User decision: go with
+**V8-P0** (n=1,145, 67.1% win rate, ~122.6 signals/day vs V8-P3's
+n=458/62.2%/~49.6/day — P0 chosen for sample size/volume; V8-P3 scored
+marginally better on exit-side metrics but at less than half the daily
+signal count).
+
+**Change**: `passes_v8_gate()` rewritten to match V8-P0 exactly —
+`venue_state_at_signal == "CURVE_ACTIVE"` only, no progress condition.
+`V8_PROGRESS_MAX` constant removed entirely. `V8_CONFIG_TAG` bumped to
+`v8_candidate_2026-09-10_v8p0`. Exit config (E0) left unchanged — TS-BATCH
+already confirmed it's unbeaten by anything tested.
+
+**Safety check before commit**: full repo suite run with the change
+applied (37 failed / 1,189 passed) and with it stashed (identical 37
+failures). Isolated re-run of each failing file individually confirmed
+none reference `v8_paper.py` or `V8_PROGRESS_MAX` — pre-existing/
+unrelated (mix of a known cross-test `sys.modules` pollution issue and
+genuine pre-existing failures in `tests/test_half2.py` /
+`tests/test_live_gate.py` that predate this change). `memecoin/tests/
+test_v8_paper.py` (21 tests, rewritten to match — `test_6` now asserts
+high progress still passes, as a regression guard against the gate
+silently reappearing) is fully green both before and after deploy.
+
+**Deploy**: committed `07dd982`, pushed, pulled on VPS clean (no
+conflicts), `systemctl restart quantbot`. Live log line confirms:
+`v8_paper: monitor thread started (interval=5s, gate=CURVE_ACTIVE
+[V8-P0], config_tag=v8_candidate_2026-09-10_v8p0)`. Positions-file race
+handled per the established double-snapshot pattern (live process wrote
+newer position data during the stash window; restored the fresher live
+snapshot rather than the stale stashed copy). Stash count verified back
+to baseline (50) after deploy.
+
+**Not yet done**: no fresh V8-P0-gated paper trades have landed yet to
+confirm the new gate is actually admitting positions at the expected
+rate live (only the startup log line is verified so far) — that's a
+live-observation item, not a code-readiness one.
