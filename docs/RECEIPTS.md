@@ -4547,4 +4547,44 @@ threshold in this project (written provenance, no silent move) — this
 receipt documents the evidence, not a decision. `research/thr_t5_results.json`
 holds the full per-token breakdown for whoever designs that next step.
 
+### CORRECTION (2026-09-10) — the "E0-E3 look poorly calibrated" claim above was wrong
+
+Before drafting a retuned hard_stop candidate (user asked for one), checked
+the obvious follow-up the entry above skipped: **of the real tokens that
+hit hard_stop, how many were actually real winners getting cut off, vs
+real losers correctly cut early?** That's the question that actually
+decides whether -35%/-50% is miscalibrated — the raw "60-73% hit
+hard_stop" stat alone does not, and the entry above drew a miscalibration
+conclusion from it without checking.
+
+Live query, same forward-collected corpus as T5 (real winner = reached
+`pct_change_gain >= +50%` at any point after entry, same
+`WINNER_THRESHOLD_PCT` used throughout this project):
+
+- **V8-P0**: 16/90 real tokens (17.8%) ever became winners. Of those 16,
+  **15 (93.75%) survive a -35% stop** — their worst dip before winning
+  was shallower than -35%. Only 1 winner (an extreme outlier, -72.4%
+  dip before recovering to +50%+) would have been killed by -35%.
+- **V8-P3**: 9/52 (17.3%) became winners. **9/9 (100%) survive -35%.**
+- Context: median max-drawdown across ALL 90/52 tokens (winners and
+  losers combined) is -76%/-78% — most tokens that hit hard_stop were
+  never going to recover regardless of stop width; cutting them at -35%
+  is correct behavior, not a miscalibration symptom.
+
+**Corrected conclusion: -35% is not meaningfully cutting off real
+winners (93-100% survive it) — the high hard_stop-hit rate in the T5
+entry above is explained by most tokens genuinely being losers, not by
+the stop being too tight.** Widening the stop to save the single -72.4%
+outlier would mean tolerating far deeper losses across the far larger
+population of real losers — not a good trade on this evidence. No
+retuned candidate drafted; the data doesn't support one. If there's a
+real lever here it's more likely the low base win rate itself (17-18%
+of real tokens ever reach +50%) than stop-loss width, but that is a
+different, unexamined question.
+
+This correction is appended, not silently substituted for the entry
+above, per this project's own standing convention (docs/OPEN_BRANCHES.md
+and every other correction in this file follows the same append-only
+pattern) — the wrong conclusion and how it was wrong stay visible.
+
 **T5 status: COMPLETE.** THR-BATCH (T1-T5) status: **COMPLETE.**
