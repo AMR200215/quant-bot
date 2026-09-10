@@ -9,10 +9,12 @@ understand where V8 stands or what's left.
 
 **Read this whole document before touching anything.** It covers entry,
 every exit component (hard stop, time stop, trail stop, profit lock, TP),
-data readiness, what's completely unaddressed, and the standing rules
-that must not be violated. The goal is that after reading this, nothing
-further needs to be asked — if something is unclear or looks stale,
-verify it live (SSH, direct query) rather than guess; every number below
+data readiness, what's completely unaddressed, a stress test of what
+stays unresolved even after the highest-priority fix (§8), and the
+standing rules that must not be violated. The goal is that after reading
+this, nothing further needs to be asked — if something is unclear or
+looks stale, verify it live (SSH, direct query) rather than guess; every
+number below
 is cited to a file or a live query at write time, but this project's own
 data changes daily (new forward collection runs continuously).
 
@@ -252,7 +254,69 @@ or in `docs/RECEIPTS.md`'s V8 sections:
 
 ---
 
-## 8. Standing rules — do not violate these
+## 8. Stress test: what's still unresolved even after trail_stop is fixed
+
+Fixing trail_stop (§3c, §7 step 1) is not a finish line. Stress-tested
+this explicitly, 2026-09-10, before it gets mistaken for one:
+
+- **The fix itself risks being invalid before it's tried.** Any retuned
+  trail is derived from only 16 (V8-P0) + 9 (V8-P3) real winners. If
+  "validated" by checking improvement on that *same* set, that's
+  curve-fitting to a sample smaller than one day of signals, not real
+  validation. It needs checking against winners it wasn't derived from
+  — fresh forward collection, not a re-run on the identical corpus.
+- **Likely measurement trap: widening the trail will look better than
+  it is.** Forward-collected paths have a finite recording window. A
+  wider/later-arming trail holds positions longer — some will run off
+  the end of recorded data and land in `path_end`, which §3c already
+  flagged as an inflated bucket (0.66-0.77 captured_fraction, an
+  artifact of the window ending near a high point). Widening the trail
+  could mechanically shift exits from `trail_stop` into `path_end` and
+  look like an improvement purely because measurement stopped, not
+  because the strategy improved. Must be checked explicitly.
+- **Trail doesn't act alone.** Exit rules fire in priority order:
+  `hard_stop` → `trail_stop` → `profit_lock` → `time_stop`. A trail that
+  arms later exposes more tokens to `hard_stop` for longer before trail
+  gets a chance to help. Retuning trail without re-checking hard_stop's
+  hit rate against the *new* trail could quietly erode what §3a already
+  validated as fine.
+- **Structural blind spot: graduation isn't in this data at all.**
+  Everything in §3-§4 is on-curve only. The biggest, fastest winners
+  graduate to PumpSwap — different venue, different execution plumbing
+  (`exit_router.py`). No backtesting here covers what happens to an open
+  position that graduates mid-hold; live behavior there is unvalidated
+  against any of this exit logic.
+- **Fixing trail doesn't touch anything in §4 or §6.** Not the 50%
+  coverage floor, not position sizing, not the flat execution-cost
+  model, not mid-trade rules, not the holdout gate. A better trail spec
+  doesn't move any of these — worth stating explicitly so "trail is
+  fixed" doesn't get read as "V8 is done."
+- **Never examined at all: portfolio-level risk.** Every check in this
+  document is per-trade. Real trading holds multiple positions
+  concurrently; nothing here has looked at correlated drawdowns (a
+  broad memecoin risk-off moment hitting many open positions' hard
+  stops at once). Per-trade EV being positive doesn't guarantee that's
+  survivable at the portfolio level.
+- **No drift detection.** Every number in §2-§3 is calibrated on a
+  specific ~August-September 2026 window. Memecoin market structure
+  shifts. Nothing re-validates this periodically or flags when it stops
+  matching reality.
+- **The optimization target itself may be wrong to chase.** Mean
+  `captured_fraction` (§3c) doesn't account for variance — a wider
+  trail could capture more on real winners while giving back more on
+  tokens that fake a breakout and reverse. And no amount of exit tuning
+  changes the ~17-18% base rate of tokens that ever become winners at
+  all (§2's entry-EV numbers) — that ceiling is set on the entry side,
+  not reachable from exit work.
+
+None of this blocks doing the trail_stop work in §7 step 1 — it's the
+best-evidenced next step regardless. It does mean: budget for a second
+validation pass with fresh data before trusting a retuned candidate, and
+don't treat any single fix in §3 as closing out the project.
+
+---
+
+## 9. Standing rules — do not violate these
 
 - **Holdout is never read for outcome values.** Row counts are fine;
   `pct_change_peak` or any outcome value from a holdout row is not, ever,
@@ -290,7 +354,7 @@ or in `docs/RECEIPTS.md`'s V8 sections:
 
 ---
 
-## 9. Where everything actually lives (read these directly, don't re-derive)
+## 10. Where everything actually lives (read these directly, don't re-derive)
 
 | File | What it is |
 |---|---|
