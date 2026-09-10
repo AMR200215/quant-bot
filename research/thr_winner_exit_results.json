@@ -1,0 +1,921 @@
+{
+  "generated_at": "2026-09-10T01:44:34.848131+00:00",
+  "candidates": {
+    "V8-P0": {
+      "n_real_winners": 16,
+      "exits": {
+        "E0": {
+          "n_winners_evaluated": 16,
+          "by_exit_reason": {
+            "profit_lock": {
+              "n": 3,
+              "mean_net_pnl_pct": 55.15,
+              "mean_peak_gain_pct": 161.14,
+              "mean_captured_fraction": 0.487
+            },
+            "path_end": {
+              "n": 4,
+              "mean_net_pnl_pct": 55.88,
+              "mean_peak_gain_pct": 83.17,
+              "mean_captured_fraction": 0.672
+            },
+            "trail_stop": {
+              "n": 8,
+              "mean_net_pnl_pct": 53.01,
+              "mean_peak_gain_pct": 207.67,
+              "mean_captured_fraction": 0.197
+            },
+            "hard_stop": {
+              "n": 1,
+              "mean_net_pnl_pct": -46.22,
+              "mean_peak_gain_pct": 57.78,
+              "mean_captured_fraction": -0.8
+            }
+          },
+          "per_winner": [
+            {
+              "mint": "6G3jeSMJzfDinWSnKLsCho5BCa8i9CHKWg8jizwKpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 69.52,
+              "peak_gain_pct": 223.78,
+              "captured_fraction": 0.311
+            },
+            {
+              "mint": "FF7sQMw3rU3UXvs6VdNPkAnvAJLfD2sC38KsgHqQpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 45.48,
+              "peak_gain_pct": 94.6,
+              "captured_fraction": 0.481
+            },
+            {
+              "mint": "2hnMuaYExdvM6mfACGfdMCVB3VSBLKCeiYKX8yvppump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 56.64,
+              "peak_gain_pct": 59.38,
+              "captured_fraction": 0.954
+            },
+            {
+              "mint": "6dAA5hefwGL2F1v4YWVKZVaHhpMBcgUNqkQgP8Zc2Qwo",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.04,
+              "peak_gain_pct": 54.38,
+              "captured_fraction": 0.46
+            },
+            {
+              "mint": "5VSZ3nv61JKUHeB7dWUHoLLBNHaEUBLyGZAfHmKwpump",
+              "exit_reason": "hard_stop",
+              "net_pnl_pct": -46.22,
+              "peak_gain_pct": 57.78,
+              "captured_fraction": -0.8
+            },
+            {
+              "mint": "BqPp7f1mvxvaaH1rjKbzkmYjcV2XUnmmcn51PPaNpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 12.53,
+              "peak_gain_pct": 51.97,
+              "captured_fraction": 0.241
+            },
+            {
+              "mint": "FEMExV9UtmwykuaoFTa4ynnVzQbSo9UUpdx3bLjUpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 72.56,
+              "peak_gain_pct": 94.76,
+              "captured_fraction": 0.766
+            },
+            {
+              "mint": "8WewbvQCZQSrzjv4XiHRdrTJYSxDQsQztnsVZs4npump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 70.14,
+              "peak_gain_pct": 89.61,
+              "captured_fraction": 0.783
+            },
+            {
+              "mint": "57aCZMZuHV1eZQk749oHwjmSU8wKUrvr1HXsWHjpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 35.35,
+              "peak_gain_pct": 53.71,
+              "captured_fraction": 0.658
+            },
+            {
+              "mint": "BW56hShMFBoG2NmnMztbMtCq5jnwjZHVVLd2TPiipump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.83,
+              "peak_gain_pct": 61.85,
+              "captured_fraction": 0.418
+            },
+            {
+              "mint": "5mni69zBTGhcVXRAJYf5W4xXpeKXCRFkJLvuC39Fpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.99,
+              "peak_gain_pct": 158.57,
+              "captured_fraction": 0.145
+            },
+            {
+              "mint": "C8WeLr31vA1EmwD6yBsxBL3DsSpJLCx5XsmFFbuvpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 39.3,
+              "peak_gain_pct": 200.25,
+              "captured_fraction": 0.196
+            },
+            {
+              "mint": "DTF1fbSp3SdXvKuVog7XwdmpEm5GeYD8673j3qXepump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 322.53,
+              "peak_gain_pct": 1051.74,
+              "captured_fraction": 0.307
+            },
+            {
+              "mint": "4pvh54AMASFozQQPkmfXcuJ9YD6t67SMDT8BLxJTpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -3.81,
+              "peak_gain_pct": 65.68,
+              "captured_fraction": -0.058
+            },
+            {
+              "mint": "HptBDqPw6fivVT6m912v5ZL9mXs8an4QzN7E39fkpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -3.63,
+              "peak_gain_pct": 51.31,
+              "captured_fraction": -0.071
+            },
+            {
+              "mint": "3wTkhoz34PbNMQMip38QVm1LB1HnZLipnYw5MZMJpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.63,
+              "peak_gain_pct": 165.84,
+              "captured_fraction": 0.136
+            }
+          ]
+        },
+        "E1": {
+          "n_winners_evaluated": 16,
+          "by_exit_reason": {
+            "trail_stop": {
+              "n": 14,
+              "mean_net_pnl_pct": 28.23,
+              "mean_peak_gain_pct": 173.12,
+              "mean_captured_fraction": 0.192
+            },
+            "hard_stop": {
+              "n": 1,
+              "mean_net_pnl_pct": -46.22,
+              "mean_peak_gain_pct": 57.78,
+              "mean_captured_fraction": -0.8
+            },
+            "path_end": {
+              "n": 1,
+              "mean_net_pnl_pct": 35.35,
+              "mean_peak_gain_pct": 53.71,
+              "mean_captured_fraction": 0.658
+            }
+          },
+          "per_winner": [
+            {
+              "mint": "6G3jeSMJzfDinWSnKLsCho5BCa8i9CHKWg8jizwKpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 51.81,
+              "peak_gain_pct": 223.78,
+              "captured_fraction": 0.232
+            },
+            {
+              "mint": "FF7sQMw3rU3UXvs6VdNPkAnvAJLfD2sC38KsgHqQpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 54.1,
+              "peak_gain_pct": 94.6,
+              "captured_fraction": 0.572
+            },
+            {
+              "mint": "2hnMuaYExdvM6mfACGfdMCVB3VSBLKCeiYKX8yvppump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -9.24,
+              "peak_gain_pct": 59.38,
+              "captured_fraction": -0.156
+            },
+            {
+              "mint": "6dAA5hefwGL2F1v4YWVKZVaHhpMBcgUNqkQgP8Zc2Qwo",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -2.02,
+              "peak_gain_pct": 54.38,
+              "captured_fraction": -0.037
+            },
+            {
+              "mint": "5VSZ3nv61JKUHeB7dWUHoLLBNHaEUBLyGZAfHmKwpump",
+              "exit_reason": "hard_stop",
+              "net_pnl_pct": -46.22,
+              "peak_gain_pct": 57.78,
+              "captured_fraction": -0.8
+            },
+            {
+              "mint": "BqPp7f1mvxvaaH1rjKbzkmYjcV2XUnmmcn51PPaNpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 12.53,
+              "peak_gain_pct": 51.97,
+              "captured_fraction": 0.241
+            },
+            {
+              "mint": "FEMExV9UtmwykuaoFTa4ynnVzQbSo9UUpdx3bLjUpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 5.95,
+              "peak_gain_pct": 94.76,
+              "captured_fraction": 0.063
+            },
+            {
+              "mint": "8WewbvQCZQSrzjv4XiHRdrTJYSxDQsQztnsVZs4npump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 29.09,
+              "peak_gain_pct": 89.61,
+              "captured_fraction": 0.325
+            },
+            {
+              "mint": "57aCZMZuHV1eZQk749oHwjmSU8wKUrvr1HXsWHjpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 35.35,
+              "peak_gain_pct": 53.71,
+              "captured_fraction": 0.658
+            },
+            {
+              "mint": "BW56hShMFBoG2NmnMztbMtCq5jnwjZHVVLd2TPiipump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.83,
+              "peak_gain_pct": 61.85,
+              "captured_fraction": 0.418
+            },
+            {
+              "mint": "5mni69zBTGhcVXRAJYf5W4xXpeKXCRFkJLvuC39Fpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 41.91,
+              "peak_gain_pct": 158.57,
+              "captured_fraction": 0.264
+            },
+            {
+              "mint": "C8WeLr31vA1EmwD6yBsxBL3DsSpJLCx5XsmFFbuvpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -4.95,
+              "peak_gain_pct": 200.25,
+              "captured_fraction": -0.025
+            },
+            {
+              "mint": "DTF1fbSp3SdXvKuVog7XwdmpEm5GeYD8673j3qXepump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 132.46,
+              "peak_gain_pct": 1051.74,
+              "captured_fraction": 0.126
+            },
+            {
+              "mint": "4pvh54AMASFozQQPkmfXcuJ9YD6t67SMDT8BLxJTpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -3.81,
+              "peak_gain_pct": 65.68,
+              "captured_fraction": -0.058
+            },
+            {
+              "mint": "HptBDqPw6fivVT6m912v5ZL9mXs8an4QzN7E39fkpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.96,
+              "peak_gain_pct": 51.31,
+              "captured_fraction": 0.506
+            },
+            {
+              "mint": "3wTkhoz34PbNMQMip38QVm1LB1HnZLipnYw5MZMJpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 35.61,
+              "peak_gain_pct": 165.84,
+              "captured_fraction": 0.215
+            }
+          ]
+        },
+        "E2": {
+          "n_winners_evaluated": 16,
+          "by_exit_reason": {
+            "profit_lock": {
+              "n": 3,
+              "mean_net_pnl_pct": 55.15,
+              "mean_peak_gain_pct": 161.14,
+              "mean_captured_fraction": 0.487
+            },
+            "path_end": {
+              "n": 4,
+              "mean_net_pnl_pct": 55.88,
+              "mean_peak_gain_pct": 83.17,
+              "mean_captured_fraction": 0.672
+            },
+            "trail_stop": {
+              "n": 8,
+              "mean_net_pnl_pct": 53.01,
+              "mean_peak_gain_pct": 207.67,
+              "mean_captured_fraction": 0.197
+            },
+            "hard_stop": {
+              "n": 1,
+              "mean_net_pnl_pct": -48.42,
+              "mean_peak_gain_pct": 57.78,
+              "mean_captured_fraction": -0.838
+            }
+          },
+          "per_winner": [
+            {
+              "mint": "6G3jeSMJzfDinWSnKLsCho5BCa8i9CHKWg8jizwKpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 69.52,
+              "peak_gain_pct": 223.78,
+              "captured_fraction": 0.311
+            },
+            {
+              "mint": "FF7sQMw3rU3UXvs6VdNPkAnvAJLfD2sC38KsgHqQpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 45.48,
+              "peak_gain_pct": 94.6,
+              "captured_fraction": 0.481
+            },
+            {
+              "mint": "2hnMuaYExdvM6mfACGfdMCVB3VSBLKCeiYKX8yvppump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 56.64,
+              "peak_gain_pct": 59.38,
+              "captured_fraction": 0.954
+            },
+            {
+              "mint": "6dAA5hefwGL2F1v4YWVKZVaHhpMBcgUNqkQgP8Zc2Qwo",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.04,
+              "peak_gain_pct": 54.38,
+              "captured_fraction": 0.46
+            },
+            {
+              "mint": "5VSZ3nv61JKUHeB7dWUHoLLBNHaEUBLyGZAfHmKwpump",
+              "exit_reason": "hard_stop",
+              "net_pnl_pct": -48.42,
+              "peak_gain_pct": 57.78,
+              "captured_fraction": -0.838
+            },
+            {
+              "mint": "BqPp7f1mvxvaaH1rjKbzkmYjcV2XUnmmcn51PPaNpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 12.53,
+              "peak_gain_pct": 51.97,
+              "captured_fraction": 0.241
+            },
+            {
+              "mint": "FEMExV9UtmwykuaoFTa4ynnVzQbSo9UUpdx3bLjUpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 72.56,
+              "peak_gain_pct": 94.76,
+              "captured_fraction": 0.766
+            },
+            {
+              "mint": "8WewbvQCZQSrzjv4XiHRdrTJYSxDQsQztnsVZs4npump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 70.14,
+              "peak_gain_pct": 89.61,
+              "captured_fraction": 0.783
+            },
+            {
+              "mint": "57aCZMZuHV1eZQk749oHwjmSU8wKUrvr1HXsWHjpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 35.35,
+              "peak_gain_pct": 53.71,
+              "captured_fraction": 0.658
+            },
+            {
+              "mint": "BW56hShMFBoG2NmnMztbMtCq5jnwjZHVVLd2TPiipump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.83,
+              "peak_gain_pct": 61.85,
+              "captured_fraction": 0.418
+            },
+            {
+              "mint": "5mni69zBTGhcVXRAJYf5W4xXpeKXCRFkJLvuC39Fpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.99,
+              "peak_gain_pct": 158.57,
+              "captured_fraction": 0.145
+            },
+            {
+              "mint": "C8WeLr31vA1EmwD6yBsxBL3DsSpJLCx5XsmFFbuvpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 39.3,
+              "peak_gain_pct": 200.25,
+              "captured_fraction": 0.196
+            },
+            {
+              "mint": "DTF1fbSp3SdXvKuVog7XwdmpEm5GeYD8673j3qXepump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 322.53,
+              "peak_gain_pct": 1051.74,
+              "captured_fraction": 0.307
+            },
+            {
+              "mint": "4pvh54AMASFozQQPkmfXcuJ9YD6t67SMDT8BLxJTpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -3.81,
+              "peak_gain_pct": 65.68,
+              "captured_fraction": -0.058
+            },
+            {
+              "mint": "HptBDqPw6fivVT6m912v5ZL9mXs8an4QzN7E39fkpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -3.63,
+              "peak_gain_pct": 51.31,
+              "captured_fraction": -0.071
+            },
+            {
+              "mint": "3wTkhoz34PbNMQMip38QVm1LB1HnZLipnYw5MZMJpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.63,
+              "peak_gain_pct": 165.84,
+              "captured_fraction": 0.136
+            }
+          ]
+        },
+        "E3": {
+          "n_winners_evaluated": 16,
+          "by_exit_reason": {
+            "profit_lock": {
+              "n": 3,
+              "mean_net_pnl_pct": 55.15,
+              "mean_peak_gain_pct": 161.14,
+              "mean_captured_fraction": 0.487
+            },
+            "path_end": {
+              "n": 4,
+              "mean_net_pnl_pct": 55.88,
+              "mean_peak_gain_pct": 83.17,
+              "mean_captured_fraction": 0.672
+            },
+            "trail_stop": {
+              "n": 8,
+              "mean_net_pnl_pct": 53.01,
+              "mean_peak_gain_pct": 207.67,
+              "mean_captured_fraction": 0.197
+            },
+            "hard_stop": {
+              "n": 1,
+              "mean_net_pnl_pct": -46.22,
+              "mean_peak_gain_pct": 57.78,
+              "mean_captured_fraction": -0.8
+            }
+          },
+          "per_winner": [
+            {
+              "mint": "6G3jeSMJzfDinWSnKLsCho5BCa8i9CHKWg8jizwKpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 69.52,
+              "peak_gain_pct": 223.78,
+              "captured_fraction": 0.311
+            },
+            {
+              "mint": "FF7sQMw3rU3UXvs6VdNPkAnvAJLfD2sC38KsgHqQpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 45.48,
+              "peak_gain_pct": 94.6,
+              "captured_fraction": 0.481
+            },
+            {
+              "mint": "2hnMuaYExdvM6mfACGfdMCVB3VSBLKCeiYKX8yvppump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 56.64,
+              "peak_gain_pct": 59.38,
+              "captured_fraction": 0.954
+            },
+            {
+              "mint": "6dAA5hefwGL2F1v4YWVKZVaHhpMBcgUNqkQgP8Zc2Qwo",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.04,
+              "peak_gain_pct": 54.38,
+              "captured_fraction": 0.46
+            },
+            {
+              "mint": "5VSZ3nv61JKUHeB7dWUHoLLBNHaEUBLyGZAfHmKwpump",
+              "exit_reason": "hard_stop",
+              "net_pnl_pct": -46.22,
+              "peak_gain_pct": 57.78,
+              "captured_fraction": -0.8
+            },
+            {
+              "mint": "BqPp7f1mvxvaaH1rjKbzkmYjcV2XUnmmcn51PPaNpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 12.53,
+              "peak_gain_pct": 51.97,
+              "captured_fraction": 0.241
+            },
+            {
+              "mint": "FEMExV9UtmwykuaoFTa4ynnVzQbSo9UUpdx3bLjUpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 72.56,
+              "peak_gain_pct": 94.76,
+              "captured_fraction": 0.766
+            },
+            {
+              "mint": "8WewbvQCZQSrzjv4XiHRdrTJYSxDQsQztnsVZs4npump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 70.14,
+              "peak_gain_pct": 89.61,
+              "captured_fraction": 0.783
+            },
+            {
+              "mint": "57aCZMZuHV1eZQk749oHwjmSU8wKUrvr1HXsWHjpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 35.35,
+              "peak_gain_pct": 53.71,
+              "captured_fraction": 0.658
+            },
+            {
+              "mint": "BW56hShMFBoG2NmnMztbMtCq5jnwjZHVVLd2TPiipump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.83,
+              "peak_gain_pct": 61.85,
+              "captured_fraction": 0.418
+            },
+            {
+              "mint": "5mni69zBTGhcVXRAJYf5W4xXpeKXCRFkJLvuC39Fpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.99,
+              "peak_gain_pct": 158.57,
+              "captured_fraction": 0.145
+            },
+            {
+              "mint": "C8WeLr31vA1EmwD6yBsxBL3DsSpJLCx5XsmFFbuvpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 39.3,
+              "peak_gain_pct": 200.25,
+              "captured_fraction": 0.196
+            },
+            {
+              "mint": "DTF1fbSp3SdXvKuVog7XwdmpEm5GeYD8673j3qXepump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 322.53,
+              "peak_gain_pct": 1051.74,
+              "captured_fraction": 0.307
+            },
+            {
+              "mint": "4pvh54AMASFozQQPkmfXcuJ9YD6t67SMDT8BLxJTpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -3.81,
+              "peak_gain_pct": 65.68,
+              "captured_fraction": -0.058
+            },
+            {
+              "mint": "HptBDqPw6fivVT6m912v5ZL9mXs8an4QzN7E39fkpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -3.63,
+              "peak_gain_pct": 51.31,
+              "captured_fraction": -0.071
+            },
+            {
+              "mint": "3wTkhoz34PbNMQMip38QVm1LB1HnZLipnYw5MZMJpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.63,
+              "peak_gain_pct": 165.84,
+              "captured_fraction": 0.136
+            }
+          ]
+        }
+      }
+    },
+    "V8-P3": {
+      "n_real_winners": 9,
+      "exits": {
+        "E0": {
+          "n_winners_evaluated": 9,
+          "by_exit_reason": {
+            "path_end": {
+              "n": 2,
+              "mean_net_pnl_pct": 71.35,
+              "mean_peak_gain_pct": 92.19,
+              "mean_captured_fraction": 0.774
+            },
+            "trail_stop": {
+              "n": 5,
+              "mean_net_pnl_pct": 81.71,
+              "mean_peak_gain_pct": 277.16,
+              "mean_captured_fraction": 0.312
+            },
+            "profit_lock": {
+              "n": 2,
+              "mean_net_pnl_pct": 47.97,
+              "mean_peak_gain_pct": 129.81,
+              "mean_captured_fraction": 0.575
+            }
+          },
+          "per_winner": [
+            {
+              "mint": "8WewbvQCZQSrzjv4XiHRdrTJYSxDQsQztnsVZs4npump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 70.14,
+              "peak_gain_pct": 89.61,
+              "captured_fraction": 0.783
+            },
+            {
+              "mint": "BW56hShMFBoG2NmnMztbMtCq5jnwjZHVVLd2TPiipump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.83,
+              "peak_gain_pct": 61.85,
+              "captured_fraction": 0.418
+            },
+            {
+              "mint": "2hnMuaYExdvM6mfACGfdMCVB3VSBLKCeiYKX8yvppump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 56.64,
+              "peak_gain_pct": 59.38,
+              "captured_fraction": 0.954
+            },
+            {
+              "mint": "6dAA5hefwGL2F1v4YWVKZVaHhpMBcgUNqkQgP8Zc2Qwo",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.04,
+              "peak_gain_pct": 54.38,
+              "captured_fraction": 0.46
+            },
+            {
+              "mint": "C8WeLr31vA1EmwD6yBsxBL3DsSpJLCx5XsmFFbuvpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 39.3,
+              "peak_gain_pct": 200.25,
+              "captured_fraction": 0.196
+            },
+            {
+              "mint": "BqPp7f1mvxvaaH1rjKbzkmYjcV2XUnmmcn51PPaNpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 12.53,
+              "peak_gain_pct": 51.97,
+              "captured_fraction": 0.241
+            },
+            {
+              "mint": "DTF1fbSp3SdXvKuVog7XwdmpEm5GeYD8673j3qXepump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 322.53,
+              "peak_gain_pct": 1051.74,
+              "captured_fraction": 0.307
+            },
+            {
+              "mint": "3wTkhoz34PbNMQMip38QVm1LB1HnZLipnYw5MZMJpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.63,
+              "peak_gain_pct": 165.84,
+              "captured_fraction": 0.136
+            },
+            {
+              "mint": "FEMExV9UtmwykuaoFTa4ynnVzQbSo9UUpdx3bLjUpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 72.56,
+              "peak_gain_pct": 94.76,
+              "captured_fraction": 0.766
+            }
+          ]
+        },
+        "E1": {
+          "n_winners_evaluated": 9,
+          "by_exit_reason": {
+            "trail_stop": {
+              "n": 9,
+              "mean_net_pnl_pct": 25.03,
+              "mean_peak_gain_pct": 203.31,
+              "mean_captured_fraction": 0.13
+            }
+          },
+          "per_winner": [
+            {
+              "mint": "8WewbvQCZQSrzjv4XiHRdrTJYSxDQsQztnsVZs4npump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 29.09,
+              "peak_gain_pct": 89.61,
+              "captured_fraction": 0.325
+            },
+            {
+              "mint": "BW56hShMFBoG2NmnMztbMtCq5jnwjZHVVLd2TPiipump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.83,
+              "peak_gain_pct": 61.85,
+              "captured_fraction": 0.418
+            },
+            {
+              "mint": "2hnMuaYExdvM6mfACGfdMCVB3VSBLKCeiYKX8yvppump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -9.24,
+              "peak_gain_pct": 59.38,
+              "captured_fraction": -0.156
+            },
+            {
+              "mint": "6dAA5hefwGL2F1v4YWVKZVaHhpMBcgUNqkQgP8Zc2Qwo",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -2.02,
+              "peak_gain_pct": 54.38,
+              "captured_fraction": -0.037
+            },
+            {
+              "mint": "C8WeLr31vA1EmwD6yBsxBL3DsSpJLCx5XsmFFbuvpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": -4.95,
+              "peak_gain_pct": 200.25,
+              "captured_fraction": -0.025
+            },
+            {
+              "mint": "BqPp7f1mvxvaaH1rjKbzkmYjcV2XUnmmcn51PPaNpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 12.53,
+              "peak_gain_pct": 51.97,
+              "captured_fraction": 0.241
+            },
+            {
+              "mint": "DTF1fbSp3SdXvKuVog7XwdmpEm5GeYD8673j3qXepump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 132.46,
+              "peak_gain_pct": 1051.74,
+              "captured_fraction": 0.126
+            },
+            {
+              "mint": "3wTkhoz34PbNMQMip38QVm1LB1HnZLipnYw5MZMJpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 35.61,
+              "peak_gain_pct": 165.84,
+              "captured_fraction": 0.215
+            },
+            {
+              "mint": "FEMExV9UtmwykuaoFTa4ynnVzQbSo9UUpdx3bLjUpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 5.95,
+              "peak_gain_pct": 94.76,
+              "captured_fraction": 0.063
+            }
+          ]
+        },
+        "E2": {
+          "n_winners_evaluated": 9,
+          "by_exit_reason": {
+            "path_end": {
+              "n": 2,
+              "mean_net_pnl_pct": 71.35,
+              "mean_peak_gain_pct": 92.19,
+              "mean_captured_fraction": 0.774
+            },
+            "trail_stop": {
+              "n": 5,
+              "mean_net_pnl_pct": 81.71,
+              "mean_peak_gain_pct": 277.16,
+              "mean_captured_fraction": 0.312
+            },
+            "profit_lock": {
+              "n": 2,
+              "mean_net_pnl_pct": 47.97,
+              "mean_peak_gain_pct": 129.81,
+              "mean_captured_fraction": 0.575
+            }
+          },
+          "per_winner": [
+            {
+              "mint": "8WewbvQCZQSrzjv4XiHRdrTJYSxDQsQztnsVZs4npump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 70.14,
+              "peak_gain_pct": 89.61,
+              "captured_fraction": 0.783
+            },
+            {
+              "mint": "BW56hShMFBoG2NmnMztbMtCq5jnwjZHVVLd2TPiipump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.83,
+              "peak_gain_pct": 61.85,
+              "captured_fraction": 0.418
+            },
+            {
+              "mint": "2hnMuaYExdvM6mfACGfdMCVB3VSBLKCeiYKX8yvppump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 56.64,
+              "peak_gain_pct": 59.38,
+              "captured_fraction": 0.954
+            },
+            {
+              "mint": "6dAA5hefwGL2F1v4YWVKZVaHhpMBcgUNqkQgP8Zc2Qwo",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.04,
+              "peak_gain_pct": 54.38,
+              "captured_fraction": 0.46
+            },
+            {
+              "mint": "C8WeLr31vA1EmwD6yBsxBL3DsSpJLCx5XsmFFbuvpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 39.3,
+              "peak_gain_pct": 200.25,
+              "captured_fraction": 0.196
+            },
+            {
+              "mint": "BqPp7f1mvxvaaH1rjKbzkmYjcV2XUnmmcn51PPaNpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 12.53,
+              "peak_gain_pct": 51.97,
+              "captured_fraction": 0.241
+            },
+            {
+              "mint": "DTF1fbSp3SdXvKuVog7XwdmpEm5GeYD8673j3qXepump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 322.53,
+              "peak_gain_pct": 1051.74,
+              "captured_fraction": 0.307
+            },
+            {
+              "mint": "3wTkhoz34PbNMQMip38QVm1LB1HnZLipnYw5MZMJpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.63,
+              "peak_gain_pct": 165.84,
+              "captured_fraction": 0.136
+            },
+            {
+              "mint": "FEMExV9UtmwykuaoFTa4ynnVzQbSo9UUpdx3bLjUpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 72.56,
+              "peak_gain_pct": 94.76,
+              "captured_fraction": 0.766
+            }
+          ]
+        },
+        "E3": {
+          "n_winners_evaluated": 9,
+          "by_exit_reason": {
+            "path_end": {
+              "n": 2,
+              "mean_net_pnl_pct": 71.35,
+              "mean_peak_gain_pct": 92.19,
+              "mean_captured_fraction": 0.774
+            },
+            "trail_stop": {
+              "n": 5,
+              "mean_net_pnl_pct": 81.71,
+              "mean_peak_gain_pct": 277.16,
+              "mean_captured_fraction": 0.312
+            },
+            "profit_lock": {
+              "n": 2,
+              "mean_net_pnl_pct": 47.97,
+              "mean_peak_gain_pct": 129.81,
+              "mean_captured_fraction": 0.575
+            }
+          },
+          "per_winner": [
+            {
+              "mint": "8WewbvQCZQSrzjv4XiHRdrTJYSxDQsQztnsVZs4npump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 70.14,
+              "peak_gain_pct": 89.61,
+              "captured_fraction": 0.783
+            },
+            {
+              "mint": "BW56hShMFBoG2NmnMztbMtCq5jnwjZHVVLd2TPiipump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.83,
+              "peak_gain_pct": 61.85,
+              "captured_fraction": 0.418
+            },
+            {
+              "mint": "2hnMuaYExdvM6mfACGfdMCVB3VSBLKCeiYKX8yvppump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 56.64,
+              "peak_gain_pct": 59.38,
+              "captured_fraction": 0.954
+            },
+            {
+              "mint": "6dAA5hefwGL2F1v4YWVKZVaHhpMBcgUNqkQgP8Zc2Qwo",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 25.04,
+              "peak_gain_pct": 54.38,
+              "captured_fraction": 0.46
+            },
+            {
+              "mint": "C8WeLr31vA1EmwD6yBsxBL3DsSpJLCx5XsmFFbuvpump",
+              "exit_reason": "profit_lock",
+              "net_pnl_pct": 39.3,
+              "peak_gain_pct": 200.25,
+              "captured_fraction": 0.196
+            },
+            {
+              "mint": "BqPp7f1mvxvaaH1rjKbzkmYjcV2XUnmmcn51PPaNpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 12.53,
+              "peak_gain_pct": 51.97,
+              "captured_fraction": 0.241
+            },
+            {
+              "mint": "DTF1fbSp3SdXvKuVog7XwdmpEm5GeYD8673j3qXepump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 322.53,
+              "peak_gain_pct": 1051.74,
+              "captured_fraction": 0.307
+            },
+            {
+              "mint": "3wTkhoz34PbNMQMip38QVm1LB1HnZLipnYw5MZMJpump",
+              "exit_reason": "trail_stop",
+              "net_pnl_pct": 22.63,
+              "peak_gain_pct": 165.84,
+              "captured_fraction": 0.136
+            },
+            {
+              "mint": "FEMExV9UtmwykuaoFTa4ynnVzQbSo9UUpdx3bLjUpump",
+              "exit_reason": "path_end",
+              "net_pnl_pct": 72.56,
+              "peak_gain_pct": 94.76,
+              "captured_fraction": 0.766
+            }
+          ]
+        }
+      }
+    }
+  }
+}

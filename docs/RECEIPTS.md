@@ -4587,4 +4587,56 @@ above, per this project's own standing convention (docs/OPEN_BRANCHES.md
 and every other correction in this file follows the same append-only
 pattern) — the wrong conclusion and how it was wrong stay visible.
 
+### Real-winner exit analysis — trail_stop/profit_lock is the actual leak, not hard_stop or time_stop
+
+`research/thr_winner_exit_analysis.py`: extended the same winner-survival
+scrutiny to trail_stop/time_stop/profit_lock. For the same 16 (V8-P0) /
+9 (V8-P3) real winners (forward-collected, reached +50% at some point),
+replayed each exit spec and compared REALIZED net pnl against the
+eventual peak the token actually went on to reach, grouped by which rule
+fired (`captured_fraction = realized / peak`).
+
+**time_stop: zero real winners cut by it, across every exit spec (E0-E3).**
+Fine as calibrated — no evidence it costs winners anything.
+
+**hard_stop: confirms the correction above** — 1/16 V8-P0 winners hit it
+(the same known -72.4%-dip outlier), 0/9 V8-P3.
+
+**trail_stop and profit_lock: the real leak.** trail_stop is the
+dominant exit mechanism for winners (8-14 of 16 for V8-P0 depending on
+spec; 5-9 of 9 for V8-P3) and captures only **13-31% of the eventual
+peak gain**:
+
+| Candidate | Exit | trail_stop n | mean realized | mean eventual peak | captured_fraction |
+|---|---|---|---|---|---|
+| V8-P0 | E0/E2/E3 | 8 | +53.0% | +207.7% | 0.20 |
+| V8-P0 | E1 (tighter trail) | 14 | +28.2% | +173.1% | 0.19 |
+| V8-P3 | E0/E2/E3 | 5 | +81.7% | +277.2% | 0.31 |
+| V8-P3 | E1 | 9 | +25.0% | +203.3% | 0.13 |
+
+profit_lock (stall detector) does better but still leaves roughly half
+on the table (0.49-0.57 captured_fraction). E1's tighter trail
+(arms +20%/trails 20%, vs E0/E2/E3's +30%/25%) captures even less than
+the looser default — consistent with "arming earlier and trailing
+tighter locks in profit sooner at the cost of more upside," not a
+surprise once seen, but not previously measured.
+
+**Caveat on `path_end` exits** (highest apparent captured_fraction,
+0.66-0.77): likely an artifact of the observed path simply ending near
+its own high point (collection window or graduation cutoff), not
+evidence that "holding longer" would have captured more — we don't know
+what happened after the recorded path ends for those tokens. Not
+comparable to the trail_stop/profit_lock numbers on the same basis.
+
+**Implication, not a decision:** if there's a real, well-evidenced lever
+in the exit design, it's trail width/arming, not hard_stop or time_stop.
+A wider/later-arming trail (loosening toward something closer to how
+much room the E0/E2/E3 default already gives, or looser still) could in
+principle capture more of the 173-277% average real peak instead of the
+20-53% currently realized — but this is not decided or drafted here;
+any retuned candidate needs the same written-provenance, explicit-
+sign-off process as every other threshold in this project.
+`research/thr_winner_exit_results.json` holds the full per-winner
+breakdown.
+
 **T5 status: COMPLETE.** THR-BATCH (T1-T5) status: **COMPLETE.**
