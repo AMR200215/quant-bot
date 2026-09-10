@@ -96,7 +96,29 @@ just "how often does it fire").
 `time_stop`.** Not a single one. No evidence this costs anything, at any
 of the four tested durations including E3's aggressive 7-minute version.
 
-### 3c. Trail stop — NOT VALIDATED, THE REAL LEAK, HIGHEST-PRIORITY NEXT STEP
+### 3c. Trail stop — TESTED (2026-09-10), E0's CURRENT CONFIGURATION NOT BEATEN
+
+**Update, same day this section was originally written:** the retuning
+work this section called for was done (TS-BATCH,
+`research/thr_run_ts.py`, full receipt `docs/RECEIPTS.md`). A
+pre-registered 32-cell grid (wider/later-arming trail variants + two TP
+ladder options) was scored against E0 with a censoring-aware pessimistic
+correction (§8's `path_end` measurement trap, automated rather than just
+flagged). **Result: zero cells beat E0 on either candidate.** The
+apparent "13-31% captured_fraction" leak described below turned out to
+be real but not exploitable in the direction tested — widening the trail
+increases `hard_stop_hit_rate` and `censored_fraction` enough to erase
+any capture-fraction gain once scored honestly (real numbers:
+`winner_mean_capture_pessimistic` goes *negative* for wide cells vs
+E0's own 0.022). **No E4 drafted. E0's current trail configuration
+stands, within the tested (wider-only) direction.** A genuinely
+*tighter* trail than E0's own (30% arm, 25% width) was not tested and
+remains open — see `docs/RECEIPTS.md`'s TS-BATCH entry for the exact
+scope boundary. The original section below is left as-written (why the
+question looked worth asking), not deleted, per this document's own
+append-only correction convention.
+
+### 3c (original, 2026-09-10, superseded by the update above)
 
 Trail stop is the *dominant* real-winner exit mechanism (8-14 of 16 for
 V8-P0 depending on spec; 5-9 of 9 for V8-P3) and captures only **13-31%
@@ -233,28 +255,46 @@ or in `docs/RECEIPTS.md`'s V8 sections:
 
 ## 7. Recommended order of work from here
 
-1. **Derive and propose a retuned trail_tiers candidate** (§3c) from the
-   real per-winner drawdown-before-continuing data already sitting in
-   `research/thr_winner_exit_results.json`. Highest leverage, best
-   evidenced, most actionable single next step.
-2. Re-validate via `research/thr_run_t5.py` +
-   `research/thr_winner_exit_analysis.py` against the same combined
-   corpus (no new data collection needed for this iteration).
-3. Consider a TP ladder (§3e) as a complementary design, informed by the
-   same data — genuinely unstarted.
-4. Resolve the `MIN_PATH_COVERAGE_PCT` denominator question (§4), or
-   keep growing combined-corpus n via periodic THR reconstruction runs.
-5. Decide V8-P0 vs V8-P3 (§2) as the one deployed entry candidate.
-6. Design position sizing (§6) — currently flat, unexamined.
-7. **Only after 1-6 are settled**: pre-register the final
+**Step 1 below (retune trail_tiers) was attempted 2026-09-10** — see
+§3c's update and `docs/RECEIPTS.md`'s TS-BATCH entry: a pre-registered
+32-cell grid, censoring-corrected, found zero cells that beat E0. No
+candidate was produced. That direction (wider/later-arming trail) is
+closed pending new data or a differently-scoped grid; a genuinely
+*tighter* trail than E0's own was not tested and is the one open thread
+in that space. The list below is renumbered to reflect this — start at
+the new step 1.
+
+1. **Consider a TP ladder** (§3e) as an independent design, informed by
+   the same per-winner data — genuinely unstarted, not ruled out by the
+   trail-grid result (TP was tested only in combination with the trail
+   grid, never in isolation against E0's own trail).
+2. **If revisiting trail width**, test the untested direction: arm/width
+   values *tighter* than E0's own (30% arm, 25% width) — the TS-BATCH
+   grid only tested >= those values.
+3. Resolve the `MIN_PATH_COVERAGE_PCT` denominator question (§4), or
+   keep growing combined-corpus n via periodic THR reconstruction runs
+   (though note: reconstructed-sourced tokens contributed zero winners
+   to the trail-grid derivation — they help the absolute-n floor and
+   entry-side representativeness, not exit-timing questions on winners).
+4. Decide V8-P0 vs V8-P3 (§2) as the one deployed entry candidate.
+5. Design position sizing (§6) — currently flat, unexamined.
+6. **Only after 1-5 are settled**: pre-register the final
    candidate+exit combination and run the one-time holdout evaluation
    (§5) — the actual go/no-go gate. Not before.
-8. Separately, on the execution-infrastructure track (not V8 research):
+7. Separately, on the execution-infrastructure track (not V8 research):
    resolve the T22 `pumpswap_local` simulation failure.
 
 ---
 
 ## 8. Stress test: what's still unresolved even after trail_stop is fixed
+
+**Outcome note, same day this was written:** two of the specific risks
+flagged below (the measurement trap and the hard_stop-interaction
+effect) were checked directly, not left as theory — see §3c's update.
+Both materialized in the real grid numbers and are exactly why zero
+cells beat E0. This section is left exactly as originally written; it
+turned out to be the right list of things to check before trusting any
+"trail is fixed" result, which is the whole reason it existed.
 
 Fixing trail_stop (§3c, §7 step 1) is not a finish line. Stress-tested
 this explicitly, 2026-09-10, before it gets mistaken for one:
@@ -368,6 +408,7 @@ don't treat any single fix in §3 as closing out the project.
 | `research/thr_sample_t2.py` + `research/thr_t2_sample.json` | Pre-registered 500-token sample (T2), frozen before reconstruction ran. |
 | `research/thr_run_t3.py` + `research/thr_t3_results.json` | The reconstruction run: 178 valid usable paths (T3). |
 | `research/thr_run_t5.py` + `research/thr_t5_results.json` | E0-E3 replayed on the combined forward+reconstructed corpus (T5), split by path source. |
-| `research/thr_winner_exit_analysis.py` + `research/thr_winner_exit_results.json` | **The most actionable file for next steps** — per-real-winner, per-exit-spec breakdown of what each exit rule actually captured vs the eventual peak. |
+| `research/thr_winner_exit_analysis.py` + `research/thr_winner_exit_results.json` | Per-real-winner, per-exit-spec breakdown of what each exit rule actually captured vs the eventual peak — the input the TS-BATCH grid was built from. |
+| `research/thr_run_ts.py` + `research/thr_ts_grid_results.json` | **TS-BATCH grid**: censoring-aware trail/TP retuning attempt (2026-09-10) — 32 cells tested, zero beat E0. Full per-cell data, including the two risk mechanisms (`hard_stop_hit_rate`, `censored_fraction`) that decided the outcome. |
 | `research/v8_execution_cost_model.py` | Documents its own `LINEAR_SIZE_PROJECTION_ONLY` limitation (§6). |
 | `logs/research_paths/reconstructed/` | The reconstructed path CSVs themselves (VPS-disk-resident, deliberately untracked-but-not-gitignored, same convention as `logs/research_paths/` generally). |

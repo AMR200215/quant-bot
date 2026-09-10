@@ -4640,3 +4640,96 @@ sign-off process as every other threshold in this project.
 breakdown.
 
 **T5 status: COMPLETE.** THR-BATCH (T1-T5) status: **COMPLETE.**
+
+### TS-BATCH — censoring-aware trail/TP grid: nothing beat E0, and the reasons why matter
+
+`research/thr_run_ts.py`, run 2026-09-10. Direct follow-up to the
+winner-exit-analysis section above, built to properly test whether
+widening trail_stop (the apparent leak, 13-31% captured_fraction) or
+adding a TP ladder actually helps once two specific risks — both flagged
+in `docs/V8_COMPLETE_SETUP_2026-09-10.md`'s stress-test section (§8)
+*before this ran* — are corrected for.
+
+**TS1 (censoring guard):** a `path_end` exit means the recorded path ran
+out before any real exit rule fired — a right-censored observation, true
+outcome unknown, not whatever the last recorded price happens to be.
+Every trade now gets a second, pessimistic score, imputed at the
+candidate spec's own `hard_stop` value (reusing YD2's established
+no-path-mass imputation pattern verbatim, not inventing a new one).
+
+**Real finding, not predicted:** zero of the 179 reconstructed-sourced
+tokens across both candidates ever reached the +50% winner threshold
+(highest observed: +15.9%, both candidates). The combined-corpus winner
+set is IDENTICAL to the forward-only set (V8-P0: 16, V8-P3: 9) — the
+TS-BATCH prompt's own stated expectation ("expect n to jump from 25
+toward 60-100") did not hold. Root cause matches T1/T3 exactly:
+reconstructed paths average ~8 ticks over a few seconds — structurally
+too short to show a winner-magnitude move within the recorded window.
+
+**Second real finding: the combined-corpus population itself is heavily
+censored** — 60%/56% of ALL trades (V8-P0/V8-P3) under E0 are censored
+in the combined scope, vs only 6.7%/5.8% in forward-only. This means
+T5's earlier finding that the "combined corpus" mean net EV looked
+*better* than forward-only (V8-P0: -10.0% combined vs -21.1% forward-only,
+optimistic scoring) was substantially a censoring artifact: reconstructed
+tokens' short, barely-moved paths score as small, uncertain losses under
+optimistic scoring, but pessimistically (correctly) they're unresolved,
+not evidence of anything — once imputed at E0's own hard_stop floor,
+**combined-corpus pessimistic EV is WORSE than forward-only** (V8-P0:
+-32.4% combined vs -26.2% forward-only). Flagged here as a correction to
+how the combined-corpus framing in the earlier T5 entry should be read —
+it doesn't invalidate T5's winner-preservation conclusions (all real
+winners are forward-sourced, unaffected), but the raw "combined looks
+better" mean-EV framing does not hold up under the same pessimism T5
+itself established was necessary for path_end exits.
+
+**TS2 (the grid):** 32 cells, arm x {30,40,50,75}%, width x
+{25,30,40,50}%, tier2/tier3 arm points fixed at E0's own +100%/+300%,
+tier3 width preserving E0's own tier1:tier3 ratio. Two TP variants (none;
+50%/25%+100%/25%). hard_stop/time_stop/profit_lock held at E0's values
+throughout — isolates trail/TP only. Scored on both forward-only and
+combined scopes from one replay pass per cell per candidate.
+
+| Candidate | n_population (winners) | E0 pessimistic EV, forward-only | E0 pessimistic EV, combined | Cells qualifying (of 32) |
+|---|---|---|---|---|
+| V8-P0 | 210 (16) | -26.19% | -32.36% | **0** |
+| V8-P3 | 111 (9) | -21.91% | -29.92% | **0** |
+
+**Zero cells beat E0.** The grid's tightest, earliest-arming corner
+(arm=30%, width=25%) reproduces E0's own configuration exactly and is
+the best-scoring point in the grid — every wider/later-arming variant
+tested scores worse. Mechanism, checked directly on real cells (e.g.
+V8-P0's widest cell, arm=75%/width=50%): winner `mean_capture` barely
+moves under optimistic scoring (0.308 -> 0.317) while
+`hard_stop_hit_rate` rises (31.4% -> 33.3%) and `censored_fraction` rises
+(0.60 -> 0.619) — both of §8's flagged risks (the trail/hard_stop
+priority-order interaction, and the path_end measurement trap) showing
+up directly in the real numbers, and both large enough to erase any
+apparent capture-fraction gain once scored honestly:
+`winner_mean_capture_pessimistic` goes NEGATIVE for the wider cells
+(-0.114 to -0.136) vs E0's own 0.022 — meaning more real winners end up
+unresolved (censored) rather than genuinely capturing more value.
+
+**TS3 (selection):** `select_proposals()` — 0 qualifying cells on either
+candidate. **No E4/E5 proposal drafted.** Consistent with this project's
+standing discipline (same as the hard_stop CORRECTION above): a proposal
+doesn't get written just because one was expected going in. This grid,
+as pre-registered (only testing arm/width values >= E0's own), cannot
+rule out that a TIGHTER trail (narrower than E0's 25%, earlier arm than
+30%) might do better — that direction was not tested and remains open.
+
+**TS4 (temporal validation gate):** `temporal_validation_gate()` built
+and pre-registered — fresh-winner capture (alert_time strictly after a
+cutoff, >=5 fresh winners required) must land within ±15 percentage
+points of derivation-set capture (reasoned: the derivation set itself is
+only 9-16 winners; a tighter tolerance would fail on sampling noise
+alone). Moot for this run — TS3 produced no candidate to validate. The
+mechanism is ready for whenever a future grid (e.g. exploring tighter
+values) does produce one.
+
+Full per-cell data: `research/thr_ts_grid_results.json`. 21 new tests,
+full suite green (635 local).
+
+**TS-BATCH status: COMPLETE.** Result: E0's current trail/TP
+configuration is not beaten by anything tested in the wider/later-arming
+direction, once scored honestly. No exit-spec change made or proposed.

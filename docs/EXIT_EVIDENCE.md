@@ -69,3 +69,36 @@ soonest. Any shakeout/trail/reversal conclusion drawn from the combined
 corpus likely **understates** extreme-winner tail behavior, not
 overstates it. `progress_at_signal` and `vsol_at_signal` are essentially
 unbiased (see the same RECEIPTS entry).
+
+## TS-BATCH grid: trail/TP retuning tested, nothing beat E0
+
+Ran 2026-09-10 (`research/thr_run_ts.py`, full receipt in
+`docs/RECEIPTS.md`). Pre-registered 32-cell grid (trail arm x
+{30,40,50,75}%, width x {25,30,40,50}%, two TP variants), every cell
+scored on the combined corpus with a censoring-aware pessimistic
+imputation for `path_end` exits (a right-censored observation scored at
+the candidate spec's own hard_stop floor, not the possibly-rosy last
+recorded price — reuses the YD2 no-path-mass imputation pattern
+verbatim).
+
+| Candidate | n_population (winners) | E0 pessimistic EV, forward-only | E0 pessimistic EV, combined | Cells qualifying (of 32) |
+|---|---|---|---|---|
+| V8-P0 | 210 (16) | -26.19% | -32.36% | **0** |
+| V8-P3 | 111 (9) | -21.91% | -29.92% | **0** |
+
+**Zero cells beat E0 on either candidate.** The grid's own tightest,
+earliest-arming point (arm=30%, width=25%) reproduces E0 exactly (its
+own values) and scores as the best cell in the grid — every wider/
+later-arming variation tested scores worse once censoring-pessimism and
+the hard_stop-interaction effect are applied. Full per-cell table:
+`research/thr_ts_grid_results.json`. No E4/E5 proposal drafted — the
+data doesn't support one; see `docs/RECEIPTS.md` for the full mechanism
+and the two flagged risks (both from this same document's earlier
+stress-test section) that turned out to materialize in the real numbers.
+
+**Separately, real finding, not predicted going in:** zero of the 179
+reconstructed-sourced tokens across both candidates ever reached the
++50% winner threshold (highest observed: +15.9%) — the combined-corpus
+winner set is identical to the forward-only set. Reconstructed paths are
+too short (T1/T3: ~8 ticks over a few seconds) to show a winner-magnitude
+move within their recorded window.
