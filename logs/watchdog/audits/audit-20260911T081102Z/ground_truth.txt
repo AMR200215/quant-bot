@@ -1,0 +1,51 @@
+# Audit Summary — audit-20260911T081102Z
+
+## Deployed git SHA / working tree
+- HEAD SHA: `188cc85b94d884b219bb08d26e889c0213f0d643` (EV002). This same SHA is echoed as `git_sha` in the latest fast watchdog run, the latest slow watchdog run, and in job receipts for `k5_nightly`, `v8_vs_v7_daily`, and `epoch_daily` (EV005), so the running services correspond to this commit.
+- Working tree is **not clean**: EV002 lists modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, several logs, memecoin position/signal JSON files) and a substantial number of untracked files/directories (`logs/epoch_daily.jsonl`, `logs/price_paths/`, `research/data/`, `research/spool/dropped_fields.jsonl`, `research/spool/failed_inserts.jsonl`, ad hoc scripts `p15_1_2_audit.py` and `scratch_incident_check.py`, etc.). I cannot tell from this evidence alone whether these are expected runtime-generated artifacts or unreviewed changes — the evidence only shows their presence, not their origin or intent.
+
+## systemd services / timers (EV003)
+- `quantbot.service`: active/running, last exec success (Result=success, ExecMainStatus=0).
+- `quantbot-research.service`: active/running, last exec success.
+- `quantbot-watchdog-fast.service`: **inactive/dead**, but last recorded Result=success/ExecMainStatus=0 — consistent with a oneshot service that exits after each run rather than a crash. The associated timer (`quantbot-watchdog-fast.timer`) shows it last fired 57s before the snapshot and is scheduled to fire again in ~4 min, so the fast watchdog appears to be running on schedule via timer, not as a persistent daemon.
+- `quantbot-watchdog-slow.service`: same pattern — inactive/dead with success exit, timer last fired 7 min ago, next fire in ~51 min.
+- No failed units are shown in this evidence.
+
+## Cron (EV004)
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode `0o100644`, all wrapping their target scripts in `watchdog.exec_wrapper` with job IDs matching receipts seen in EV005 (`epoch_daily`, `v8_vs_v7_daily`, `k5_nightly`).
+- `recent_parser_error_lines` is an empty list — no cron parser errors recorded (EV004).
+- Watchdog's own `cron_static.*` checks for all three jobs report status OK ("parses cleanly, no recent journal parser errors") (EV005).
+
+## Watchdog's own most recent run status
+- Latest fast run (`ff88dcb24d294c3c`): started/finished 1789114205.x, duration ~13.6ms, 11/11 checks completed, `final_runner_status: "ok"` (EV005).
+- Latest slow run (`a265e2628d6742f0`): started/finished 1789113792.x, duration ~18.3ms, 10/10 checks completed, `final_runner_status: "ok"` (EV005).
+- Both runs report `boot_id` matching the host's current boot (`d0a4169b-96f4-4bb1-b365-92ca527627e6`, EV001/EV005), so these are runs from the current boot, not stale carryover.
+
+## Active incidents (EV005, `all_incidents`)
+Two incidents are currently in **FIRING** state (not recovered):
+1. **`funnel.v8`** — severity CRITICAL. `first_seen` 1786748706.9, `last_seen` 1789114205.4 (matches the current fast-run timestamp), `consecutive_failures: 4745`, last notified 1789104305.3, `recovered_at: null`. The corresponding check result in the latest fast run confirms this is currently active: status CRITICAL, reason describes 1 candidate stuck at `telegram_received` stage >120s with no terminal disposition (example mint `AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump`, event `bd6003380054eb57`, ts 1787710096.66). Note the example timestamp (1787710096) is far older than the incident's `last_seen` (1789114205), indicating this stale/unresolved example may not itself be the current cause, or the incident has been persistently reoccurring across a long window — evidence does not clarify whether it's the same candidate or a new one each check cycle.
+2. **`claims.batch.v8_readiness`** — severity WARN. `first_seen` 1786585581.2, `last_seen` 1789113792.1 (matches latest slow run), `consecutive_failures: 814`, `recovered_at: null`. Latest slow-run check confirms: batch `v8_readiness` has 4/7 items in PARTIAL state (`N2`, `N4`, `N6`, `N7`), 3/7 GREEN, 0 FAIL. The evidence explicitly notes this batch's CLI exit code would report 0 (success) despite the PARTIAL items.
+
+All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `research.path_collection`, `feed.telegram`, `pipeline.research_queue_lag`) show `state: "RECOVERED"` with non-null `recovered_at` timestamps and `consecutive_failures: 0` — i.e., historically fired but are not currently active per this snapshot (EV005).
+
+## Research pipeline queue lag
+- Fast-run check `pipeline.research_queue_lag`: status OK, "consumer caught up (gap=0 bytes)", `queue_size: 2992439`, `offset: 2992439`, `gap_bytes: 0` (EV005).
+- EV006 independently reports `queue_size: 2992439` and `queue_offset: "2992439"`, consistent with the watchdog check — no lag evidenced at this snapshot.
+
+## Other observations
+- **Spool failures**: `pipeline.research_spool` check is OK — 0 failed inserts in the last 2 hours, though 68 total historical lines exist on disk; the watchdog itself states this total is "not itself evidence of an active problem" (EV005). Correspondingly, EV002 shows `research/spool/dropped_fields.jsonl` and `research/spool/failed_inserts.jsonl` as untracked files present on disk — their contents are not shown in this bundle, so I cannot characterize what, if anything, is in them beyond the count already cited by the watchdog.
+- **Telegram feed**: OK, last event 1510s ago against a 7200s threshold (EV005). This check has a RECOVERED incident in its history (last_seen 1789093203.2), implying feed.telegram alerted at some prior point but is not currently firing.
+- **PumpPortal feed**: OK, last connect line at 08:09:35 UTC same day, described as normal ~45-60s rotation behavior (EV005). Also has a RECOVERED historical incident (last_seen 1789054803.6).
+- **Layer 2 audit staleness**: OK, last audit `audit-20260910T081608Z` ran 23.8h before this snapshot, with 5 findings and 0 critical (EV005). I have no visibility into the content of those 5 findings from this evidence bundle.
+- **Test collection**: All four test suites (memecoin, research, watchdog, quant-bot root) collect cleanly with nonzero test counts (304, 635, 103, 56 respectively) (EV005). This confirms tests *collect*; it is not evidence that tests *pass* — no pass/fail results are present in this bundle.
+- **Mock/patch drift**: `test_drift.stale_mocks` OK, 153 resolvable patch targets checked in own-package modules; the check explicitly states third-party/stdlib targets are skipped and unverified (EV005).
+- **Claims batch `rc_closure`**: OK, 3/3 GREEN, tied to commit `db32f53` (EV005) — note this commit hash differs from the current HEAD SHA `188cc85...` (EV002); the evidence does not explain this discrepancy (e.g., whether `rc_closure` was verified against a prior commit).
+- **Receipts file**: `docs/RECEIPTS.md`-adjacent tail file (EV007) has mtime 1789084681.18, which matches the `finished_at` of the `v8_vs_v7_daily` job receipt (1789084681.19, EV005) — consistent with that job having written to it at that time. Its length (258224 bytes) is reported with no prior baseline for comparison, so growth/shrinkage cannot be assessed from this evidence alone.
+- **Host uptime**: 5,730,734.45s (~66.3 days) as of EV001, with boot_id `d0a4169b-...` matching the boot_id recorded in both watchdog runs (EV005) — confirming no reboot occurred between the watchdog runs and this snapshot.
+
+## Explicit gaps / ambiguities (not filled with assumption)
+- No evidence shown for the actual content/severity of the 5 Layer 2 audit findings referenced in `layer2.staleness` (EV005).
+- No pass/fail test execution results are present — only collection success for the four suites (EV005).
+- The relationship between the dirty-tree files listed in EV002 and normal runtime operation vs. uncommitted manual changes cannot be determined from this evidence.
+- The discrepancy between `rc_closure`'s associated commit `db32f53` and current HEAD `188cc85b...` is unexplained by the evidence provided.
+- The `funnel.v8` incident's cited example timestamp (1787710096) predates the incident's `last_seen` (1789114205) by a wide margin; whether this is the same unresolved candidate persisting or the evidence sample is simply not the most recent instance is not clarified by the bundle.
