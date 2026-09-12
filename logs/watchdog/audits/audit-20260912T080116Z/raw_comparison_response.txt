@@ -1,0 +1,76 @@
+```json
+[
+  {
+    "finding_id": "F1",
+    "severity": "INFO",
+    "component": "receipts_tail artifact content",
+    "claim": "TS-BATCH status: COMPLETE. Result: E0's current trail/TP configuration is not beaten by anything tested... 21 new tests, full suite green (635 local).",
+    "observed_ground_truth": "EV007 shows only artifact metadata (mtime 1789171081.94, length 258315 bytes) with no content visible; EV005 test_drift.collection.tests_memecoin reports clean collection (304 tests) for memecoin, and research shows 635 tests collecting cleanly with no errors reported.",
+    "expected_ground_truth": "The claim asserts a specific analytical result (TS-BATCH COMPLETE, no proposal drafted, 635 local tests green) that would need to be verified against actual test run output or receipts content.",
+    "evidence_ids": ["EV007", "EV005"],
+    "operational_impact": "The narrative content of the TS-BATCH analysis cannot be independently confirmed from ground-truth evidence; the test collection counts are consistent but do not prove the specific claimed results (e.g., '0 qualifying cells', 'full suite green').",
+    "suggested_next_step": "Inspect research/thr_ts_grid_results.json and the actual receipts_tail content (not just metadata) to confirm the TS3/TS4 results match the claim.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "test suite green claim vs dirty working tree",
+    "claim": "21 new tests, full suite green (635 local)." ,
+    "observed_ground_truth": "EV002 shows the working tree is dirty with modifications to tracked files and numerous untracked files, including logs and data files, with no explanation of why. Test collection checks in EV005 show clean collection but do not confirm pass/fail status of the full suite, only that collection (import/discovery) succeeds.",
+    "expected_ground_truth": "A claim of 'full suite green' implies all tests pass, which is a stronger and different assertion than 'collection succeeds with no errors' as reported by test_drift.collection checks.",
+    "evidence_ids": ["EV002", "EV005"],
+    "operational_impact": "Ground truth cannot confirm actual pass/fail test results, only that test discovery/collection is clean; the claim of a fully green suite is unverified by available evidence.",
+    "suggested_next_step": "Run the full test suite directly on the deployed commit and compare pass/fail counts against the claimed 635 green.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F3",
+    "severity": "WARN",
+    "component": "V8_PAPER_ENTRY_GATE_SWITCH deploy vs commit SHA",
+    "claim": "Deploy: committed 07dd982, pushed, pulled on VPS clean (no conflicts), systemctl restart quantbot. Live log line confirms gate=CURVE_ACTIVE [V8-P0], config_tag=v8_candidate_2026-09-10_v8p0.",
+    "observed_ground_truth": "EV002 shows the deployed HEAD SHA is 128210d7cd93eeb9518e8e315a9422adcc90f50b, not 07dd982. No evidence item in the ground-truth bundle shows this commit hash, the referenced config_tag, or the claimed live log line.",
+    "expected_ground_truth": "If the deploy claim is accurate, the deployed HEAD should either be 07dd982 or a descendant commit that includes it, and some evidence (log grep, config inspection) should surface the v8_candidate_2026-09-10_v8p0 tag or CURVE_ACTIVE gate log line.",
+    "evidence_ids": ["EV002"],
+    "operational_impact": "Cannot confirm from evidence that the claimed V8-P0 gate change is actually present in the running deployed code; the commit SHA discrepancy (also seen with claims.batch.rc_closure reporting db32f53) raises doubt about which commit is truly live.",
+    "suggested_next_step": "Run 'git log --oneline -1' and 'git log --all --grep=07dd982' on the VPS, and grep live logs for 'v8_candidate_2026-09-10_v8p0' or 'gate=CURVE_ACTIVE' to confirm the claimed deploy.",
+    "confidence": "high"
+  },
+  {
+    "finding_id": "F4",
+    "severity": "INFO",
+    "component": "V8_PAPER live-admission not yet confirmed",
+    "claim": "Not yet done: no fresh V8-P0-gated paper trades have landed yet to confirm the new gate is actually admitting positions at the expected rate live (only the startup log line is verified so far).",
+    "observed_ground_truth": "Ground truth has no direct evidence of v8_paper.py behavior, position admission rates, or the startup log line itself; EV002 lists memecoin/data/memecoin_positions.json and memecoin/data/memecoin_signals.json as modified tracked files, which is consistent with ongoing trading activity but does not confirm gate-specific behavior.",
+    "expected_ground_truth": "The claim itself acknowledges this is unverified/live-observation-pending, which aligns with the absence of corroborating evidence in the ground-truth bundle.",
+    "evidence_ids": ["EV002"],
+    "operational_impact": "This is a self-acknowledged gap in the claim itself; no contradiction with ground truth, but also no independent confirmation exists.",
+    "suggested_next_step": "Query memecoin_positions.json / memecoin_signals.json for entries tagged with config_tag v8_candidate_2026-09-10_v8p0 to verify live admission behavior.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F5",
+    "severity": "WARN",
+    "component": "funnel.v8 CRITICAL incident vs claims of system health",
+    "claim": "(Implicit in both claims) System changes (TS-BATCH complete, V8_PAPER_ENTRY_GATE_SWITCH live-verified) presented as healthy, validated deployments with no mention of any active critical incident.",
+    "observed_ground_truth": "EV005 shows funnel.v8 is CRITICAL and FIRING with consecutive_failures: 5035, and claims.batch.v8_readiness is WARN/FIRING with consecutive_failures: 841 and PARTIAL status on 4/7 readiness items -- both directly relevant to 'v8' functionality that the claims describe as recently changed/deployed.",
+    "expected_ground_truth": "If V8_PAPER_ENTRY_GATE_SWITCH and TS-BATCH work were fully healthy and 'LIVE_VERIFIED'/'COMPLETE', one would expect no unresolved CRITICAL/WARN incidents specifically tied to v8 funnel/readiness at the time of this audit.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "There is an active, long-running CRITICAL incident in the v8 funnel pipeline and a WARN incident in v8_readiness batch checks that the claims do not acknowledge or reconcile, suggesting the claimed 'LIVE_VERIFIED' status may not reflect current operational health.",
+    "suggested_next_step": "Investigate funnel.v8 incident details (mint AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump, event bd6003380054eb57) and the 4 PARTIAL items (N2, N4, N6, N7) in claims.batch.v8_readiness to determine if they relate to the V8-P0 gate change.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "V8_CONFIG_TAG and gate parameters",
+    "claim": "V8_CONFIG_TAG bumped to v8_candidate_2026-09-10_v8p0; V8_PROGRESS_MAX constant removed entirely.",
+    "observed_ground_truth": "No evidence item inspects memecoin source code, config constants, or config_tag values currently in effect on the deployed HEAD.",
+    "expected_ground_truth": "A code-level claim about constant removal and config tag values would require source inspection to confirm, which is outside the scope of the evidence gathered (systemd, cron, watchdog, git status only).",
+    "evidence_ids": ["EV002"],
+    "operational_impact": "Ground truth cannot confirm or deny this specific code-level claim; it is neither corroborated nor contradicted.",
+    "suggested_next_step": "grep for V8_PROGRESS_MAX and V8_CONFIG_TAG in the deployed memecoin/v8_paper.py to confirm the described code change is present.",
+    "confidence": "low"
+  }
+]
+```
