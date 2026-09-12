@@ -4778,7 +4778,59 @@ Positions-file race handled per the established double-snapshot pattern
 stash window; restored the fresher snapshot rather than the stale
 stashed copy). Stash count verified back to baseline (50) after deploy.
 
-**Not yet done**: no fresh V8-P0-gated paper trades have landed yet to
-confirm the new gate is actually admitting positions at the expected
-rate (only the startup log line is verified so far) — that's a
-paper-trade-observation item, not a code-readiness one.
+**Update, same day (2026-09-12): the "not yet done" item above turned
+out to be a real bug, not just unobserved.** Checked 41h after this
+deploy — v8_paper had opened **zero** paper positions despite processing
+73 real Telegram signals: 33 rejected `progress_unknown`, 40 rejected
+`pp_unpriced`. Root-caused both, both upstream of the V8-P0 gate rule
+itself (that rule change above is not implicated):
+
+1. **progress_unknown (33/73)**: `_GATE_CAPTURE_WAIT_S=0.5` in
+   `v8_paper.py` assumed the gate check runs after V7's ~1-2s
+   `screen_token()` overhead, giving progress-capture
+   (`memecoin/progress_capture.py`) a real head start before the wait
+   even begins. False for V8-REWIRE's actual architecture:
+   `maybe_open_from_alert()` dispatches its own thread immediately, in
+   parallel with `capture_progress_async()`, not after V7's screening —
+   so 0.5s was the entire budget for the full Source A (instant) ->
+   Source B (curve_account RPC, ~150ms batch window + ~200-400ms RPC) ->
+   Source C (PP-tick fallback, up to 2.0s more) waterfall. Verified live:
+   the exact mint that failed `progress_unknown` at 12:48:55 that day
+   resolved instantly and correctly (real vsol, `CURVE_ACTIVE`) via a
+   direct standalone call to Source B's own RPC function when tested
+   right after — proving the RPC path itself was healthy and the timeout
+   was the only problem. Fixed: widened to 2.3s (paper-only book, zero
+   latency cost).
+
+2. **pp_unpriced (40/73)**: `_resolve_entry_price` had no fallback at
+   all when no PumpPortal tick arrived within its 2.0s budget — pure
+   dependence on a live trade tick landing on that specific token in
+   that specific window, silent 100% failure otherwise. Added a
+   curve-account-based price fallback, reusing
+   `research.curve_oracle.get_curve_prices_batch` (the same on-chain
+   read Source B above already uses) with its own honest SOL/USD
+   freshness tracking. Deliberately did **not** reuse
+   `memecoin/executor.py`'s `_sol_price_usd()` cache for this — found
+   separately while investigating, that cache bumps its own "last
+   updated" timestamp even when the Jupiter fetch **fails**
+   (`executor.py`'s exception handler), so any staleness check built on
+   it can never actually detect sustained fetch failure; it would look
+   "fresh" indefinitely. **This is a real, separate latent bug in
+   live-money pricing code** (used for real buy/sell fill pricing, not
+   just this paper twin) — flagged here for visibility, not fixed as
+   part of this change since it's out of `v8_paper.py`'s scope and
+   `LIVE_TRADING=false` means it isn't actively mispricing anything
+   right now. Worth a dedicated look before any future go-live.
+
+9 new tests (`memecoin/tests/test_v8_paper.py`, `TestCurveFallbackPricing`),
+28/28 passing in that file, 685 passing across all v8-related suites.
+Committed `900d47b`, pushed, deployed (stash/pull/pop, positions-file
+race handled per the established pattern, stash count verified back to
+baseline). Live restart confirmed clean via the same startup log line.
+
+**Still genuinely open**: no fresh paper trade has landed under the
+fixed code yet — the next real Telegram alert will confirm end-to-end
+(out of anyone's control when that arrives; recent cadence was roughly
+1-2/hour). If `progress_unknown`/`pp_unpriced` rates stay elevated after
+a reasonable sample post-fix, that would mean a third, still-undiscovered
+cause exists and this investigation should reopen.
