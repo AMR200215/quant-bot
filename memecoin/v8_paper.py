@@ -182,12 +182,24 @@ def _paths():
 # Entry gate
 # ---------------------------------------------------------------------------
 
-# PROGRESS-FIX PF6: how long passes_v8_gate will wait for an in-flight
-# capture before failing closed. By the time this runs (after screen_token's
-# ~1-2s), capture usually already has a head start from _t0 — this is just a
-# short final grace period, not the primary wait mechanism (that's PF3's
-# async capture, started at alert time). Paper-only book, not live capital.
-_GATE_CAPTURE_WAIT_S = 0.5
+# PROGRESS-FIX PF6, CORRECTED 2026-09-12: how long passes_v8_gate will wait
+# for an in-flight capture before failing closed. The original 0.5s value
+# assumed this runs "after screen_token's ~1-2s", giving capture a real head
+# start — that premise is FALSE for the V8-REWIRE architecture:
+# maybe_open_from_alert() dispatches its own thread immediately (see that
+# method), in parallel with capture_progress_async(), not after V7's
+# screening. So this wait is the ENTIRE budget for the full Source
+# A->B->C waterfall, not a final grace period on top of a head start.
+# Source B (curve_account, the reliable one) alone typically needs
+# ~150ms batch window + ~200-400ms RPC; Source C (PP-tick fallback, only
+# reached if B fails) needs up to PP_POST_ALERT_TIMEOUT_S=2.0s more.
+# Root-caused live 2026-09-12: 33/73 real signals over 41h failed
+# `progress_unknown` under the old 0.5s budget (see docs/RECEIPTS.md).
+# Widened to comfortably cover the worst realistic case (B failing through
+# to C): ~150ms + 2.0s + margin. Paper-only book, not live capital, so
+# this added latency has zero cost — nothing here is on any time-critical
+# path.
+_GATE_CAPTURE_WAIT_S = 2.3
 
 
 def _get_capture_for_gate(chain: str, token_address: str, event_id: str = ""):
@@ -317,6 +329,83 @@ def _is_transport_duplicate(event_id: str) -> bool:
 _PRICE_WAIT_S = 2.0
 _PRICE_POLL_INTERVAL_S = 0.2
 
+# Added 2026-09-12: root-caused live that _resolve_entry_price had NO
+# fallback at all when no PumpPortal tick arrived within _PRICE_WAIT_S --
+# 40/73 real signals over 41h ended pp_unpriced (docs/RECEIPTS.md). This
+# is the same on-chain bonding-curve read progress_capture.py's Source B
+# already uses (research.curve_oracle), reused here as a price fallback
+# rather than giving up.
+#
+# Deliberately NOT reusing memecoin.executor._sol_price_usd()'s cache:
+# that cache bumps its own "last updated" timestamp even when the fetch
+# FAILS (see its exception handler), so its 60s TTL cannot honestly tell
+# a stale price from a fresh one under sustained Jupiter rate-limiting --
+# it would silently look "fresh" indefinitely. A real bug, flagged
+# separately in docs/RECEIPTS.md; not fixed here since it touches
+# executor.py (live-money pricing code), out of this module's scope. This
+# cache only ever calls itself fresh immediately after a real success.
+_sol_price_cache: dict = {"price": 0.0, "ts": 0.0}
+_sol_price_lock = threading.Lock()
+_SOL_PRICE_TTL_S = 60.0
+
+
+def _fresh_sol_price_usd() -> tuple[float, float]:
+    """Returns (price, age_s). age_s is float('inf') if never successfully
+    fetched -- an honest signal to the caller, never a silent stale reuse."""
+    with _sol_price_lock:
+        price, ts = _sol_price_cache["price"], _sol_price_cache["ts"]
+    age = time.time() - ts if ts > 0 else float("inf")
+    if age < _SOL_PRICE_TTL_S:
+        return price, age
+    try:
+        import requests
+        resp = requests.get(
+            "https://lite-api.jup.ag/swap/v1/quote",
+            params={
+                "inputMint":  "So11111111111111111111111111111111111111112",
+                "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "amount":     1_000_000_000,
+            },
+            timeout=3,
+        )
+        resp.raise_for_status()
+        new_price = round(float(resp.json()["outAmount"]) / 1e6, 4)
+        with _sol_price_lock:
+            _sol_price_cache["price"] = new_price
+            _sol_price_cache["ts"] = time.time()
+        return new_price, 0.0
+    except Exception as e:
+        log.debug("v8_paper: SOL/USD fetch failed for curve-fallback pricing: %s", e)
+        # ts NOT bumped -- age stays honest (inf on first-ever failure,
+        # or the real elapsed time since the last genuine success).
+        return price, age
+
+
+def _curve_fallback_price(token_address: str) -> tuple[float, str]:
+    """Direct on-chain bonding-curve price read, used only when no
+    PumpPortal tick arrived in budget. Returns (price, entry_source);
+    price==0.0 means this fallback also could not produce a trustworthy
+    price -- never silently substitutes a stale/foreign value."""
+    try:
+        import os
+        helius_key = os.getenv("HELIUS_API_KEY", "")
+        if not helius_key:
+            return 0.0, "curve_fallback_no_key"
+        sol_price, sol_age = _fresh_sol_price_usd()
+        if sol_price <= 0:
+            return 0.0, "curve_fallback_no_sol_price"
+        from research.curve_oracle import get_curve_prices_batch
+        results = get_curve_prices_batch([token_address], helius_key, sol_price, sol_age)
+        r = results.get(token_address)
+        if r is None or r.get("price_usd") is None or r.get("price_usd") <= 0:
+            reason = (r or {}).get("failure_reason") or "curve_fallback_unavailable"
+            return 0.0, f"curve_fallback_{reason}"
+        return r["price_usd"], "curve_fallback"
+    except Exception as e:
+        log.debug("v8_paper: curve fallback pricing failed for %s: %s",
+                  token_address[:8] if token_address else "?", e)
+        return 0.0, "curve_fallback_error"
+
 
 def _resolve_entry_price(chain: str, token_address: str) -> tuple[float, str]:
     """Returns (price, entry_source). price==0.0 means unpriced within
@@ -337,6 +426,11 @@ def _resolve_entry_price(chain: str, token_address: str) -> tuple[float, str]:
         if price > 0:
             return price, "pp_tick_v8_fork"
         time.sleep(_PRICE_POLL_INTERVAL_S)
+    # No PP tick arrived in budget -- try the on-chain curve read before
+    # giving up (2026-09-12; see module-level comment above).
+    price, source = _curve_fallback_price(token_address)
+    if price > 0:
+        return price, source
     return 0.0, "pp_unpriced"
 
 

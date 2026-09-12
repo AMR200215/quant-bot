@@ -408,5 +408,96 @@ class TestMaybeOpenFromAlertDispatchesAsync(unittest.TestCase):
         release.set()
 
 
+class TestCurveFallbackPricing(unittest.TestCase):
+    """2026-09-12: _resolve_entry_price had no fallback at all when no
+    PumpPortal tick arrived in budget (root-caused live: 40/73 real
+    signals over 41h ended pp_unpriced). These test the new on-chain
+    curve-read fallback and its SOL/USD freshness tracking."""
+
+    def setUp(self):
+        import memecoin.v8_paper as v8_paper
+        self._v8_paper = v8_paper
+        self._orig_cache = dict(v8_paper._sol_price_cache)
+        v8_paper._sol_price_cache["price"] = 0.0
+        v8_paper._sol_price_cache["ts"] = 0.0
+
+    def tearDown(self):
+        self._v8_paper._sol_price_cache.update(self._orig_cache)
+
+    def test_sol_price_success_updates_cache_with_fresh_age(self):
+        v8p = self._v8_paper
+        resp = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"outAmount": "170000000"},
+        )
+        with patch("requests.get", return_value=resp):
+            price, age = v8p._fresh_sol_price_usd()
+        self.assertEqual(price, 170.0)
+        self.assertEqual(age, 0.0)
+        self.assertEqual(v8p._sol_price_cache["price"], 170.0)
+
+    def test_sol_price_failure_does_not_falsely_refresh_age(self):
+        """The bug this guards against: executor._sol_price_usd() bumps
+        its own timestamp even on failure, so a staleness check against
+        it can never detect sustained fetch failure. This cache must not
+        repeat that mistake — age must reflect real elapsed time since
+        the last genuine success, staying inf if there never was one."""
+        v8p = self._v8_paper
+        with patch("requests.get", side_effect=RuntimeError("429")):
+            price, age = v8p._fresh_sol_price_usd()
+        self.assertEqual(price, 0.0)
+        self.assertEqual(age, float("inf"))
+
+    def test_curve_fallback_no_helius_key(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": ""}):
+            price, source = v8p._curve_fallback_price("Mint111")
+        self.assertEqual(price, 0.0)
+        self.assertEqual(source, "curve_fallback_no_key")
+
+    def test_curve_fallback_success(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": "fake_key"}), \
+             patch.object(v8p, "_fresh_sol_price_usd", return_value=(170.0, 0.0)), \
+             patch("research.curve_oracle.get_curve_prices_batch",
+                   return_value={"Mint111": {"price_usd": 0.0000123, "failure_reason": None}}):
+            price, source = v8p._curve_fallback_price("Mint111")
+        self.assertEqual(price, 0.0000123)
+        self.assertEqual(source, "curve_fallback")
+
+    def test_curve_fallback_reports_specific_failure_reason(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": "fake_key"}), \
+             patch.object(v8p, "_fresh_sol_price_usd", return_value=(170.0, 0.0)), \
+             patch("research.curve_oracle.get_curve_prices_batch",
+                   return_value={"Mint111": {"price_usd": None, "failure_reason": "curve_account_missing"}}):
+            price, source = v8p._curve_fallback_price("Mint111")
+        self.assertEqual(price, 0.0)
+        self.assertEqual(source, "curve_fallback_curve_account_missing")
+
+    def test_resolve_entry_price_falls_back_to_curve_when_pp_never_ticks(self):
+        v8p = self._v8_paper
+        fake_monitor = SimpleNamespace(get_prices=lambda: {})
+        with patch.dict("sys.modules", {}), \
+             patch("memecoin.pumpportal_monitor.monitor", fake_monitor), \
+             patch.object(v8p, "_PRICE_WAIT_S", 0.01), \
+             patch.object(v8p, "_PRICE_POLL_INTERVAL_S", 0.005), \
+             patch.object(v8p, "_curve_fallback_price", return_value=(0.0000456, "curve_fallback")):
+            price, source = v8p._resolve_entry_price("solana", "Mint111")
+        self.assertEqual(price, 0.0000456)
+        self.assertEqual(source, "curve_fallback")
+
+    def test_resolve_entry_price_stays_pp_unpriced_if_curve_fallback_also_fails(self):
+        v8p = self._v8_paper
+        fake_monitor = SimpleNamespace(get_prices=lambda: {})
+        with patch("memecoin.pumpportal_monitor.monitor", fake_monitor), \
+             patch.object(v8p, "_PRICE_WAIT_S", 0.01), \
+             patch.object(v8p, "_PRICE_POLL_INTERVAL_S", 0.005), \
+             patch.object(v8p, "_curve_fallback_price", return_value=(0.0, "curve_fallback_no_key")):
+            price, source = v8p._resolve_entry_price("solana", "Mint111")
+        self.assertEqual(price, 0.0)
+        self.assertEqual(source, "pp_unpriced")
+
+
 if __name__ == "__main__":
     unittest.main()
