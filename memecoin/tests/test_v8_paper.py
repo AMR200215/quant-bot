@@ -487,13 +487,28 @@ class TestCurveFallbackPricing(unittest.TestCase):
         self.assertEqual(price, 0.0000456)
         self.assertEqual(source, "curve_fallback")
 
-    def test_resolve_entry_price_stays_pp_unpriced_if_curve_fallback_also_fails(self):
+    def test_resolve_entry_price_preserves_curve_fallback_failure_reason(self):
+        """2026-09-14: previously collapsed every fallback failure to the
+        generic 'pp_unpriced', which made 56/60 real live failures
+        undiagnosable from the journal/log alone -- must preserve the
+        specific reason string instead."""
         v8p = self._v8_paper
         fake_monitor = SimpleNamespace(get_prices=lambda: {})
         with patch("memecoin.pumpportal_monitor.monitor", fake_monitor), \
              patch.object(v8p, "_PRICE_WAIT_S", 0.01), \
              patch.object(v8p, "_PRICE_POLL_INTERVAL_S", 0.005), \
              patch.object(v8p, "_curve_fallback_price", return_value=(0.0, "curve_fallback_no_key")):
+            price, source = v8p._resolve_entry_price("solana", "Mint111")
+        self.assertEqual(price, 0.0)
+        self.assertEqual(source, "curve_fallback_no_key")
+
+    def test_resolve_entry_price_falls_back_to_pp_unpriced_if_no_reason_at_all(self):
+        v8p = self._v8_paper
+        fake_monitor = SimpleNamespace(get_prices=lambda: {})
+        with patch("memecoin.pumpportal_monitor.monitor", fake_monitor), \
+             patch.object(v8p, "_PRICE_WAIT_S", 0.01), \
+             patch.object(v8p, "_PRICE_POLL_INTERVAL_S", 0.005), \
+             patch.object(v8p, "_curve_fallback_price", return_value=(0.0, "")):
             price, source = v8p._resolve_entry_price("solana", "Mint111")
         self.assertEqual(price, 0.0)
         self.assertEqual(source, "pp_unpriced")

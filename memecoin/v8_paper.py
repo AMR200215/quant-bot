@@ -431,7 +431,14 @@ def _resolve_entry_price(chain: str, token_address: str) -> tuple[float, str]:
     price, source = _curve_fallback_price(token_address)
     if price > 0:
         return price, source
-    return 0.0, "pp_unpriced"
+    # 2026-09-14: was `return 0.0, "pp_unpriced"` unconditionally here,
+    # which silently discarded _curve_fallback_price's specific failure
+    # reason (curve_fallback_no_key / curve_fallback_no_sol_price /
+    # curve_fallback_<reason> / curve_fallback_error) -- made this
+    # fallback's own failures undiagnosable from the live log/journal.
+    # Preserve it; "pp_unpriced" only as the bare fallback if somehow no
+    # reason string came back at all.
+    return 0.0, source or "pp_unpriced"
 
 
 # ---------------------------------------------------------------------------
