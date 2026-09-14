@@ -448,6 +448,22 @@ class TestCurveFallbackPricing(unittest.TestCase):
         self.assertEqual(price, 0.0)
         self.assertEqual(age, float("inf"))
 
+    def test_sol_price_falls_back_to_coingecko_when_jupiter_fails(self):
+        """2026-09-14: found live that Jupiter alone wasn't enough — it
+        was 429ing at the exact moment this fallback needed a price
+        (same congestion as executor.py's own SOL price fetches).
+        CoinGecko is a different provider/rate-limit pool."""
+        v8p = self._v8_paper
+        jup_fail = RuntimeError("429 from Jupiter")
+        cg_resp = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"solana": {"usd": 172.5}},
+        )
+        with patch("requests.get", side_effect=[jup_fail, cg_resp]):
+            price, age = v8p._fresh_sol_price_usd()
+        self.assertEqual(price, 172.5)
+        self.assertEqual(age, 0.0)
+
     def test_curve_fallback_no_helius_key(self):
         v8p = self._v8_paper
         with patch.dict("os.environ", {"HELIUS_API_KEY": ""}):

@@ -375,8 +375,30 @@ def _fresh_sol_price_usd() -> tuple[float, float]:
             _sol_price_cache["ts"] = time.time()
         return new_price, 0.0
     except Exception as e:
-        log.debug("v8_paper: SOL/USD fetch failed for curve-fallback pricing: %s", e)
-        # ts NOT bumped -- age stays honest (inf on first-ever failure,
+        log.debug("v8_paper: Jupiter SOL/USD fetch failed for curve-fallback "
+                  "pricing, trying CoinGecko: %s", e)
+    # 2026-09-14: Jupiter alone is not enough -- found live that it was
+    # 429ing at the exact same time this fallback needed a price (same
+    # congestion visible in memecoin.executor's own SOL price logs).
+    # CoinGecko is a different provider/rate-limit pool, same pattern
+    # already used elsewhere in this repo (memecoin/journal_reconciler.py,
+    # memecoin/reconcile.py's own _get_sol_price() fallback chains).
+    try:
+        import requests
+        resp = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price"
+            "?ids=solana&vs_currencies=usd",
+            timeout=3,
+        )
+        resp.raise_for_status()
+        new_price = float(resp.json()["solana"]["usd"])
+        with _sol_price_lock:
+            _sol_price_cache["price"] = new_price
+            _sol_price_cache["ts"] = time.time()
+        return new_price, 0.0
+    except Exception as e:
+        log.debug("v8_paper: CoinGecko SOL/USD fetch also failed: %s", e)
+        # ts NOT bumped -- age stays honest (inf on first-ever success,
         # or the real elapsed time since the last genuine success).
         return price, age
 
