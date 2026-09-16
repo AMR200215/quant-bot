@@ -205,6 +205,24 @@ class TestV8BookPersistenceAndIsolation(unittest.TestCase):
         book2 = V8PaperBook()
         self.assertEqual(len(book2.open_positions()), 1)
 
+    def test_open_durably_subscribes_for_ongoing_price_updates(self):
+        """2026-09-17: root-caused live that 173/179 open positions never
+        received a single price update after entry — v8_paper only ever
+        touched pumpportal_monitor's bounded, LRU-evictable screening
+        subscription, never the durable `subscribe()` set V7's
+        portfolio.py uses for exactly this reason. A newly-opened position
+        must get a durable subscription so the monitor loop can actually
+        update it."""
+        fake_monitor = SimpleNamespace(subscribe=lambda mints: None)
+        with patch("memecoin.pumpportal_monitor.monitor", fake_monitor), \
+             patch.object(fake_monitor, "subscribe") as mock_subscribe, \
+             patch(_PATCH_TARGET, return_value=_cap(0.40, "CURVE_ACTIVE")):
+            book = V8PaperBook()
+            book._evaluate_alert(_event(
+                token_address="MintSub1111111111111111111111111111111",
+                event_id="ev_sub"))
+        mock_subscribe.assert_called_once_with({"MintSub1111111111111111111111111111111"})
+
     def test_13_close_writes_journal(self):
         """VF7 #13: V8 close writes journal."""
         book = V8PaperBook()

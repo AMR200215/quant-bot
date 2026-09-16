@@ -712,6 +712,31 @@ class V8PaperBook:
             with self._lock:
                 self._positions[pos["id"]] = pos
                 self._save()
+            # 2026-09-17: root-caused live -- 173/179 open positions had
+            # NEVER received a price update since entry. v8_paper only ever
+            # touched pumpportal_monitor's screening-level subscription
+            # (bounded, LRU-evicted at MAX_SCREENING_SLOTS -- pump.fun's
+            # ~20-30 tokens/min launch rate churns through that in
+            # ~30-50min), so any position held longer than that goes
+            # permanently silent. memecoin/portfolio.py:1126 already solves
+            # this for V7 by calling monitor.subscribe() (a separate,
+            # durable set, immune to screening eviction) -- V8 never did
+            # the equivalent. Deliberately never calling monitor.unsubscribe()
+            # on close: _subscribed is a single set shared with V7's real
+            # (paper or live) position book with no reference counting, so
+            # unsubscribing here could silently kill a live V7 position's
+            # real-time tick feed on the same mint -- exactly the failure
+            # mode docs/RECEIPTS.md's PumpPortal root-cause entry already
+            # traced to ~$36 of real losses once. A subscription outliving
+            # its v8 position is a bounded, low-cost leak (message volume
+            # only accrues for tokens still actually trading); silently
+            # killing a live feed is not an acceptable trade for avoiding it.
+            try:
+                from memecoin.pumpportal_monitor import monitor as _pp_monitor
+                _pp_monitor.subscribe({event.token_address})
+            except Exception as _sub_err:
+                log.debug("v8_paper: durable subscribe failed for %s (non-fatal): %s",
+                          event.token_address[:8], _sub_err)
             log.info("v8_paper OPEN %s  progress=%.2f  entry=$%.10f  id=%s",
                      event.token_symbol or event.token_address[:8], progress, pos["entry_price"], pos["id"])
             if _v8_tel is not None:
