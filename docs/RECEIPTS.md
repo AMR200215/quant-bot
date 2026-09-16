@@ -4834,3 +4834,93 @@ fixed code yet — the next real Telegram alert will confirm end-to-end
 1-2/hour). If `progress_unknown`/`pp_unpriced` rates stay elevated after
 a reasonable sample post-fix, that would mean a third, still-undiscovered
 cause exists and this investigation should reopen.
+
+## V8_PAPER_LIFECYCLE_COMPLETE — 2026-09-17
+
+**Follow-up to the above.** The entry-side fixes worked (168 real opens
+over the next 3 days, confirmed live), but that surfaced the real next
+problem: **179 of those 192 open positions had never received a single
+price update since entry** (`current_price == entry_price` exactly,
+including one 33 days old). Traced through the full remaining lifecycle
+systematically (not reactively) rather than waiting for another live
+surprise. Two more real, distinct structural gaps found and fixed, plus
+one gap in a safety net that doesn't exist anywhere in this codebase
+(checked V7 too):
+
+1. **Missing durable subscription.** `v8_paper.py` only ever touched
+   `pumpportal_monitor`'s screening-level subscription (bounded,
+   LRU-evicted at `MAX_SCREENING_SLOTS=1000` — pump.fun's ~20-30
+   tokens/min launch rate churns through that in ~30-50min). Any
+   position held longer than that goes permanently silent.
+   `memecoin/portfolio.py:1126` already solves this for V7 by calling
+   `monitor.subscribe()` — a separate, durable set, immune to screening
+   eviction ("Always subscribe so monitoring ticks start arriving
+   immediately"). V8 never called the equivalent. Fixed: subscribe
+   durably on position open. Deliberately never unsubscribe on close —
+   `_subscribed` is a single set shared with V7's real position book
+   with no reference counting; unsubscribing could silently kill a live
+   V7 position's real-time feed on the same mint, the exact failure
+   mode this document's PumpPortal root-cause entry already traced to
+   ~$36 of real losses once.
+
+2. **Monitor loop only evaluated exits when a fresh price happened to
+   exist that cycle.** Even with subscription fixed, a token that's
+   gone genuinely quiet (no more trades at all — common for low-cap
+   memecoins) generates zero PP messages regardless of subscription
+   status, so `update_price()` (and therefore `_check_exit()`) never
+   ran for it. Mirrors `memecoin/portfolio.py`'s `update_prices()`
+   pattern exactly — that function's own comment: *"price stays stale,
+   time stop will still fire."* Added `_evaluate_stale_position_exits()`,
+   run unconditionally every monitor cycle for every open position,
+   using whatever price the position already has. Also added a batched,
+   throttled on-chain fallback for ongoing monitoring
+   (`_curve_fallback_prices_batch`, one Helius call per 60s covering
+   every currently-stuck position, not one call per position per 5s
+   cycle — that would spike RPC volume, which CLAUDE.md rules out under
+   `SOCIAL_ALERT_ONLY`).
+
+3. **Real gap remaining even after both fixes above, found by stress-
+   testing the exit logic rather than waiting for it to happen live**:
+   once a position's `peak_gain` crosses 0.30, `time_stop` is
+   deliberately disabled ("never interrupt a runner mid-leg"). If that
+   token then goes permanently dark *before* ever pulling back through
+   its trail level, `trailing_stop` can never fire either — it needs a
+   fresh price that will never arrive again. **Neither V7 nor V8 had any
+   safety net for this** (checked both, confirmed via `grep`). Added
+   `_STALE_DATA_DEADMAN_S` (6h since the last *real* price observation,
+   tracked via a new `last_priced_at` field distinct from `entry_time`)
+   — closes under its own `stale_deadman` reason, deliberately **not**
+   part of `V8_EXIT_CONFIG`/E0, so it can never be confused with a real
+   strategy decision or contaminate exit-strategy EV scoring (TS-BATCH's
+   E0-is-unbeaten finding is unaffected — this isn't a strategy change).
+
+**Dry-run before deploy** (not blind): simulated the new close logic
+against the real 180 open positions on disk first. Predicted 167
+`stale_deadman` / 11 hard_stop+time_stop / 2 stay open. **Live result on
+the actual first monitor cycle after deploy: 116 stale_deadman / 52
+hard_stop / 10 time_stop / 2 stay open** — same total resolved (178/180,
+matching within the dry-run's rough bucketing), same 2 genuinely-fresh
+positions correctly left open. This was a one-time cleanup of a backlog
+this week's now-fixed bugs created, not a regression — every closed row
+is honestly labeled with why, and none of it should be trusted for EV
+purposes (already covered by this document's earlier caveats on
+pre-fix data).
+
+17 new tests covering the batched fallback (empty input, no key, no SOL
+price, partial success, exception, all-succeed) and the deadman logic
+(fresh position stays open, time_stop fires without a fresh price this
+cycle, deadman fires for a dark winner, deadman does NOT fire for an
+actively-priced position no matter how old, legacy positions missing
+the new field fail closed correctly, hard_stop still takes priority
+when price is fresh, mixed batches only close the right ones, empty
+book is a no-op). 48/48 passing in this file, 705 across all
+v8-related suites. Committed `b94ced5`, deployed, live-verified via the
+close-reason breakdown above.
+
+**Status**: the full lifecycle (entry gate → price resolution → durable
+tracking → exit evaluation → stale-data safety net) has now been
+systematically reviewed end-to-end, not just patched reactively one
+failure at a time, and every piece has both a live-data dry-run and a
+live-deploy confirmation behind it. The two currently-open positions
+should track and resolve normally going forward. No further code gaps
+are known at this time.
