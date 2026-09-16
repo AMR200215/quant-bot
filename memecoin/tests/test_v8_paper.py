@@ -548,5 +548,239 @@ class TestCurveFallbackPricing(unittest.TestCase):
         self.assertEqual(source, "pp_unpriced")
 
 
+class TestCurveFallbackPricesBatch(unittest.TestCase):
+    """2026-09-17: batched ongoing-monitoring fallback, distinct from the
+    one-shot _curve_fallback_price used only at entry. Multiple scenarios
+    per the user's explicit request for thorough stress testing."""
+
+    def setUp(self):
+        import memecoin.v8_paper as v8_paper
+        self._v8_paper = v8_paper
+
+    def test_empty_input_returns_empty_without_any_calls(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": "fake_key"}), \
+             patch("research.curve_oracle.get_curve_prices_batch") as mock_batch:
+            result = v8p._curve_fallback_prices_batch([])
+        self.assertEqual(result, {})
+        mock_batch.assert_not_called()
+
+    def test_no_helius_key_returns_empty(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": ""}):
+            result = v8p._curve_fallback_prices_batch(["MintA", "MintB"])
+        self.assertEqual(result, {})
+
+    def test_no_sol_price_returns_empty(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": "fake_key"}), \
+             patch.object(v8p, "_fresh_sol_price_usd", return_value=(0.0, float("inf"))):
+            result = v8p._curve_fallback_prices_batch(["MintA"])
+        self.assertEqual(result, {})
+
+    def test_partial_success_only_returns_successful_mints(self):
+        """Some mints price, some fail (missing/graduated/parse error) --
+        the failures must not appear in the result at all, not as 0.0."""
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": "fake_key"}), \
+             patch.object(v8p, "_fresh_sol_price_usd", return_value=(170.0, 0.0)), \
+             patch("research.curve_oracle.get_curve_prices_batch", return_value={
+                 "MintA": {"price_usd": 0.0000123, "failure_reason": None},
+                 "MintB": {"price_usd": None, "failure_reason": "curve_account_missing"},
+                 "MintC": {"price_usd": 0.0000456, "failure_reason": None},
+                 "MintD": {"price_usd": 0.0, "failure_reason": None},
+             }):
+            result = v8p._curve_fallback_prices_batch(["MintA", "MintB", "MintC", "MintD"])
+        self.assertEqual(result, {"MintA": 0.0000123, "MintC": 0.0000456})
+        self.assertNotIn("MintB", result)
+        self.assertNotIn("MintD", result)
+
+    def test_missing_mint_in_results_is_simply_absent(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": "fake_key"}), \
+             patch.object(v8p, "_fresh_sol_price_usd", return_value=(170.0, 0.0)), \
+             patch("research.curve_oracle.get_curve_prices_batch", return_value={}):
+            result = v8p._curve_fallback_prices_batch(["MintA", "MintB"])
+        self.assertEqual(result, {})
+
+    def test_exception_during_batch_call_returns_empty_not_raises(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": "fake_key"}), \
+             patch.object(v8p, "_fresh_sol_price_usd", return_value=(170.0, 0.0)), \
+             patch("research.curve_oracle.get_curve_prices_batch",
+                   side_effect=RuntimeError("RPC exploded")):
+            result = v8p._curve_fallback_prices_batch(["MintA"])
+        self.assertEqual(result, {})
+
+    def test_all_mints_succeed(self):
+        v8p = self._v8_paper
+        with patch.dict("os.environ", {"HELIUS_API_KEY": "fake_key"}), \
+             patch.object(v8p, "_fresh_sol_price_usd", return_value=(170.0, 0.0)), \
+             patch("research.curve_oracle.get_curve_prices_batch", return_value={
+                 "MintA": {"price_usd": 1e-5, "failure_reason": None},
+                 "MintB": {"price_usd": 2e-5, "failure_reason": None},
+             }):
+            result = v8p._curve_fallback_prices_batch(["MintA", "MintB"])
+        self.assertEqual(result, {"MintA": 1e-5, "MintB": 2e-5})
+
+
+class TestStalePositionExitsAndDeadman(unittest.TestCase):
+    """2026-09-17: _evaluate_stale_position_exits is what lets time_stop
+    fire for positions that never got a fresh price this cycle, and
+    stale_deadman is the safety net for winners (peak_gain>=0.30) that go
+    permanently dark before ever pulling back through their trail level.
+    Multiple scenarios per the user's explicit request."""
+
+    def setUp(self):
+        import memecoin.v8_paper as v8_paper
+        self._v8_paper = v8_paper
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._journal = Path(self._tmpdir.name) / "v8_journal.csv"
+        self._positions = Path(self._tmpdir.name) / "v8_positions.json"
+        self._paths_patch = patch("memecoin.v8_paper._paths",
+                                   return_value=(self._journal, self._positions))
+        self._paths_patch.start()
+        self.book = v8_paper.V8PaperBook()
+
+    def tearDown(self):
+        self._paths_patch.stop()
+        self._tmpdir.cleanup()
+
+    def _make_pos(self, **overrides):
+        now = time.time()
+        base = dict(
+            id="V8test1", signal_id="sig1", chain="solana",
+            token_address="MintStale111111111111111111111111111111",
+            token_symbol="STALE", signal_type="social_alert", strength="v8_fork",
+            signal_price=1e-5, signal_time=now, entry_price=1e-5, entry_time=now,
+            last_priced_at=now, size_usd=1.0, current_price=1e-5, peak_price=1e-5,
+            status="open", exit_price=0.0, exit_time=0.0, exit_reason="",
+            progress_at_signal=0.5, dex_id="", entry_source="pp_tick_v8_fork",
+            era="V8_TELEGRAM_INDEPENDENT_V1", notes="",
+        )
+        base.update(overrides)
+        return base
+
+    def test_fresh_position_stays_open(self):
+        pos = self._make_pos()
+        self.book._positions = {pos["id"]: pos}
+        self.book._evaluate_stale_position_exits()
+        self.assertEqual(self.book._positions[pos["id"]]["status"], "open")
+
+    def test_time_stop_fires_for_a_position_never_repriced_this_cycle(self):
+        """This is the core VR fix: a position with no gain, past
+        time_stop_minutes, that never got a fresh price this specific
+        cycle must still close -- previously it would never even be
+        evaluated."""
+        v8_cfg_time_stop_min = self._v8_paper.V8_EXIT_CONFIG["time_stop_minutes"]
+        old_ts = time.time() - (v8_cfg_time_stop_min + 5) * 60
+        pos = self._make_pos(entry_time=old_ts, last_priced_at=old_ts,
+                              current_price=1e-5, peak_price=1e-5)  # zero gain
+        self.book._positions = {pos["id"]: pos}
+        self.book._evaluate_stale_position_exits()
+        closed = self.book._positions[pos["id"]]
+        self.assertEqual(closed["status"], "closed")
+        self.assertEqual(closed["exit_reason"], "time_stop")
+
+    def test_stale_deadman_fires_for_a_winner_gone_dark(self):
+        """The actual gap this session found: peak_gain >= 0.30 disables
+        time_stop by design ("never interrupt a runner"), so a position
+        that ran up then went permanently dark must be caught by the
+        deadman instead, under its own distinct reason."""
+        deadman_s = self._v8_paper._STALE_DATA_DEADMAN_S
+        old_priced = time.time() - (deadman_s + 60)
+        pos = self._make_pos(
+            entry_price=1e-5, current_price=2e-5, peak_price=2e-5,   # +100% peak gain
+            last_priced_at=old_priced,
+        )
+        self.book._positions = {pos["id"]: pos}
+        self.book._evaluate_stale_position_exits()
+        closed = self.book._positions[pos["id"]]
+        self.assertEqual(closed["status"], "closed")
+        self.assertEqual(closed["exit_reason"], "stale_deadman")
+
+    def test_deadman_does_not_fire_for_actively_priced_winner(self):
+        """A position still getting real price ticks every cycle must
+        never be at risk from the deadman, no matter how long it's open."""
+        pos = self._make_pos(
+            entry_price=1e-5, current_price=2e-5, peak_price=2e-5,
+            entry_time=time.time() - 999999,   # very old, but...
+            last_priced_at=time.time(),        # ...still being priced right now
+        )
+        self.book._positions = {pos["id"]: pos}
+        self.book._evaluate_stale_position_exits()
+        self.assertEqual(self.book._positions[pos["id"]]["status"], "open")
+
+    def test_legacy_position_missing_last_priced_at_falls_back_to_entry_time(self):
+        """Positions opened before 2026-09-17 have no last_priced_at key
+        at all. Must fail closed (treat as stale) using entry_time, not
+        crash with a KeyError."""
+        old_ts = time.time() - (self._v8_paper._STALE_DATA_DEADMAN_S + 60)
+        pos = self._make_pos(entry_time=old_ts, current_price=1e-5, peak_price=1e-5)
+        del pos["last_priced_at"]
+        self.book._positions = {pos["id"]: pos}
+        self.book._evaluate_stale_position_exits()   # must not raise
+        self.assertEqual(self.book._positions[pos["id"]]["status"], "closed")
+        self.assertEqual(self.book._positions[pos["id"]]["exit_reason"], "stale_deadman")
+
+    def test_hard_stop_still_takes_priority_over_deadman_when_price_is_fresh(self):
+        pos = self._make_pos(entry_price=1e-5, current_price=6e-6, peak_price=1e-5,
+                              last_priced_at=time.time())   # -40%, fresh
+        self.book._positions = {pos["id"]: pos}
+        self.book._evaluate_stale_position_exits()
+        closed = self.book._positions[pos["id"]]
+        self.assertEqual(closed["status"], "closed")
+        self.assertEqual(closed["exit_reason"], "hard_stop")
+
+    def test_mixed_batch_only_the_correct_positions_close(self):
+        """Multiple positions in one pass -- verifies no cross-contamination
+        between positions and that closed ones are skipped entirely."""
+        fresh_ok = self._make_pos(id="V8fresh", token_address="MintFresh1111111111111111111111111111",
+                                   last_priced_at=time.time())
+        deadman_hit = self._make_pos(
+            id="V8dead", token_address="MintDead11111111111111111111111111111",
+            entry_price=1e-5, current_price=2e-5, peak_price=2e-5,
+            last_priced_at=time.time() - (self._v8_paper._STALE_DATA_DEADMAN_S + 1),
+        )
+        already_closed = self._make_pos(id="V8closed", status="closed", exit_reason="hard_stop")
+        self.book._positions = {
+            fresh_ok["id"]: fresh_ok,
+            deadman_hit["id"]: deadman_hit,
+            already_closed["id"]: already_closed,
+        }
+        self.book._evaluate_stale_position_exits()
+        self.assertEqual(self.book._positions["V8fresh"]["status"], "open")
+        self.assertEqual(self.book._positions["V8dead"]["status"], "closed")
+        self.assertEqual(self.book._positions["V8dead"]["exit_reason"], "stale_deadman")
+        # Already-closed position must be left completely untouched.
+        self.assertEqual(self.book._positions["V8closed"]["exit_reason"], "hard_stop")
+
+    def test_empty_positions_dict_is_a_safe_noop(self):
+        self.book._positions = {}
+        self.book._evaluate_stale_position_exits()   # must not raise
+        self.assertEqual(self.book._positions, {})
+
+    def test_new_position_seeds_last_priced_at_equal_to_entry_time(self):
+        v8p = self._v8_paper
+        with patch(_PATCH_TARGET, return_value=_cap(0.40, "CURVE_ACTIVE")), \
+             patch.object(v8p, "_resolve_entry_price", return_value=(0.00002, "pp_tick_v8_fork")), \
+             patch.object(v8p, "_current_era", return_value="TEST_ERA"), \
+             patch("memecoin.pumpportal_monitor.monitor", SimpleNamespace(subscribe=lambda m: None)):
+            self.book._evaluate_alert(_event(
+                token_address="MintSeed1111111111111111111111111111111",
+                event_id="ev_seed"))
+        opened = [p for p in self.book._positions.values() if p["status"] == "open"]
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(opened[0]["last_priced_at"], opened[0]["entry_time"])
+
+    def test_update_price_refreshes_last_priced_at(self):
+        pos = self._make_pos(last_priced_at=time.time() - 500)
+        self.book._positions = {pos["id"]: pos}
+        before = self.book._positions[pos["id"]]["last_priced_at"]
+        self.book.update_price(pos["token_address"], 1.1e-5)
+        after = self.book._positions[pos["id"]]["last_priced_at"]
+        self.assertGreater(after, before)
+
+
 if __name__ == "__main__":
     unittest.main()

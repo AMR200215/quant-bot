@@ -153,6 +153,24 @@ V8_EXIT_CONFIG = {
     ],
 }
 
+# 2026-09-17: found live -- once a position's peak_gain crosses the first
+# trail tier's activates_at (0.30), time_stop is deliberately disabled
+# ("never interrupts a runner mid-leg", see _check_exit). If the token
+# then goes permanently dark (migrates off-curve, stops trading entirely)
+# BEFORE ever pulling back through its trail level, trailing_stop can
+# never fire either -- it needs a fresh price, which never arrives again.
+# Neither V7 nor V8 had any safety net for this before today (checked
+# both). This is deliberately NOT part of V8_EXIT_CONFIG / E0 -- it must
+# never be confused with a strategy decision (TS-BATCH already confirmed
+# E0 unbeaten; this doesn't change that) or count as a real exit signal
+# in EV analysis. It only fires when a position has gone dark by data
+# availability, not by price action -- closed under its own distinct
+# reason (stale_deadman) so it's always filterable out of exit-strategy
+# scoring. Checked against last_priced_at (a real-observation clock),
+# never against entry_time -- a position still getting real price ticks
+# every cycle is never at risk here, no matter how long it's been open.
+_STALE_DATA_DEADMAN_S = 6 * 3600.0   # 6h -- generous vs. normal lulls, still bounds worst-case staleness
+
 V8_JOURNAL_FIELDS = [
     "id", "signal_id", "chain", "token_address", "token_symbol",
     "signal_type", "strength",
@@ -429,6 +447,45 @@ def _curve_fallback_price(token_address: str) -> tuple[float, str]:
         return 0.0, "curve_fallback_error"
 
 
+# 2026-09-17: ongoing-monitoring fallback for OPEN positions, distinct
+# from _curve_fallback_price (one-shot, used only at entry). Batched
+# (one Helius call for every currently-stuck mint, not one call per
+# position per 5s monitor cycle -- that would spike RPC volume, which
+# CLAUDE.md explicitly rules out under SOCIAL_ALERT_ONLY) and throttled
+# per-mint so a token that's genuinely gone quiet doesn't get re-polled
+# every cycle either.
+_ONGOING_FALLBACK_THROTTLE_S = 60.0
+_last_fallback_attempt: dict = {}
+_fallback_attempt_lock = threading.Lock()
+
+
+def _curve_fallback_prices_batch(token_addresses: list) -> dict:
+    """Batched on-chain price read for multiple mints in one Helius call.
+    Returns {token_address: price_usd} only for mints that succeeded --
+    a mint absent from the result is not a claim of price 0, just "still
+    don't know", same non-substitution discipline as _curve_fallback_price."""
+    if not token_addresses:
+        return {}
+    try:
+        import os
+        helius_key = os.getenv("HELIUS_API_KEY", "")
+        if not helius_key:
+            return {}
+        sol_price, sol_age = _fresh_sol_price_usd()
+        if sol_price <= 0:
+            return {}
+        from research.curve_oracle import get_curve_prices_batch
+        results = get_curve_prices_batch(token_addresses, helius_key, sol_price, sol_age)
+        return {
+            mint: r["price_usd"]
+            for mint, r in results.items()
+            if r and r.get("price_usd") and r["price_usd"] > 0
+        }
+    except Exception as e:
+        log.debug("v8_paper: batched ongoing curve fallback failed: %s", e)
+        return {}
+
+
 def _resolve_entry_price(chain: str, token_address: str) -> tuple[float, str]:
     """Returns (price, entry_source). price==0.0 means unpriced within
     budget -- caller must treat that as an explicit terminal state
@@ -487,6 +544,7 @@ def _new_position_from_alert(event, progress: float, entry_price: float, entry_s
         "signal_time": now,
         "entry_price": entry_price,       # curve-baseline entry (N6 requirement)
         "entry_time": now,
+        "last_priced_at": now,            # 2026-09-17: real-observation clock for _STALE_DATA_DEADMAN_S, distinct from entry_time
         "size_usd": 1.0,                  # paper-only; size is irrelevant to pct outcomes
         "current_price": entry_price,
         "peak_price": entry_price,
@@ -781,6 +839,7 @@ class V8PaperBook:
                     if pos["status"] != "open" or pos["token_address"] != token_address:
                         continue
                     pos["current_price"] = price
+                    pos["last_priced_at"] = time.time()
                     if price > pos["peak_price"]:
                         pos["peak_price"] = price
                     reason = _check_exit(pos, V8_EXIT_CONFIG)
@@ -793,6 +852,39 @@ class V8PaperBook:
             log.warning("v8_paper: update_price failed for %s (non-fatal): %s",
                        token_address[:8] if token_address else "?", e)
 
+    def _evaluate_stale_position_exits(self) -> None:
+        """2026-09-17: mirrors memecoin/portfolio.py's update_prices()
+        pattern verbatim -- that function's own comment says it best:
+        "price stays stale, time stop will still fire". Exit conditions
+        (hard_stop/trailing_stop need a real price move to trigger, but
+        time_stop is purely elapsed-time based) must be evaluated every
+        cycle for every open position, not only when a fresh price
+        happened to arrive that cycle -- otherwise a token that's gone
+        quiet (no more trades at all, durably subscribed or not) can
+        never time out and sits open forever. Root-caused live: this was
+        the reason 173/179 open positions had never received a price
+        update OR ever been evaluated for exit at all. Uses whatever
+        current_price/peak_price the position already has (its last real
+        observation, however old) -- never fabricates a price."""
+        to_close = []
+        with self._lock:
+            for pos in self._positions.values():
+                if pos["status"] != "open":
+                    continue
+                # last_priced_at may be missing on positions opened before
+                # 2026-09-17 -- fall back to entry_time (honest: for those,
+                # entry_time IS the last real observation we have, per
+                # _new_position_from_alert seeding current_price=entry_price).
+                last_priced = pos.get("last_priced_at", pos.get("entry_time", 0.0))
+                if time.time() - last_priced >= _STALE_DATA_DEADMAN_S:
+                    to_close.append((pos["id"], pos["current_price"], "stale_deadman"))
+                    continue
+                reason = _check_exit(pos, V8_EXIT_CONFIG)
+                if reason:
+                    to_close.append((pos["id"], pos["current_price"], reason))
+        for pos_id, px, reason in to_close:
+            self._close(pos_id, px, reason)
+
     def _monitor_loop(self) -> None:
         from memecoin.pumpportal_monitor import monitor as _pp_monitor
         while True:
@@ -802,10 +894,30 @@ class V8PaperBook:
                 if not open_pos:
                     continue
                 prices = _pp_monitor.get_prices()
+                stale_mints = []
+                now = time.time()
                 for pos in open_pos:
                     price = prices.get(pos["token_address"], 0)
                     if price > 0:
                         self.update_price(pos["token_address"], price)
+                        continue
+                    with _fallback_attempt_lock:
+                        last = _last_fallback_attempt.get(pos["token_address"], 0.0)
+                        due = now - last >= _ONGOING_FALLBACK_THROTTLE_S
+                        if due:
+                            _last_fallback_attempt[pos["token_address"]] = now
+                    if due:
+                        stale_mints.append(pos["token_address"])
+                if stale_mints:
+                    fallback_prices = _curve_fallback_prices_batch(stale_mints)
+                    for mint, price in fallback_prices.items():
+                        self.update_price(mint, price)
+                # Always runs, even if every price lookup above failed --
+                # see docstring. update_price() above already closes any
+                # position it repriced this cycle; this only picks up the
+                # remainder (positions with no fresh price this cycle at
+                # all) so time_stop can still fire for them.
+                self._evaluate_stale_position_exits()
             except Exception as e:
                 log.warning("v8_paper: monitor loop error (continuing): %s", e)
 
