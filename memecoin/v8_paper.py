@@ -647,6 +647,11 @@ class V8PaperBook:
 
     def __init__(self):
         self._positions: dict[str, dict] = {}
+        # 2026-09-17: see _evaluate_alert's own comment -- an atomic claim
+        # on a mint currently being evaluated, closing the TOCTOU race
+        # between the already_open check and the (slow) price-resolution
+        # + insert that follows it.
+        self._reserving: set[str] = set()
         self._lock = threading.Lock()
         self._load()
 
@@ -718,12 +723,30 @@ class V8PaperBook:
                     except Exception:
                         pass
                 return
+            # 2026-09-17: found via concurrency stress testing -- the old
+            # code checked already_open, released the lock, then did the
+            # slow (multi-second, price-resolution-bound) work below before
+            # ever re-acquiring the lock to insert the real position.
+            # Multiple concurrent alerts for the SAME mint (re-alerts,
+            # multiple source channels, a burst around a hype moment) could
+            # all pass the already_open check before any of them had
+            # actually inserted anything, producing duplicate open
+            # positions on the same token -- confirmed directly: a stress
+            # test with 200 concurrent alert threads across 40 mints
+            # produced 61 open positions, with 2 mints holding 2-3
+            # simultaneous opens. Fixed with an atomic reservation claimed
+            # under the SAME lock acquisition as the already_open check,
+            # held for the entire slow section below, released in
+            # `finally` regardless of outcome (gate reject / unpriced /
+            # success) so it never permanently blocks that mint.
             with self._lock:
-                already_open = any(
+                already_open_or_reserving = any(
                     p["token_address"] == event.token_address and p["status"] == "open"
                     for p in self._positions.values()
-                )
-            if already_open:
+                ) or event.token_address in self._reserving
+                if not already_open_or_reserving:
+                    self._reserving.add(event.token_address)
+            if already_open_or_reserving:
                 if _v8_tel is not None:
                     try:
                         _v8_tel.emit("v8_gate_rejected", event_id=event.event_id,
@@ -732,79 +755,83 @@ class V8PaperBook:
                     except Exception:
                         pass
                 return
-            passed, reason, progress = passes_v8_gate(event)
-            cap = _get_capture_for_gate(event.chain, event.token_address, event.event_id)
-            venue = cap.venue_state_at_signal if cap is not None else "UNKNOWN"
-            psrc  = cap.progress_source if cap is not None else ""
-            if not passed:
-                log.info("v8_paper: gate reject %s (event=%s) — %s",
-                         event.token_symbol or event.token_address[:8], event.event_id[:12], reason)
-                if _v8_tel is not None:
-                    try:
-                        _v8_tel.emit("v8_gate_rejected", event_id=event.event_id,
-                                     mint=event.token_address, progress=progress,
-                                     progress_source=psrc, venue_state=venue,
-                                     result="rejected", reason=reason)
-                    except Exception:
-                        pass
-                return
-
-            entry_price, entry_source = _resolve_entry_price(event.chain, event.token_address)
-            if entry_price <= 0:
-                # V8-REWIRE VR8: gate passed but no independent price arrived
-                # within budget -- an explicit terminal state, not a silent
-                # drop. Distinguishable from v8_gate_rejected in the funnel.
-                log.info("v8_paper: pass but unpriced %s (event=%s) — %s",
-                         event.token_symbol or event.token_address[:8], event.event_id[:12], entry_source)
-                if _v8_tel is not None:
-                    try:
-                        _v8_tel.emit("v8_pass_unpriced", event_id=event.event_id,
-                                     mint=event.token_address, progress=progress,
-                                     progress_source=psrc, venue_state=venue,
-                                     result="unpriced", reason=entry_source)
-                    except Exception:
-                        pass
-                return
-
-            pos = _new_position_from_alert(event, progress, entry_price, entry_source)
-            with self._lock:
-                self._positions[pos["id"]] = pos
-                self._save()
-            # 2026-09-17: root-caused live -- 173/179 open positions had
-            # NEVER received a price update since entry. v8_paper only ever
-            # touched pumpportal_monitor's screening-level subscription
-            # (bounded, LRU-evicted at MAX_SCREENING_SLOTS -- pump.fun's
-            # ~20-30 tokens/min launch rate churns through that in
-            # ~30-50min), so any position held longer than that goes
-            # permanently silent. memecoin/portfolio.py:1126 already solves
-            # this for V7 by calling monitor.subscribe() (a separate,
-            # durable set, immune to screening eviction) -- V8 never did
-            # the equivalent. Deliberately never calling monitor.unsubscribe()
-            # on close: _subscribed is a single set shared with V7's real
-            # (paper or live) position book with no reference counting, so
-            # unsubscribing here could silently kill a live V7 position's
-            # real-time tick feed on the same mint -- exactly the failure
-            # mode docs/RECEIPTS.md's PumpPortal root-cause entry already
-            # traced to ~$36 of real losses once. A subscription outliving
-            # its v8 position is a bounded, low-cost leak (message volume
-            # only accrues for tokens still actually trading); silently
-            # killing a live feed is not an acceptable trade for avoiding it.
             try:
-                from memecoin.pumpportal_monitor import monitor as _pp_monitor
-                _pp_monitor.subscribe({event.token_address})
-            except Exception as _sub_err:
-                log.debug("v8_paper: durable subscribe failed for %s (non-fatal): %s",
-                          event.token_address[:8], _sub_err)
-            log.info("v8_paper OPEN %s  progress=%.2f  entry=$%.10f  id=%s",
-                     event.token_symbol or event.token_address[:8], progress, pos["entry_price"], pos["id"])
-            if _v8_tel is not None:
+                passed, reason, progress = passes_v8_gate(event)
+                cap = _get_capture_for_gate(event.chain, event.token_address, event.event_id)
+                venue = cap.venue_state_at_signal if cap is not None else "UNKNOWN"
+                psrc  = cap.progress_source if cap is not None else ""
+                if not passed:
+                    log.info("v8_paper: gate reject %s (event=%s) — %s",
+                             event.token_symbol or event.token_address[:8], event.event_id[:12], reason)
+                    if _v8_tel is not None:
+                        try:
+                            _v8_tel.emit("v8_gate_rejected", event_id=event.event_id,
+                                         mint=event.token_address, progress=progress,
+                                         progress_source=psrc, venue_state=venue,
+                                         result="rejected", reason=reason)
+                        except Exception:
+                            pass
+                    return
+
+                entry_price, entry_source = _resolve_entry_price(event.chain, event.token_address)
+                if entry_price <= 0:
+                    # V8-REWIRE VR8: gate passed but no independent price arrived
+                    # within budget -- an explicit terminal state, not a silent
+                    # drop. Distinguishable from v8_gate_rejected in the funnel.
+                    log.info("v8_paper: pass but unpriced %s (event=%s) — %s",
+                             event.token_symbol or event.token_address[:8], event.event_id[:12], entry_source)
+                    if _v8_tel is not None:
+                        try:
+                            _v8_tel.emit("v8_pass_unpriced", event_id=event.event_id,
+                                         mint=event.token_address, progress=progress,
+                                         progress_source=psrc, venue_state=venue,
+                                         result="unpriced", reason=entry_source)
+                        except Exception:
+                            pass
+                    return
+
+                pos = _new_position_from_alert(event, progress, entry_price, entry_source)
+                with self._lock:
+                    self._positions[pos["id"]] = pos
+                    self._save()
+                # 2026-09-17: root-caused live -- 173/179 open positions had
+                # NEVER received a price update since entry. v8_paper only ever
+                # touched pumpportal_monitor's screening-level subscription
+                # (bounded, LRU-evicted at MAX_SCREENING_SLOTS -- pump.fun's
+                # ~20-30 tokens/min launch rate churns through that in
+                # ~30-50min), so any position held longer than that goes
+                # permanently silent. memecoin/portfolio.py:1126 already solves
+                # this for V7 by calling monitor.subscribe() (a separate,
+                # durable set, immune to screening eviction) -- V8 never did
+                # the equivalent. Deliberately never calling monitor.unsubscribe()
+                # on close: _subscribed is a single set shared with V7's real
+                # (paper or live) position book with no reference counting, so
+                # unsubscribing here could silently kill a live V7 position's
+                # real-time tick feed on the same mint -- exactly the failure
+                # mode docs/RECEIPTS.md's PumpPortal root-cause entry already
+                # traced to ~$36 of real losses once. A subscription outliving
+                # its v8 position is a bounded, low-cost leak (message volume
+                # only accrues for tokens still actually trading); silently
+                # killing a live feed is not an acceptable trade for avoiding it.
                 try:
-                    _v8_tel.emit("v8_opened", event_id=event.event_id,
-                                 mint=event.token_address, progress=progress,
-                                 progress_source=psrc, venue_state=venue,
-                                 result="opened", reason=pos["id"])
-                except Exception:
-                    pass
+                    from memecoin.pumpportal_monitor import monitor as _pp_monitor
+                    _pp_monitor.subscribe({event.token_address})
+                except Exception as _sub_err:
+                    log.debug("v8_paper: durable subscribe failed for %s (non-fatal): %s",
+                              event.token_address[:8], _sub_err)
+                log.info("v8_paper OPEN %s  progress=%.2f  entry=$%.10f  id=%s",
+                         event.token_symbol or event.token_address[:8], progress, pos["entry_price"], pos["id"])
+                if _v8_tel is not None:
+                    try:
+                        _v8_tel.emit("v8_opened", event_id=event.event_id,
+                                     mint=event.token_address, progress=progress,
+                                     progress_source=psrc, venue_state=venue,
+                                     result="opened", reason=pos["id"])
+                    except Exception:
+                        pass
+            finally:
+                with self._lock:
+                    self._reserving.discard(event.token_address)
         except Exception as e:
             log.warning("v8_paper: _evaluate_alert failed (non-fatal): %s", e)
 

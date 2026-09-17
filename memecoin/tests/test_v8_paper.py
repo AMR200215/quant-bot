@@ -18,6 +18,7 @@ Run: python -m pytest memecoin/tests/test_v8_paper.py -v
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -327,6 +328,50 @@ class TestV8TransportDedupIndependentOfV7(unittest.TestCase):
             book._evaluate_alert(event)
             book._evaluate_alert(event)   # exact same event_id, simulating a double-invocation
         self.assertEqual(len(book._positions), 1)
+
+    def test_concurrent_alerts_same_mint_different_event_ids_open_only_once(self):
+        """2026-09-17: found via concurrency stress testing (200 threads,
+        40 mints, 5 duplicate alerts each) -- the already_open check and
+        the actual position insert were separated by the slow (multi-
+        second in production) price-resolution call, with the lock
+        released in between. Multiple concurrent alerts for the SAME mint
+        (different event_ids, so transport-dedup alone can't catch it --
+        that's the point of this test) could all pass already_open before
+        any of them had inserted anything, producing duplicate open
+        positions on one token. Uses a deliberately slow
+        _resolve_entry_price (a real threading.Event wait, not just a
+        sleep, to force genuine interleaving) to reliably reproduce the
+        race window this test guards against."""
+        import memecoin.v8_paper as v8_paper
+        release = threading.Event()
+
+        def _slow_resolve(chain, token_address):
+            release.wait(timeout=2.0)
+            return (0.00002, "pp_tick_v8_fork")
+
+        book = v8_paper.V8PaperBook()
+        mint = "MintRace1111111111111111111111111111111"
+        n_threads = 20
+        threads = [
+            threading.Thread(
+                target=book._evaluate_alert,
+                args=(_event(token_address=mint, event_id=f"ev_race_{i}"),),
+            )
+            for i in range(n_threads)
+        ]
+        with patch(_PATCH_TARGET, return_value=_cap(0.40, "CURVE_ACTIVE")), \
+             patch.object(v8_paper, "_resolve_entry_price", side_effect=_slow_resolve):
+            for t in threads:
+                t.start()
+            time.sleep(0.1)   # let every thread reach (and pass, if buggy) the already_open check
+            release.set()     # now let all the slow price resolutions complete together
+            for t in threads:
+                t.join(timeout=5)
+
+        open_positions = [p for p in book._positions.values()
+                           if p["token_address"] == mint and p["status"] == "open"]
+        self.assertEqual(len(open_positions), 1,
+                          f"expected exactly 1 open position for {mint}, got {len(open_positions)}")
 
     def test_v8_paper_module_never_imports_scanner_dedup_state(self):
         # AST-based, not a substring scan -- v8_paper.py's own prose
