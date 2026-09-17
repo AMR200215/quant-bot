@@ -4924,3 +4924,37 @@ failure at a time, and every piece has both a live-data dry-run and a
 live-deploy confirmation behind it. The two currently-open positions
 should track and resolve normally going forward. No further code gaps
 are known at this time.
+
+## V8_PAPER_TOCTOU_RACE — fixed 2026-09-17
+
+Asked to stress test again rather than trust the lifecycle review above
+at face value. Wrote a dedicated concurrency stress script (200
+concurrent alert threads across 40 mints, 5 duplicate alerts per mint,
+run alongside 4 threads simultaneously hammering price updates and
+stale-exit evaluation — not part of the permanent suite, exploratory).
+Found a real bug the unit tests couldn't have caught (they never
+exercise real thread interleaving): `_evaluate_alert`'s `already_open`
+check happened under the lock, but the lock was released before the
+slow, multi-second price-resolution chain ran, and only re-acquired
+afterward to actually insert the position. Multiple concurrent alerts
+for the same mint (re-alerts, multiple source channels, a burst around
+a hype moment) could all pass `already_open` before any of them had
+inserted anything — confirmed directly: pre-fix, 61 open positions
+across 40 "unique" mints, 2 mints holding 2-3 simultaneous opens.
+
+Fixed with an atomic reservation (`_reserving: set[str]`) claimed under
+the same lock acquisition as the `already_open` check, held for the
+entire slow section, released in a `finally` block regardless of
+outcome. Post-fix: 5/5 stress runs clean, zero duplicate simultaneous
+opens, zero exceptions. Added one permanent regression test using a
+real `threading.Event` (not a sleep) to force genuine interleaving,
+5/5 passing standalone.
+
+Also ran additional edge-case stress tests while at it: zero/negative/
+NaN prices into `update_price`, `entry_price=0.0`, negative elapsed
+time (clock-skew simulation), empty `trail_tiers`, a 500-mint batched
+fallback call. All handled without crashing — no further changes
+needed for those.
+
+Committed `b93b9de`, deployed, live-verified clean (zero errors, zero
+duplicate open positions on the actual live book post-restart).
