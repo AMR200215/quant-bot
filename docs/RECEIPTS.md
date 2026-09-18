@@ -4958,3 +4958,41 @@ needed for those.
 
 Committed `b93b9de`, deployed, live-verified clean (zero errors, zero
 duplicate open positions on the actual live book post-restart).
+
+## V8_PAPER_BATCH_SAVE_PERFORMANCE — fixed 2026-09-18
+
+Asked to stress test again with different dimensions than round one
+(higher thread/mint contention ratio, ~30% injected failures into every
+dependency instead of always-succeeding mocks, a 3000-position seeded
+book, adversarial inputs). Three of four new scenarios came back clean
+(high-contention + flaky deps: zero exceptions, zero duplicate opens,
+confirming the TOCTOU fix holds under adversarial conditions too;
+reopen-after-close rapid cycling: always converges to <=1 open position;
+adversarial inputs: all caught by the existing non-fatal guard, no
+crashes). The fourth found a real, severe bug the first round's ~200-
+position scale never could have surfaced.
+
+`_close()` does a full `positions.json` rewrite (JSON serialize +
+atomic rename) on every call. Both batch-close callers (`update_price`,
+`_evaluate_stale_position_exits`) looped calling `_close()` once per
+position — O(closes × total positions in the whole book). Invisible
+today (~200 positions total). Measured **89.66 seconds** to evaluate a
+batch of ~1000 simultaneous closes out of 3000 seeded positions — would
+have completely stalled the 5s monitor loop (and blocked any concurrent
+alert-evaluation thread waiting on the same lock) for minutes, once the
+book accumulates a couple months of real volume at current pace.
+
+Fixed: split `_close()` into `_close_no_save()` (mutate only) +
+`_finish_close()` (journal + log) + `_close_batch()` (mutate every
+position in the batch, call `_save()` exactly once for the whole batch,
+then journal/log each). Both callers switched to `_close_batch()`.
+Post-fix: the same 3000-position/~1000-close scenario takes ~150-300ms
+— roughly 300-500x faster, consistent across repeated runs.
+
+3 new tests (exactly-one-save-per-batch via a call-counting mock, not a
+timing assertion; empty-batch-is-a-true-no-op; skips-already-closed-or-
+missing-ids safely). 52/52 in this file, 709 across all v8-related
+suites. Committed `9589c03`, deployed. Live post-restart: zero errors,
+zero duplicates, book actively growing (236 total positions vs 194 at
+the last check, 3 genuinely open and tracking) — the system is doing
+real work under all six fixes from 2026-09-12 through today at once.
