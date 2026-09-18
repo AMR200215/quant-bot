@@ -835,23 +835,62 @@ class V8PaperBook:
         except Exception as e:
             log.warning("v8_paper: _evaluate_alert failed (non-fatal): %s", e)
 
-    def _close(self, pos_id: str, price: float, reason: str) -> None:
+    def _close_no_save(self, pos_id: str, price: float, reason: str) -> dict | None:
+        """Mutates the position in place, does NOT call _save(). Returns
+        the closed position dict, or None if it was already closed/missing.
+        Callers closing more than one position in a pass must batch their
+        _save() via _close_batch() -- see its docstring for why."""
         with self._lock:
             pos = self._positions.get(pos_id)
             if pos is None or pos["status"] != "open":
-                return
+                return None
             pos["exit_price"] = price
             pos["exit_time"] = time.time()
             pos["exit_reason"] = reason
             pos["status"] = "closed"
-            self._save()
+        return pos
+
+    def _finish_close(self, pos: dict, price: float, reason: str) -> None:
         try:
             _append_journal(pos)
         except Exception as e:
             log.warning("v8_paper: journal write failed for %s (position still closed): %s",
-                       pos_id, e)
+                       pos["id"], e)
         log.info("v8_paper CLOSE %s  reason=%s  price=$%.10f  id=%s",
-                 pos["token_symbol"], reason, price, pos_id)
+                 pos["token_symbol"], reason, price, pos["id"])
+
+    def _close(self, pos_id: str, price: float, reason: str) -> None:
+        """Close exactly one position. For closing many in one pass, use
+        _close_batch() instead -- see its docstring."""
+        pos = self._close_no_save(pos_id, price, reason)
+        if pos is None:
+            return
+        with self._lock:
+            self._save()
+        self._finish_close(pos, price, reason)
+
+    def _close_batch(self, closes: list) -> None:
+        """2026-09-18: found via stress testing -- calling _close() in a
+        loop does one full positions.json rewrite PER position closed,
+        which is O(closes x total positions in the whole book). Harmless
+        at today's scale (a couple hundred positions) but a severe stall
+        at accumulated scale: 89.66s to evaluate ~1000 simultaneous
+        closes out of 3000 total positions in a stress test -- would
+        completely stall the 5s monitor loop (and block any concurrent
+        _evaluate_alert thread waiting on the same lock) for minutes.
+        Batches every mutation first, then calls _save() exactly ONCE for
+        the whole batch. `closes` is a list of (pos_id, price, reason)."""
+        closed = []
+        for pos_id, price, reason in closes:
+            pos = self._close_no_save(pos_id, price, reason)
+            if pos is not None:
+                closed.append((pos, price, reason))
+        if not closed:
+            return
+        with self._lock:
+            self._save()
+        for pos, price, reason in closed:
+            self._finish_close(pos, price, reason)
 
     def update_price(self, token_address: str, price: float) -> None:
         """Called by the monitor loop with a fresh price for one token.
@@ -873,8 +912,7 @@ class V8PaperBook:
                     if reason:
                         to_close.append((pos["id"], price, reason))
                 self._save()
-            for pos_id, px, reason in to_close:
-                self._close(pos_id, px, reason)
+            self._close_batch(to_close)
         except Exception as e:
             log.warning("v8_paper: update_price failed for %s (non-fatal): %s",
                        token_address[:8] if token_address else "?", e)
@@ -909,8 +947,7 @@ class V8PaperBook:
                 reason = _check_exit(pos, V8_EXIT_CONFIG)
                 if reason:
                     to_close.append((pos["id"], pos["current_price"], reason))
-        for pos_id, px, reason in to_close:
-            self._close(pos_id, px, reason)
+        self._close_batch(to_close)
 
     def _monitor_loop(self) -> None:
         from memecoin.pumpportal_monitor import monitor as _pp_monitor

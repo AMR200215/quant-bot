@@ -826,6 +826,66 @@ class TestStalePositionExitsAndDeadman(unittest.TestCase):
         after = self.book._positions[pos["id"]]["last_priced_at"]
         self.assertGreater(after, before)
 
+    def test_batch_close_saves_once_not_once_per_position(self):
+        """2026-09-18: found via stress testing -- closing positions one
+        at a time (each calling _save(), a full positions.json rewrite)
+        is O(closes x total positions in the book). At today's scale
+        (~200 positions) this is invisible; measured 89.66s for ~1000
+        simultaneous closes out of 3000 total positions in a stress test
+        -- would completely stall the 5s monitor loop. _close_batch()
+        must call _save() exactly once for the whole batch, regardless
+        of how many positions it closes."""
+        old_ts = time.time() - (self._v8_paper._STALE_DATA_DEADMAN_S + 60)
+        positions = {}
+        for i in range(50):
+            pos = self._make_pos(
+                id=f"V8batch{i}", token_address=f"MintBatch{i:035d}",
+                entry_time=old_ts, last_priced_at=old_ts,
+                current_price=1e-5, peak_price=1e-5,   # zero gain -> deadman path
+            )
+            positions[pos["id"]] = pos
+        self.book._positions = positions
+
+        save_calls = []
+        real_save = self.book._save
+        def counting_save():
+            save_calls.append(1)
+            real_save()
+
+        with patch.object(self.book, "_save", side_effect=counting_save):
+            self.book._evaluate_stale_position_exits()
+
+        self.assertEqual(len(save_calls), 1,
+                          f"expected exactly 1 _save() call for a 50-position batch close, got {len(save_calls)}")
+        closed = [p for p in self.book._positions.values() if p["status"] == "closed"]
+        self.assertEqual(len(closed), 50)
+
+    def test_close_batch_with_no_closes_does_not_save(self):
+        """Empty batch must be a true no-op -- no wasted disk write."""
+        save_calls = []
+        with patch.object(self.book, "_save", side_effect=lambda: save_calls.append(1)):
+            self.book._close_batch([])
+        self.assertEqual(len(save_calls), 0)
+
+    def test_close_batch_skips_already_closed_or_missing_ids(self):
+        pos = self._make_pos()
+        self.book._positions = {pos["id"]: pos}
+        self.book._close_batch([
+            (pos["id"], 1e-5, "hard_stop"),
+            ("nonexistent_id", 1e-5, "hard_stop"),   # must not raise
+        ])
+        self.assertEqual(self.book._positions[pos["id"]]["status"], "closed")
+
+        # closing the same id again in the same batch is a no-op the
+        # second time (already closed by the first entry in the batch)
+        pos2 = self._make_pos(id="V8two", status="open")
+        self.book._positions = {pos2["id"]: pos2}
+        self.book._close_batch([
+            (pos2["id"], 1e-5, "hard_stop"),
+            (pos2["id"], 2e-5, "time_stop"),
+        ])
+        self.assertEqual(self.book._positions[pos2["id"]]["exit_reason"], "hard_stop")
+
 
 if __name__ == "__main__":
     unittest.main()
