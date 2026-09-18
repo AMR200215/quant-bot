@@ -1,0 +1,77 @@
+```json
+[
+  {
+    "finding_id": "F1",
+    "severity": "WARN",
+    "component": "git commit / deployment SHA",
+    "claim": "Committed b93b9de, deployed, live-verified clean... Committed 9589c03, deployed. Live post-restart: zero errors, zero duplicates, book actively growing...",
+    "observed_ground_truth": "Deployed HEAD is a9f2b9aa053b122c9db50d2c85749c8acb8ddf9e (EV002, EV005). Neither b93b9de nor 9589c03 appear anywhere in the ground-truth evidence as the current HEAD or in any recorded git_sha field. The most recent cron job git_sha recorded is b9571e776ffea1424bce413be0dbd5ac92855ed4, also not matching either claimed commit.",
+    "expected_ground_truth": "If these fixes were deployed as claimed, one of the claimed short SHAs (b93b9de, 9589c03) would be expected to be an ancestor of or match the currently deployed HEAD, or otherwise be traceable in deployment evidence.",
+    "evidence_ids": ["EV002", "EV005"],
+    "operational_impact": "Cannot verify from evidence that the claimed concurrency and batch-save fixes are actually present in the currently running deployed code.",
+    "suggested_next_step": "Run `git log --oneline a9f2b9aa..HEAD` and `git merge-base --is-ancestor b93b9de HEAD` / same for 9589c03 to confirm these commits are ancestors of the deployed SHA.",
+    "confidence": "high"
+  },
+  {
+    "finding_id": "F2",
+    "severity": "WARN",
+    "component": "working tree cleanliness vs deploy claim",
+    "claim": "Committed and deployed (implying a clean, reproducible deployment state) for both the TOCTOU fix and the batch-save performance fix.",
+    "observed_ground_truth": "EV002 shows the working tree is NOT clean — multiple modified tracked files and numerous untracked files/scripts (including ad hoc scripts like p15_1_2_audit.py, scratch_incident_check.py) are present at the audited HEAD.",
+    "expected_ground_truth": "A claim of 'committed, deployed' work would typically correspond to a clean or near-clean working tree matching the stated commit, without unrelated uncommitted changes.",
+    "evidence_ids": ["EV002"],
+    "operational_impact": "Uncommitted/untracked changes alongside claimed deploys make it hard to confirm exactly what code is running versus what was tested, risking drift between audited and live behavior.",
+    "suggested_next_step": "Run `git status --porcelain` and `git diff HEAD` on the deployed host to enumerate exactly what differs from the claimed committed state.",
+    "confidence": "medium"
+  },
+  {
+    "finding_id": "F3",
+    "severity": "INFO",
+    "component": "test suite counts",
+    "claim": "52/52 in this file, 709 across all v8-related suites.",
+    "observed_ground_truth": "Ground truth test collection counts from EV005 are per broad suite (memecoin 335, research 635, watchdog 103, layer2 39, quant-bot 56) and do not break out a 'v8-related suites' subset or a specific file with 52 tests, so this specific claim cannot be independently confirmed or refuted.",
+    "expected_ground_truth": "If accurate, the claimed 709 v8-related tests and 52-test file would be a subset reflected somewhere in the aggregate suite counts.",
+    "evidence_ids": ["EV005"],
+    "observed_ground_truth_note": "",
+    "operational_impact": "No way to verify the specific v8 test count claim against current ground truth; it is an unverifiable assertion, not a contradiction.",
+    "suggested_next_step": "Run the v8-related test suite directly (e.g. `pytest -k v8 --collect-only -q`) and compare the reported count to 709.",
+    "confidence": "low"
+  },
+  {
+    "finding_id": "F4",
+    "severity": "CRITICAL",
+    "component": "funnel.v8 incident vs 'live-verified clean' claims",
+    "claim": "live-verified clean (zero errors, zero duplicate open positions on the actual live book post-restart)... Live post-restart: zero errors, zero duplicates, book actively growing...the system is doing real work under all six fixes from 2026-09-12 through today at once.",
+    "observed_ground_truth": "EV005 shows the funnel.v8 check is FIRING at CRITICAL severity, first seen 1786748706.89, still firing at last_seen 1789719604.70, with consecutive_failures: 6791, and a specific stuck candidate (event_id bd6003380054eb57) stuck at telegram_received stage for over 120s with no terminal disposition.",
+    "expected_ground_truth": "If the system were truly 'live-verified clean' and 'doing real work' without issue across all fixes, the funnel.v8 pipeline check would be expected to be OK/RECOVERED rather than actively firing as a critical, long-running incident.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "There is an active, long-running critical pipeline funnel issue at the time of audit that directly contradicts the documentation's blanket claim of a clean, fully-functioning live system; this could indicate the claimed fixes did not address (or are unrelated to) a separate ongoing funnel problem.",
+    "suggested_next_step": "Investigate the funnel.v8 stuck-candidate pipeline (trace event_id bd6003380054eb57 / mint AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump through telegram_received handling) to determine root cause and whether it relates to the claimed fixes or a separate defect.",
+    "confidence": "high"
+  },
+  {
+    "finding_id": "F5",
+    "severity": "INFO",
+    "component": "book growth claim (236 vs 194 positions)",
+    "claim": "book actively growing (236 total positions vs 194 at the last check, 3 genuinely open and tracking)",
+    "observed_ground_truth": "No position-count data (194, 236, or otherwise) appears anywhere in the ground-truth evidence bundle (EV001-EV007); this metric is not covered by any of the audited checks.",
+    "expected_ground_truth": "N/A - this is an assertion outside the scope of available evidence.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "Cannot corroborate or refute the specific position-count growth claim; it is unverifiable from current evidence.",
+    "suggested_next_step": "Query the live positions.json or equivalent store directly for current total and open position counts to confirm the claimed figures.",
+    "confidence": "low"
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "claims.batch.v8_readiness incident vs documentation completeness claims",
+    "claim": "Implicit claim of thorough completion/readiness given detailed fix narratives (TOCTOU fix, batch-save performance fix) presented as fully resolved.",
+    "observed_ground_truth": "EV005 shows claims.batch.v8_readiness is FIRING (WARN) with consecutive_failures: 1008, and 4 of 7 items (N2, N4, N6, N7) are PARTIAL rather than GREEN.",
+    "expected_ground_truth": "If the described fixes fully resolved v8 readiness concerns, this batch check would be expected to show all items GREEN rather than a persistent PARTIAL/WARN state.",
+    "evidence_ids": ["EV005"],
+    "operational_impact": "Suggests broader v8 readiness gaps remain despite the specific concurrency and performance fixes described in the claims, which only address a narrow slice of the readiness criteria.",
+    "suggested_next_step": "Review the definitions of readiness items N2, N4, N6, N7 to determine what remains PARTIAL and whether it relates to the claimed fixes.",
+    "confidence": "medium"
+  }
+]
+```

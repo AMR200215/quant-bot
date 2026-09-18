@@ -1,0 +1,49 @@
+# Audit Summary — audit-20260918T082304Z
+
+## Git / deployment state
+- Deployed HEAD SHA: `a9f2b9aa053b122c9db50d2c85749c8acb8ddf9e` (EV002). This matches the `git_sha` recorded in the latest fast and slow watchdog runs (EV005, `latest_fast_run.git_sha`, `latest_slow_run.git_sha`).
+- The working tree is **not clean**: EV002 lists modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_signals.json`) and a substantial number of untracked files/directories (e.g. `logs/epoch_daily.jsonl`, `research/data/`, `p15_1_2_audit.py`, `scratch_incident_check.py`, etc.) (EV002).
+- Note a discrepancy: the most recent job receipts embedded in watchdog evidence show `git_sha: b9571e776ffea1424bce413be0dbd5ac92855ed4` for the `k5_nightly`, `epoch_daily`, and `v8_vs_v7_daily` cron jobs (EV005, `cron_execution.*` evidence blocks), which differs from the currently deployed HEAD `a9f2b9aa...` (EV002, EV005 `latest_fast_run.git_sha`). This means the cron jobs' last recorded executions ran under a different commit than what is currently checked out. No evidence explains this gap (e.g., whether a deploy happened after those jobs last ran).
+
+## systemd services and timers
+- `quantbot.service`: active/running, last exit success (EV003).
+- `quantbot-research.service`: active/running, last exit success (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead**, but `Result=success` and `ExecMainStatus=0` from its last run (EV003) — consistent with a oneshot service triggered by a timer rather than a crash.
+- `quantbot-watchdog-slow.service`: **inactive/dead**, same success/exit-0 pattern (EV003).
+- Timer schedule (EV003): `quantbot-watchdog-fast.timer` last fired 2026-09-18T08:20:03Z (~3 min before evidence capture), next fire 08:25:00Z. `quantbot-watchdog-slow.timer` last fired 08:03:03Z (~19 min ago), next fire 09:03:00Z. Both timers are scheduled and active; the associated services being "inactive/dead" is expected behavior for timer-triggered oneshot units, not evidence of failure, given the success exit codes.
+
+## Cron files
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode `0o100644` (EV004).
+- `recent_parser_error_lines` is an empty list (EV004) — no recorded cron parser errors.
+- Watchdog's own static cron checks (`cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`) all report status OK, "parses cleanly, no recent journal parser errors" (EV005).
+
+## Watchdog's own most recent run status
+- Latest fast run (`f74998be23a246f1`): started/finished 1789719604.69/.70 (duration ~12ms), 11/11 checks completed, `final_runner_status: ok` (EV005).
+- Latest slow run (`0a1ad4eea6984a17`): started/finished 1789718592.76 (duration ~9ms), 10/10 checks completed, `final_runner_status: ok` (EV005).
+- Both runs report watchdog_version `1.0.0-phase1` and git_sha `a9f2b9aa...`, matching current HEAD (EV005, EV002).
+
+## Active incidents (per EV005 `all_incidents`)
+- **FIRING — CRITICAL**: `funnel.v8` — first seen 1786748706.89, still firing at last_seen 1789719604.70, `consecutive_failures: 6791`, last notified 1789715104.73. The most recent fast-run check for this (`funnel.v8`) reports one candidate stuck at `telegram_received` stage for over 120s with no terminal disposition (event_id `bd6003380054eb57`, mint `AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump`, ts 1787710096.66) (EV005). This is an active, ongoing incident, not resolved.
+- **FIRING — WARN**: `claims.batch.v8_readiness` — first seen 1786585581.22, still firing at 1789718592.76, `consecutive_failures: 1008`. Current batch check shows 4 of 7 items (`N2, N4, N6, N7`) as PARTIAL, 3 GREEN, 0 FAIL (EV005, `claims.batch.v8_readiness`). The watchdog evidence itself notes this status would not fail a CLI exit code despite being incomplete.
+- All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `research.path_collection`, `feed.telegram`, `pipeline.research_queue_lag`) show `state: RECOVERED` with `consecutive_failures: 0` (EV005) — these are resolved, not currently active.
+
+## Research pipeline queue lag
+- Latest fast-run check `pipeline.research_queue_lag`: status OK, "consumer caught up (gap=0 bytes)", with `queue_size: 3398247`, `offset: 3398247` (EV005).
+- EV006, captured separately, reports `queue_size: 3398295`, `queue_offset: "3398295"` — these are equal to each other (gap=0) but numerically higher than the values embedded in the EV005 check, consistent with EV006 being a later/different sampling point. No gap is evident in either snapshot.
+
+## Other observations
+- `feed.telegram`: OK, last event 402.5s ago against a 7200s threshold (EV005). A prior incident on this check is marked RECOVERED (EV005).
+- `feed.pumpportal`: OK, last observed a successful WS connect at 2026-09-18T08:19:28 (EV005). Frequent reconnects (~45-60s) are described in the evidence as expected rotation, not itself evaluated as a fault.
+- `pipeline.research_spool`: OK, 0 failed inserts in the last 2 hours; 68 total historical lines on disk noted as not itself indicating an active problem (EV005).
+- Test collection checks for memecoin, research, watchdog, layer2, and quant-bot test suites all report clean collection with specific counts (335, 635, 103, 39, 56 tests respectively) (EV005).
+- `test_drift.stale_mocks`: OK, 166 resolvable patch targets checked; third-party/stdlib targets explicitly excluded from verification (EV005).
+- `layer2.staleness`: OK, last Layer 2 audit was 23.3h old (`audit-20260917T084651Z`) with 7 findings, of which the evidence flags `critical_count: 1` (EV005). The content/nature of that critical finding is not included in this evidence bundle.
+- `research.path_collection`: OK for 2026-09-17, reporting 44/44 scheduled-vs-path-file yield (100%), budget 0/100000 (EV005). Hourly breakdown shows `usable_paths: 0` and `usable_path_yield_pct: 0.0` across every hour with nonzero eligible tokens — the evidence shows path files were produced but none were "usable" by whatever internal definition this metric uses; no further explanation is given in the evidence for why usable-path yield is uniformly 0%.
+- EV007 shows a receipts-tail file with `mtime: 1789692528.83` and `length: 271938` bytes; no content or job association is given for this beyond mtime/length, so nothing further can be concluded from it.
+- Host uptime is 6336256.34s (~73.3 days) as of EV001, with `boot_id d0a4169b-...` matching the boot_id recorded in both watchdog runs (EV001, EV005) — confirming no reboot occurred between those runs and the evidence snapshot.
+
+## Explicit gaps / ambiguities
+- No evidence explains the SHA mismatch between current HEAD (`a9f2b9aa...`) and the SHA recorded in the last cron job executions (`b9571e776...`) (EV002 vs EV005) — whether this reflects a deploy after the last job run, a rollback, or something else is not shown.
+- The specific content of the 7 Layer 2 audit findings (and the 1 marked critical) referenced by `layer2.staleness` is not included in this evidence bundle (EV005) — cannot assess what that critical finding concerns.
+- No evidence is given for what "usable_paths" means or why it is 0% across all active hours in `research.path_collection` (EV005) despite 100% raw path-file yield — this is presented as-is without further diagnostic detail.
+- The `funnel.v8` incident's `recovered_at: 1786810203.15` field coexists with `state: FIRING` and a `last_seen` far later than that recovery timestamp (EV005) — the evidence shows a stale `recovered_at` value from an earlier recovery, with the incident having refired since; the exact re-fire time is not separately itemized beyond `first_seen`/`last_seen`.
