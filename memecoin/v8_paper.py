@@ -85,7 +85,27 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 V8_CONFIG_TAG      = "v8_candidate_2026-09-10_v8p0"   # bumped from v8_candidate_2026-07-30 when the gate switched to V8-P0 -- old and new rows stay distinguishable, never silently blended
-_MONITOR_INTERVAL_S = 5.0
+
+# 2026-09-19: tightened from 5.0. Found live -- 2 of the first 4 real
+# hard_stop closes overshot the -35% target badly (-56.9%, -59.1%),
+# while the token was actually already priced (this isn't the pp_unpriced/
+# curve_fallback gap fixed earlier -- pumpportal_monitor.get_prices() is a
+# continuously updated in-memory cache fed by the funded, keyed PP
+# WebSocket subscription; the 5s figure was only how often THIS loop
+# checked that already-live cache, not how often the cache itself
+# updated). A bonding-curve token can dump 50%+ in under 5 seconds
+# (matches the exact overshoot dynamic docs/RECEIPTS.md's PumpPortal
+# root-cause entry already found for V7's live trading -- same class of
+# bug, different subsystem). This is a monitoring-cadence/execution-
+# fidelity parameter, not part of V8_EXIT_CONFIG/E0 itself -- tightening
+# it doesn't touch the frozen exit spec TS-BATCH validated, it just
+# applies that same spec more accurately. Free to tighten: get_prices()
+# is an in-memory dict read, not a network call, so this doesn't increase
+# Helius/PumpPortal usage at all -- only _evaluate_stale_position_exits()
+# and the throttled batched curve fallback (already independently
+# rate-limited at 60s/mint) run more often, both cheap even at thousands
+# of positions (verified in stress testing: ~150-300ms for 3000).
+_MONITOR_INTERVAL_S = 1.0
 
 # V8-REWIRE VR12/VR13: era tag written to every journal row. Anything
 # opened before this module's V8-REWIRE code actually ran in production
