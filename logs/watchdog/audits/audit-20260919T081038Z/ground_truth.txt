@@ -1,0 +1,54 @@
+# Audit Summary — audit-20260919T081038Z
+
+## Deployed git SHA / working tree
+- Deployed HEAD SHA: `e0dd2c118a9dda2acd874f0f89c900328cbadc17` (EV002). This same SHA is echoed by both the fast and slow watchdog runs (EV005, `latest_fast_run.git_sha`, `latest_slow_run.git_sha`) and by recent job receipts (EV005), so the running code matches what git reports as HEAD.
+- The working tree is **not clean**. EV002 lists numerous modified (`M`) tracked files (e.g. `docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_signals.json`) and many untracked (`??`) files/directories (e.g. `logs/epoch_daily.jsonl`, `research/data/`, `p15_1_2_audit.py`, `scratch_incident_check.py`). No claim about *why* the tree is dirty can be made from this evidence alone — it could be normal log/data churn or leftover ad hoc scripts; the evidence does not distinguish.
+
+## systemd services / timers
+- `quantbot.service`: active/running, last exec success (EV003).
+- `quantbot-research.service`: active/running, last exec success (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead**, but `Result=success`/`ExecMainStatus=0` — consistent with a timer-triggered oneshot that exited cleanly and is simply not currently running (EV003).
+- `quantbot-watchdog-slow.service`: **inactive/dead**, same pattern (EV003).
+- Timers: `quantbot-watchdog-fast.timer` last fired 2026-09-19 08:10:03 UTC (33s before snapshot), next fire 08:15:00 UTC (EV003). `quantbot-watchdog-slow.timer` last fired 08:03:03 UTC (7min before snapshot), next fire 09:03:00 UTC (EV003). Both timers are active and scheduling as expected; the fast/slow services' "inactive" state is therefore consistent with normal oneshot timer behavior, not evidence of failure.
+
+## Cron file validity
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode `0o100644` (EV004).
+- `recent_parser_error_lines` is an empty list (EV004) — no recorded parser errors.
+- Watchdog's own static cron checks (`cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`) all report status `OK`, "parses cleanly, no recent journal parser errors" (EV005).
+- Historical incident log shows all three `cron_static.*` fingerprints previously fired as WARN and later transitioned to `RECOVERED` (EV005, `all_incidents`), meaning at some point in the past there *were* cron-related issues, but none are currently active.
+
+## Watchdog's own most recent run status
+- **Fast profile**: run `d94539233f2a41a6`, started/finished 1789805404.7*, duration ~11ms, 11/11 checks completed, `final_runner_status: "ok"` (EV005).
+- **Slow profile**: run `520ceeaf49234505`, started 1789804992.76, duration ~237ms, 10/10 checks completed, `final_runner_status: "ok"` (EV005).
+- Both runs report git SHA `e0dd2c118a9dda2acd874f0f89c900328cbadc17`, matching EV002 (EV005).
+
+## Active incidents (per `all_incidents` in EV005)
+Two incidents are currently in state `FIRING`:
+1. **`funnel.v8`** — severity **CRITICAL**. First seen 1786748706.9, still firing at last_seen 1789805404.7, `consecutive_failures: 7081`. The latest fast check (EV005) reports 1 candidate stuck at stage `telegram_received` for >120s with no terminal disposition (event_id `bd6003380054eb57`, mint `AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump`, ts 1787710096.66) — described in the evidence itself as "the exact V8-TWIN-FIX failure class." Note the incident record shows a `recovered_at` timestamp (1786810203.15) earlier than `last_seen`, indicating it recovered once and re-fired later; it is firing now.
+2. **`feed.telegram`** — severity **CRITICAL** in the incident record (though the latest individual check result in EV005 shows status `WARN`, not CRITICAL — this discrepancy between the incident's stored severity and the latest single check's reported severity is present in the evidence and not resolved by it). `consecutive_failures: 67`, first_seen 1787300102.0, last_seen 1789805404.7, last_notified 1789786204.6. The check reason: no `telegram_received` event in 26,730s against a 7,200s threshold, explicitly flagged as "ambiguous: could be a legitimately quiet channel or a silently dead connection" (EV005). Evidence does not resolve this ambiguity.
+
+Additionally, `claims.batch.v8_readiness` is `FIRING` at WARN severity, `consecutive_failures: 1036` (EV005). The latest slow check shows batch `v8_readiness`: 3/7 GREEN, 4/7 PARTIAL (items N2, N4, N6, N7), 0 FAIL (EV005). The evidence explicitly notes this batch's underlying CLI exit code would be 0 despite PARTIAL items — i.e., a green exit code would not reflect this incompleteness.
+
+All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `research.path_collection`, `pipeline.research_queue_lag`) show state `RECOVERED` with `consecutive_failures: 0` (EV005) — no current issue per this evidence.
+
+## Research pipeline queue lag
+- EV005 (`pipeline.research_queue_lag`): status `OK`, "consumer caught up (gap=0 bytes)", `queue_size=3425069`, `offset=3425069`, `gap_bytes=0`.
+- EV006 independently reports `queue_size: 3425069`, `queue_offset: "3425069"` — consistent with EV005, confirming zero lag at time of collection.
+- Incident history shows `pipeline.research_queue_lag` fired once (WARN) around 1788334503.9 and recovered by 1788334804.98 (EV005) — a past, resolved event, not a current problem.
+
+## Cron job execution receipts
+- Most recent scheduler-triggered receipts for `k5_nightly`, `epoch_daily`, and `v8_vs_v7_daily` all show `exit_code: 0` (EV005 `recent_job_receipts`, and the `cron_execution.*` check evidence blocks), consistent with the `cron_execution.*` checks reporting OK (EV005).
+- `k5_nightly`'s last run took 319,356 ms (~5.3 min) per its receipt evidence (EV005); other jobs completed in well under a second. No claim can be made about whether this duration is normal — no baseline/threshold evidence is given for job duration itself.
+
+## Other evidence-supported observations
+- `feed.pumpportal` check is OK, based on a successful WebSocket connect log line at 08:09:54 UTC (EV005). The check explicitly states that ~45-60s reconnects are treated as expected and "not evaluated here," so reconnection frequency itself is not being audited by this check.
+- `test_drift.*` collection checks for memecoin (335 tests), research (635 tests), watchdog (103 tests), layer2 (39 tests), and quant-bot (56 tests) all report clean collection (EV005). This confirms test *collection* succeeds; it is not evidence that tests pass, only that they can be gathered by the test runner.
+- `research.path_collection` check for day 2026-09-18 shows 34 scheduled / 34 path files, 100% yield, budget 0/100000 (EV005) — reported OK.
+- `layer2.staleness` check: last Layer 2 audit was `audit-20260918T082304Z`, 23.7h old at check time, with 6 findings, 1 of which is flagged `critical_count: 1` in the evidence (EV005). This audit's own critical finding count is stated but its content is not included in this bundle — cannot characterize what that critical finding is from the evidence given.
+- Host uptime is 6,421,910.49s (~74.3 days) as of EV001, with boot_id `d0a4169b-96f4-4bb1-b365-92ca527627e6`, matching the boot_id recorded in both watchdog runs (EV005) — confirms no reboot occurred between boot and this audit snapshot's watchdog runs.
+
+## Explicit gaps / ambiguities in the evidence
+- The dirty working tree (EV002) is not explained by any commit message, README, or process log in this bundle — cause unknown.
+- `feed.telegram`'s incident-level severity (CRITICAL, EV005 `all_incidents`) does not match the severity shown in the latest individual check result (WARN, EV005 `latest_fast_check_results`). The evidence does not explain this discrepancy (e.g., whether severity escalates differently in the incident tracker vs. the point-in-time check).
+- The one critical finding referenced by `layer2.staleness` (`critical_count: 1`, EV005) is not detailed anywhere in this bundle — its nature is unknown from the evidence provided.
+- Nothing in this bundle documents what `p15_1_2_audit.py` or `scratch_incident_check.py` (both untracked, EV002) do, or whether they were run.
