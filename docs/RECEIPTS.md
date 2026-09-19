@@ -4996,3 +4996,46 @@ suites. Committed `9589c03`, deployed. Live post-restart: zero errors,
 zero duplicates, book actively growing (236 total positions vs 194 at
 the last check, 3 genuinely open and tracking) — the system is doing
 real work under all six fixes from 2026-09-12 through today at once.
+
+## V8_PAPER_MONITOR_INTERVAL_TIGHTENED — 2026-09-19
+
+First real PnL read on the trustworthy population (26 trades closed
+since the 2026-09-18 deploy, all fixes live together): win rate 50%,
+mean -5.1%, net -$3.99 at $3/trade sizing. Net loss concentrated almost
+entirely in 4 `hard_stop` trades (-$6.04 combined); `time_stop` (21
+trades) was roughly flat (+$0.55). Two of the four hard_stop closes
+overshot the -35% target badly: -56.9% and -59.1% realized vs -35%
+configured.
+
+Root cause: `_MONITOR_INTERVAL_S=5.0` was how often `v8_paper`'s own
+loop *checked* `pumpportal_monitor.get_prices()`, not how often that
+cache itself updates — the funded, keyed PP WebSocket subscription
+feeds it continuously in real time. A bonding-curve token can dump 50%+
+in under 5 seconds; the exit rule (correctly, per E0) would have fired
+at the right price if checked sooner, but by the time the next 5s check
+ran, the price had already fallen much further. Same overshoot dynamic
+this document's PumpPortal root-cause entry already found and fixed for
+V7's live trading (~$36 of the ~$38 net loss there) — same class of bug,
+different subsystem, never previously checked for v8_paper specifically
+since it never had real closes to check until this week.
+
+Tightened to 1.0s. This is a monitoring-cadence/execution-fidelity
+parameter, not part of `V8_EXIT_CONFIG`/E0 — applies the already-frozen,
+TS-BATCH-validated exit spec more accurately, doesn't change it. Free:
+`get_prices()` is an in-memory dict read, not a network call, so this
+adds zero Helius/PumpPortal usage — only the local exit-evaluation pass
+(`_evaluate_stale_position_exits`, already O(1)-per-position-in-batch
+after the 2026-09-18 fix) and the independently-throttled (60s/mint)
+batched curve fallback run more often, both cheap even at thousands of
+positions.
+
+709 passing across all v8-related suites (no test depended on the old
+value). Committed `07d09f1`, deployed, live-verified clean (startup log
+confirms `interval=1s`; zero errors, zero duplicates post-restart).
+
+**Not yet confirmed**: whether this actually reduces the overshoot
+magnitude on future `hard_stop` closes — needs more real trades to
+check. n=4 hard_stop trades is not enough to separate "genuine
+5s-interval overshoot" from "these specific 2 tokens crashed faster than
+any reasonable polling interval could catch" — worth re-checking once
+several more hard_stop closes land under the 1s interval.
