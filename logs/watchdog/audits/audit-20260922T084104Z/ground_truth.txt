@@ -1,0 +1,67 @@
+# Audit Summary — audit-20260922T084104Z
+
+## Git state
+- Deployed HEAD SHA: `f5a50974087b3b8b0d934661992a52f94c9f990c` (EV002). This same SHA is echoed in the watchdog fast run (EV005 `latest_fast_run.git_sha`) and in the individual job receipts (EV005 `cron_execution.*` evidence blocks), so the running system corresponds to this commit.
+- Working tree is **not clean**: EV002 lists modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, several `logs/*.csv`, `memecoin/data/memecoin_signals.json`) and a substantial number of untracked files (new log directories, `research/data/`, ad hoc scripts `p15_1_2_audit.py`, `scratch_incident_check.py`, etc.). No commit metadata (message, author, date) is present in the evidence, so I cannot say anything about *when* HEAD was committed or by whom.
+
+## systemd services/timers (EV003)
+- `quantbot.service`: active/running, last exec result success.
+- `quantbot-research.service`: active/running, last exec result success.
+- `quantbot-watchdog-fast.service`: **inactive/dead** (as a persistent service — this is expected for a timer-triggered oneshot; `Result=success` from its last invocation).
+- `quantbot-watchdog-slow.service`: **inactive/dead**, same pattern, `Result=success` last run.
+- `quantbot-watchdog-fast.timer`: scheduled, last fired 59s before snapshot (08:40:03 UTC), next fire 08:45:00 UTC — timer is actively cycling.
+- `quantbot-watchdog-slow.timer`: last fired 37min before snapshot (08:03:03 UTC), next fire 09:03:00 UTC — timer is actively cycling.
+
+No evidence of any systemd unit in a `failed` state.
+
+## Cron (EV004)
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, each mode `0o100644` (root-writable, group/other read, not world-writable-executable — a normal cron.d permission pattern).
+- `recent_parser_error_lines` is an empty list — no recent parser errors recorded for these files at evidence-collection time.
+- Content of all three files parses as valid single-line cron entries invoking `watchdog.exec_wrapper` around the respective job scripts.
+- The watchdog's own `cron_static.*` checks (EV005) independently report `OK … parses cleanly, no recent journal parser errors` for all three jobs, corroborating EV004.
+
+## Watchdog — most recent runs and incidents (EV005)
+**Fast profile**, run `598d55576ced4d15`, started 1790066404.71 (epoch), duration ~13.7ms, `final_runner_status: ok`, 11/11 checks completed, at SHA `f5a5097…` matching EV002.
+- Of the 11 checks: 10 report `OK`, 1 reports `CRITICAL`:
+  - `funnel.v8` — **CRITICAL**: one candidate (event_id `bd6003380054eb57`, mint `AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump`) entered the `telegram_received` funnel stage at ts 1787710096.66 and was never resolved to a terminal disposition, exceeding the 120s threshold. The evidence explicitly names this "the exact V8-TWIN-FIX failure class."
+  - In `all_incidents`, `funnel.v8` shows `state: FIRING`, `first_seen: 1786748706.89`, `consecutive_failures: 7963`, `last_notified: 1790063704.69`. There is one `recovered_at` timestamp (1786810203.15) in that same record, which is earlier than `last_seen` (1790066404.73) — indicating this incident record recovered once historically but is firing again now and has been firing continuously for a large number of consecutive check cycles. This is an **active, ongoing incident** as of the snapshot time.
+
+**Slow profile**, run `f0b01845403f4d15`, started 1790064192.38, duration ~15.3ms, `final_runner_status: ok`, 10/10 checks completed, same SHA.
+- 8 of 10 checks `OK`, one `WARN`:
+  - `claims.batch.v8_readiness` — **WARN**: batch `v8_readiness` has 4/7 items in `PARTIAL` state (`N2, N4, N6, N7`), 3/7 `GREEN`, 0 `FAIL`. Evidence text notes this batch's own exit code would report success (0) despite the PARTIAL items — i.e., a documented gap between exit-code-level "pass" and actual completeness.
+  - Corresponding `all_incidents` entry for `claims.batch.v8_readiness` shows `state: FIRING`, `first_seen: 1786585581.22`, `consecutive_failures: 1118`, `recovered_at: null` — this is an **ongoing, never-recovered** incident as of the snapshot.
+- `claims.batch.rc_closure`: 3/3 GREEN, no open incident.
+- All four `test_drift.collection.*` checks and `test_drift.stale_mocks` report OK/clean collection.
+- `layer2.staleness`: OK, last Layer 2 audit was 22.9h prior (`audit-20260921T090921Z`, 6 findings, 0 critical). Its incident record shows `state: RECOVERED`.
+- `research.path_collection`: OK, 2026-09-21 shows 10/10 scheduled tokens producing path files (100% yield), budget 0/100000 used. Incident record `RECOVERED`.
+
+## Active incidents summary (EV005 `all_incidents`)
+Two incidents are `FIRING` (unresolved) at snapshot time:
+1. `funnel.v8` — CRITICAL, 7963 consecutive failures, last seen at the fast-run timestamp itself.
+2. `claims.batch.v8_readiness` — WARN, 1118 consecutive failures, `recovered_at: null`.
+
+All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `research.path_collection`, `feed.telegram`, `pipeline.research_queue_lag`) show `state: RECOVERED` with non-null `recovered_at` values.
+
+## Cron job execution receipts (EV005 `recent_job_receipts`, `cron_execution.*`)
+- `k5_nightly`, `v8_vs_v7_daily`, `epoch_daily` all show a consistent nightly pattern of `exit_code: 0` runs going back through the listed history (8 cycles shown, most recent 1790036101 / 1790035081 / 1790034901).
+- Each latest run is within its respective deadline window per the `cron_execution.*` check evidence (e.g., k5_nightly: started 1790036101, deadline 1790038800).
+
+## Research pipeline queue lag
+- EV005 `pipeline.research_queue_lag`: status OK, `queue_size: 3490457`, `offset: 3490457`, `gap_bytes: 0` — consumer fully caught up at check time.
+- EV006 independently reports the same `queue_size: 3490457` and `queue_offset: "3490457"`, consistent with EV005 (zero lag) at the moment both were captured.
+- Historical incident record for `pipeline.research_queue_lag` shows a past `RECOVERED` episode (`first_seen: 1788334503.89`, `recovered_at: 1789916704.71`) — meaning lag has occurred before but is not currently active.
+
+## Spool / feed checks
+- `pipeline.research_spool`: OK, 0 failed inserts in trailing 2.0h window; evidence notes 68 total historical lines on disk but explicitly states this total is "not itself evidence of an active problem" and the sample count is below the alerting floor. EV002 confirms `research/spool/dropped_fields.jsonl` and `research/spool/failed_inserts.jsonl` exist as untracked files, but no content/count for these files is given beyond the aggregated check evidence.
+- `feed.telegram`: OK, last event 2774.9s ago against a 7200s threshold (EV005). Incident history shows this check has fired and recovered before (`recovered_at: 1790063704.69`).
+- `feed.pumpportal`: OK, last observed event was a successful WS connect at 08:39:46 UTC (EV005); the check explicitly states reconnects every 45-60s are "expected rotation behavior, not evaluated here" — so frequent reconnects, if present, would not by themselves indicate a problem per this check's own logic.
+
+## Receipts file (EV007)
+- `docs/RECEIPTS.md`-related receipts tail: mtime 1790035081.93, length 274735 bytes. This mtime matches the `v8_vs_v7_daily` job's `finished_at` (1790035081.94, EV005 evidence block), consistent with that job having written to this artifact. No content of the file itself is given, so I cannot verify what the N6/N7 row actually contains.
+
+## Explicit gaps / ambiguities (not filled in)
+- No commit message, author, or diff content is available for HEAD SHA `f5a5097…` — cannot characterize what the deployed code changes contain.
+- The `funnel.v8` incident's `recovered_at` (1786810203.15) predates its `last_seen`/current firing state by a large margin; the evidence doesn't explain the intermediate history between that single recovery and the current 7963-failure streak — I cannot say whether it has cycled recovered/firing multiple times or firing continuously, only that it is firing now and was, at some earlier point, recorded as recovered once.
+- No systemd `journalctl` excerpts beyond the single PumpPortal connect line and cron "recent_parser_error_lines" (empty) are provided, so broader log-level evidence beyond what's quoted is not available.
+- Content/details of the `N2, N4, N6, N7` PARTIAL claim items in `v8_readiness` are not in evidence — only their IDs and aggregate status are given.
+- No evidence establishes wall-clock alignment between `boot_id`/`uptime_s` (EV001) and any service restart — I can only confirm the watchdog runs and services share the same `boot_id` (`d0a4169b-96f4-4bb1-b365-92ca527627e6`, EV001, EV005), indicating no reboot occurred between those runs and now.

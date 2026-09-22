@@ -1,0 +1,100 @@
+[
+  {
+    "finding_id": "F1",
+    "severity": "INFO",
+    "component": "positions.json _close batching fix",
+    "claim": "Fixed: split _close() into _close_no_save()/_finish_close()/_close_batch(); ~300-500x faster; 52/52 tests in file, 709 across all v8-related suites; committed 9589c03, deployed.",
+    "observed_ground_truth": "Ground truth confirms deployed HEAD SHA f5a5097... and a nightly cron/watchdog pattern of successful runs, but has no commit metadata, no diff content, and no test-run evidence for commit 9589c03 or the claimed 709-test suite count.",
+    "expected_ground_truth": "The claim implies a specific prior commit (9589c03) with a measured 89.66s -> 150-300ms performance fix and a verified test count, which would need to be visible in commit history or CI logs to confirm.",
+    "evidence_ids": [
+      "EV002",
+      "EV005"
+    ],
+    "operational_impact": "Cannot verify the performance fix or test coverage claims from available evidence; if false, the batch-close O(n) risk described could still be present in production.",
+    "suggested_next_step": "Run `git log --oneline -- <positions module>` and `git show 9589c03` to confirm the commit exists and inspect the diff; re-run the test suite and time the batch-close benchmark.",
+    "confidence": "medium",
+    "audit_id": "audit-20260922T084104Z",
+    "timestamp": 1790066536.4790795
+  },
+  {
+    "finding_id": "F2",
+    "severity": "INFO",
+    "component": "book growth claim (positions count)",
+    "claim": "Live post-restart: zero errors, zero duplicates, book actively growing (236 total positions vs 194 at the last check, 3 genuinely open and tracking).",
+    "observed_ground_truth": "No evidence in the ground-truth summary (EV002/EV005/EV006) reports positions.json content or a position count; memecoin_signals.json is listed only as a modified tracked file with no content shown.",
+    "expected_ground_truth": "A verifiable claim of this kind would require positions.json content or a corresponding check output showing counts of 236 vs 194.",
+    "evidence_ids": [
+      "EV002"
+    ],
+    "operational_impact": "Unverified growth/error-free claim could mask duplicate-close or error conditions not caught by current watchdog checks.",
+    "suggested_next_step": "Inspect positions.json directly (`jq '. | length'` or equivalent) and cross-check against journal/log entries for duplicate close events.",
+    "confidence": "low",
+    "audit_id": "audit-20260922T084104Z",
+    "timestamp": 1790066536.4790876
+  },
+  {
+    "finding_id": "F3",
+    "severity": "WARN",
+    "component": "v8_paper monitor interval tightening (07d09f1)",
+    "claim": "Tightened _MONITOR_INTERVAL_S from 5.0 to 1.0s; committed 07d09f1, deployed, live-verified clean (startup log confirms interval=1s; zero errors, zero duplicates post-restart).",
+    "observed_ground_truth": "Ground truth has no evidence of a startup log confirming interval=1s, no commit 07d09f1 in the git evidence, and no independent confirmation of zero errors/duplicates for v8_paper specifically. The only related ground-truth signal is the ongoing funnel.v8 CRITICAL incident (7963 consecutive failures) describing unresolved candidates in the v8 funnel, which is a different but adjacent v8 subsystem issue.",
+    "expected_ground_truth": "If deployed and live-verified as claimed, watchdog checks or logs should reflect a clean v8_paper monitor loop; the currently firing funnel.v8 CRITICAL incident is not mentioned or reconciled against this claim.",
+    "evidence_ids": [
+      "EV005",
+      "EV002"
+    ],
+    "operational_impact": "The claim of a clean, error-free live-verified deploy is not corroborated by evidence, and coexists with an actively firing CRITICAL incident in a related v8 funnel path, raising doubt about whether 'zero errors' is accurate for the whole v8 pipeline.",
+    "suggested_next_step": "Grep the v8_paper service startup logs for 'interval=1s' and check timestamps against the funnel.v8 incident's first_seen (1786748706.66) to see if they correlate.",
+    "confidence": "medium",
+    "audit_id": "audit-20260922T084104Z",
+    "timestamp": 1790066536.4790916
+  },
+  {
+    "finding_id": "F4",
+    "severity": "INFO",
+    "component": "PnL / trade statistics claim",
+    "claim": "26 trades closed since 2026-09-18 deploy; win rate 50%, mean -5.1%, net -$3.99 at $3/trade; 4 hard_stop trades overshooting to -56.9%/-59.1% vs -35% target.",
+    "observed_ground_truth": "No trade-level PnL, win-rate, or overshoot data appears anywhere in the ground-truth evidence (EV001-EV007); the closest related evidence is the funnel.v8 CRITICAL incident about unresolved candidates, which is not the same as closed-trade PnL reporting.",
+    "expected_ground_truth": "Verifying this claim would require trade ledger/PnL evidence not present in the audited evidence set.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "Financial performance figures are unverifiable from current evidence; decisions based on this PnL data cannot be independently corroborated.",
+    "suggested_next_step": "Pull the v8_paper trade ledger/closed-positions log directly and recompute win rate and mean/net PnL for the stated date range.",
+    "confidence": "low",
+    "audit_id": "audit-20260922T084104Z",
+    "timestamp": 1790066536.4790945
+  },
+  {
+    "finding_id": "F5",
+    "severity": "WARN",
+    "component": "funnel.v8 CRITICAL incident vs. claims of clean deploys",
+    "claim": "Both claims (positions batching fix and monitor interval tightening) assert clean, error-free, live-verified deploys with 'the system is doing real work under all six fixes... at once' and 'zero errors, zero duplicates post-restart.'",
+    "observed_ground_truth": "EV005 shows funnel.v8 is CRITICAL and FIRING with 7963 consecutive failures as of the snapshot, and claims.batch.v8_readiness is WARN/FIRING with 1118 consecutive failures and recovered_at: null -- both directly contradicting a narrative of a fully clean, error-free v8 system.",
+    "expected_ground_truth": "If all v8 fixes were deployed cleanly with zero errors as claimed, the funnel.v8 and v8_readiness checks would be expected to show OK/RECOVERED rather than actively firing CRITICAL/WARN incidents.",
+    "evidence_ids": [
+      "EV005"
+    ],
+    "operational_impact": "Documentation claims of a fully healthy, error-free v8 deployment are inconsistent with two currently firing, long-running incidents in the same v8 subsystem, suggesting the claims overstate system health or refer to a narrower scope than the whole v8 pipeline.",
+    "suggested_next_step": "Correlate the funnel.v8 incident's first_seen/last_seen timestamps and the v8_readiness PARTIAL item IDs (N2,N4,N6,N7) against the deploy timestamps of commits 9589c03 and 07d09f1 to determine if these incidents predate, postdate, or overlap the claimed fixes.",
+    "confidence": "high",
+    "audit_id": "audit-20260922T084104Z",
+    "timestamp": 1790066536.479097
+  },
+  {
+    "finding_id": "F6",
+    "severity": "INFO",
+    "component": "Commit SHA / version correlation",
+    "claim": "Committed 9589c03, deployed. / Committed 07d09f1, deployed.",
+    "observed_ground_truth": "Ground truth's only known deployed SHA is f5a50974087b3b8b0d934661992a52f94c9f990c (EV002/EV005); no commit history, ancestry, or message list is available to confirm 9589c03 or 07d09f1 are ancestors of this HEAD.",
+    "expected_ground_truth": "If both commits are truly deployed, they should appear as ancestors of the current HEAD SHA in git log.",
+    "evidence_ids": [
+      "EV002"
+    ],
+    "operational_impact": "Cannot confirm these specific fixes are actually part of the currently running code without commit ancestry verification.",
+    "suggested_next_step": "Run `git merge-base --is-ancestor 9589c03 f5a5097...` and same for 07d09f1 to confirm both are in the deployed history.",
+    "confidence": "medium",
+    "audit_id": "audit-20260922T084104Z",
+    "timestamp": 1790066536.479099
+  }
+]
