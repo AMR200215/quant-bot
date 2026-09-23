@@ -474,7 +474,26 @@ def _curve_fallback_price(token_address: str) -> tuple[float, str]:
 # CLAUDE.md explicitly rules out under SOCIAL_ALERT_ONLY) and throttled
 # per-mint so a token that's genuinely gone quiet doesn't get re-polled
 # every cycle either.
-_ONGOING_FALLBACK_THROTTLE_S = 60.0
+#
+# 2026-09-23: tightened from 60.0, deliberately, as a time-boxed
+# experiment -- this was the real bottleneck behind hard_stop overshoot
+# for curve_fallback-priced positions (92% of the book), NOT
+# _MONITOR_INTERVAL_S (that only governs how often this loop checks an
+# already-fresh price; this throttle governs how often a fresh price
+# becomes available at all for mints with no live PP tick). Matches
+# _MONITOR_INTERVAL_S exactly -- no benefit to going tighter than the
+# loop that consumes it. Real cost, measured against this repo's actual
+# post-2026-09-19 usage pattern (avg 33.0% of time with >=1 open
+# position, well under CURVE_BATCH_SIZE so always 1 call/tick when
+# active): ~28,500 credits/day, ~2.85%/day of the free tier's 1M/month
+# budget -- sustainable for weeks, not an instant-exhaustion risk. User
+# decision 2026-09-23: run it at this cadence deliberately until credit
+# pressure (429s / usage dashboard) says otherwise, using whatever real
+# hard_stop data lands in that window to decide the next step. Revert
+# to something looser (or move to accountSubscribe push-based pricing
+# instead of polling) if usage climbs faster than this estimate once
+# other Helius consumers are accounted for.
+_ONGOING_FALLBACK_THROTTLE_S = 1.0
 _last_fallback_attempt: dict = {}
 _fallback_attempt_lock = threading.Lock()
 

@@ -5039,3 +5039,69 @@ check. n=4 hard_stop trades is not enough to separate "genuine
 5s-interval overshoot" from "these specific 2 tokens crashed faster than
 any reasonable polling interval could catch" — worth re-checking once
 several more hard_stop closes land under the 1s interval.
+
+## V8_PAPER_FALLBACK_THROTTLE_TIGHTENED — 2026-09-23
+
+**Follow-up, and the real answer to the above.** Checked once 4 real
+post-09-19 hard_stop closes had landed (all on `entry_source=curve_fallback`,
+all closing 61-122s after entry, overshooting -35% to -63% through -90%)
+— the 09-19 fix tightened the wrong knob for this population.
+`_MONITOR_INTERVAL_S` only governs how often the loop *checks* an
+already-fresh price (from `pumpportal_monitor.get_prices()`'s live,
+continuously-updated cache). It does nothing for `_ONGOING_FALLBACK_THROTTLE_S`
+(`memecoin/v8_paper.py:477`), the separate per-mint cooldown on the
+on-chain `getMultipleAccounts` fallback call used whenever no live PP
+tick exists for a mint. That throttle was still 60.0s — untouched by
+the 09-19 deploy. **271/294 (92%) of all V8 entries to date are
+`curve_fallback`-sourced** — i.e. almost the entire book was still
+capped at one real price sample per 60s regardless of the 1s loop
+interval. A rug that completes inside that 60s window is invisible
+until the throttle clears, at which point the very first post-entry
+sample already reflects the crash — hard_stop fires within the same 1s
+cycle it sees the bad price, it just never got to see anything sooner.
+
+**Change**: `_ONGOING_FALLBACK_THROTTLE_S` 60.0 → 1.0 (matches
+`_MONITOR_INTERVAL_S` exactly — no benefit tightening past what the loop
+that consumes it can act on).
+
+**Cost check before deploying** (Helius free tier: 10 req/s ceiling,
+1M credits/month, `getMultipleAccounts` ≈ 1 credit/call, per
+[helius.dev/docs/billing/rate-limits](https://www.helius.dev/docs/billing/rate-limits)):
+- Rate-limit ceiling: `CURVE_BATCH_SIZE=100` covers this bot's
+  all-time peak concurrent-open count (180, from the pre-fix backlog)
+  in 2 calls — 1s cadence needs at most ~2 req/s, nowhere near the 10/s
+  ceiling.
+- Credit budget (the real constraint): measured against this repo's
+  actual post-2026-09-19 usage — positions open 33.0% of wall-clock
+  time, average concurrency well under the 100-mint batch size, so 1
+  call/sec whenever anything is open. That's **~28,500 credits/day,
+  ~2.85%/day of the 1M/month free budget** — sustainable for weeks at
+  this measured rate, not an instant-exhaustion risk. (Naive worst-case
+  math assuming something is *always* open, done before pulling the
+  real usage number, gave a much scarier ~2.6M credits/month — the real
+  historical idle/active split makes this far cheaper than that.)
+- Audited other Helius consumers for anything safe to pause and free up
+  more headroom: wallet intelligence (`wallet_db/*`) was already fully
+  paused 2026-06-19 (cron + GitHub Actions both disabled, "Helius
+  quota" in the cron comment) — nothing left there. V7's live-trading
+  preflight (`portfolio.py::_open_live_position`, the Helius curve
+  snapshot) is already gated by `LIVE_TRADING` and fires zero calls
+  while it's `false`. V7's own screener/`progress_capture` (feeds V7's
+  separate paper book, runs on every real Telegram alert) is the one
+  remaining always-on consumer — left untouched, it's a live product,
+  not dead weight, pausing it was explicitly out of scope for this
+  change.
+
+**Decision basis**: user directive 2026-09-23 — deliberately run this
+at the tightest cadence the loop can use, treat it as a time-boxed
+data-gathering experiment rather than a permanent tuned value, and use
+whatever real hard_stop data lands to inform the next decision. Revisit
+(loosen, or replace with `accountSubscribe`-based push pricing instead
+of polling — proposed once before on 2026-08-03 and declined then
+because Helius had just been downgraded to free that same day) if
+actual usage climbs faster than the 2.85%/day estimate once combined
+with the rest of the bot's Helius calls, or if 429s start showing up
+anywhere.
+
+52/52 passing in `memecoin/tests/test_v8_paper.py` (no test asserted
+the old throttle value).
