@@ -1,0 +1,48 @@
+# Audit Summary — Evidence Bundle audit-20260923T084310Z
+
+## Deployed git SHA / working tree state
+- Deployed HEAD SHA: `8337624c9d108d3ff402dd9e939820679cac6d5b` (EV002). This same SHA is echoed by the most recent fast and slow watchdog runs (EV005 `latest_fast_run.git_sha`, `latest_slow_run.git_sha`), confirming the running processes correspond to this commit.
+- The working tree is **not clean**. EV002 lists 5 modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_signals.json`) and 19 untracked paths (logs, research spool/data directories, two ad-hoc scripts `p15_1_2_audit.py` and `scratch_incident_check.py`, etc.). No evidence indicates whether these are staged/committed later — as of this snapshot the tree is dirty (EV002).
+
+## systemd services / timers
+- `quantbot.service`: active/running, last exec success (EV003).
+- `quantbot-research.service`: active/running, last exec success (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead** as a persistent service, but `Result=success`/`ExecMainStatus=0` (EV003) — consistent with a timer-triggered oneshot that exits after each run rather than a failure.
+- `quantbot-watchdog-slow.service`: same pattern — inactive/dead, last result success (EV003).
+- Timer schedule (EV003): `quantbot-watchdog-fast.timer` last fired 2026-09-23 08:40:03 UTC (3m5s before the listing), next fire 08:45:00 UTC. `quantbot-watchdog-slow.timer` last fired 08:03:03 UTC (40m ago), next fire 09:03:00 UTC. Both timers are active and scheduled; nothing in EV003 indicates a missed or failed timer activation.
+
+## Cron file validity / parser errors
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, each mode `0o100644`, each with a single well-formed line invoking `watchdog.exec_wrapper` (EV004).
+- `recent_parser_error_lines` is an empty list (EV004) — no parser errors recorded.
+- Watchdog's own static cron checks corroborate this: `cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily` all reported `OK`, "parses cleanly, no recent journal parser errors" (EV005 latest_fast_check_results).
+- Historical incident log shows `cron_static.epoch_daily` and `cron_static.v8_vs_v7_daily` each had a prior WARN incident that reached state `RECOVERED` (EV005 all_incidents) — i.e., there *was* a past parser/static issue for these two jobs, but it is not currently active.
+
+## Watchdog's own most recent run status
+- Latest fast run (`run_id 367331bf332444fa`): started/finished 1790152804.7597/.7696 (~9.9ms duration), 11/11 checks completed, `final_runner_status: ok` (EV005).
+- Latest slow run (`run_id ca1b05f00d49431d`): started/finished 1790150594.182/.202 (~19.8ms duration), 10/10 checks completed, `final_runner_status: ok` (EV005).
+- Both runs report SHA `8337624c9d108d3ff402dd9e939820679cac6d5b`, matching EV002.
+
+### Active incidents (from EV005 `all_incidents`)
+- **`funnel.v8` — CRITICAL, state FIRING**, first_seen 1786748706 (long-running), last_seen 1790152804.7686608, `consecutive_failures: 8255`. Corresponding check result in the latest fast run (`funnel.v8`) is CRITICAL: one candidate entered `telegram_received` stage (event_id `bd6003380054eb57`, mint `AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump`, ts 1787710096.66) with no terminal disposition recorded within the 120s window — flagged as the "V8-TWIN-FIX failure class" (silent disappearance). This is currently open and unresolved.
+- **`claims.batch.v8_readiness` — WARN, state FIRING**, `consecutive_failures: 1146`, last_seen 1790150594.2007463. Latest check result: 4/7 items (`N2, N4, N6, N7`) are PARTIAL, 3/7 GREEN, 0 FAIL (EV005). Evidence explicitly notes the batch's own CLI exit code would read 0 (success) despite the PARTIAL items — i.e., a documented gap between "exit code green" and "actually complete."
+- All other listed incidents (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `research.path_collection`, `feed.telegram`, `pipeline.research_queue_lag`) show `state: RECOVERED` with `consecutive_failures: 0` (EV005) — these were past problems, not currently active.
+
+## Research pipeline queue lag
+- `pipeline.research_queue_lag` check: status OK, `gap_bytes: 0`, `queue_size: 3511111`, `offset: 3511111` (EV005), directly matching EV006 (`queue_size: 3511111`, `queue_offset: "3511111"`). Consumer is caught up with no lag at this snapshot.
+- Note the incident log shows this same check previously fired a WARN (first_seen 1788334503.886211) that later recovered at 1790077504.7665389 (EV005) — a past lag episode, now resolved per current evidence.
+
+## Other evidence-supported observations
+- **Cron job executions**: All three scheduled jobs (`k5_nightly`, `epoch_daily`, `v8_vs_v7_daily`) show `exit_code: 0` for their most recent scheduler-triggered runs, both in the dedicated `cron_execution.*` checks (EV005 latest_fast_check_results) and in the `recent_job_receipts` list going back at least 7 cycles (EV005) — all `exit_code: 0`.
+- **`docs/RECEIPTS.md`**: EV007 shows an mtime of 1790121481.75, essentially identical to the `v8_vs_v7_daily` receipt's `started_at`/`finished_at` timestamps (1790121481.6271234 / 1790121481.764281, EV005) — consistent with that job having written to this file at that time. EV002 also lists `docs/RECEIPTS.md` as modified in the working tree, consistent with a recent write not yet reflected in a clean commit.
+- **Test collection**: All five test suites (`tests_memecoin` 335 tests, `tests_research` 635 tests, `tests_watchdog` 103 tests, `tests_layer2` 39 tests, `tests_quant-bot` 56 tests) collect cleanly with no drift detected (EV005 latest_slow_check_results). A past `test_drift.collection.tests_memecoin` incident existed but is RECOVERED (EV005 all_incidents).
+- **Feed checks**: `feed.telegram` OK, last event 3705s ago vs. 7200s threshold (EV005); `feed.pumpportal` OK based on a successful WS connect log line at 08:40:00 UTC (EV005). Both checks have prior WARN incidents in their history that are now RECOVERED (EV005 all_incidents).
+- **Layer 2 audit staleness**: OK, last Layer 2 audit `audit-20260922T084104Z` was 23.3h old with 6 findings, 0 critical (EV005).
+- **Research path collection**: OK for 2026-09-22 — 9 scheduled tokens, 9 path files, 100% yield, 0/100000 budget used (EV005).
+- **Research spool failures**: OK — 0 failed inserts in the last 2 hours; total historical lines on disk is 68, explicitly noted as "not itself evidence of an active problem" (EV005).
+- **Host uptime/boot**: EV001 reports uptime ~6,769,462.69s (~78.4 days) with `boot_id d0a4169b-96f4-4bb1-b365-92ca527627e6`, matching the boot_id recorded in both the latest fast and slow watchdog runs (EV005) — confirming no reboot occurred between the last watchdog runs and this snapshot.
+
+## Explicit gaps / ambiguities (no assumption made)
+- No evidence in this bundle explains **what** the "N2, N4, N6, N7" partial items in `v8_readiness` actually require to reach GREEN, nor when this WARN state began beyond `first_seen: 1786585581.22` — the specific remediation content is not in evidence.
+- No evidence shows the **content or diff** of the dirty/untracked files listed in EV002 — only their paths and status letters. Whether these changes are benign (log rotation) or contain unreviewed logic changes cannot be determined from EV002 alone.
+- The `funnel.v8` incident's `recovered_at: 1786810203.1470792` field is present alongside `state: FIRING` and a `last_seen` far later than `recovered_at` (EV005) — the record shows an earlier recovery timestamp coexisting with a currently-firing state; evidence does not clarify whether this is a stale field from a prior recovery cycle or how the state machine treats it. This is noted as an ambiguity in the raw record itself, not resolved by any other evidence provided.
+- No evidence (e.g., systemd `journalctl` excerpts beyond the single connect line) was provided to independently verify `quantbot.service`/`quantbot-research.service` health beyond the single-line `systemctl show`-style status in EV003.
