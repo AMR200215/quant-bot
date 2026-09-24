@@ -584,7 +584,7 @@ def _new_position_from_alert(event, progress: float, entry_price: float, entry_s
         "entry_price": entry_price,       # curve-baseline entry (N6 requirement)
         "entry_time": now,
         "last_priced_at": now,            # 2026-09-17: real-observation clock for _STALE_DATA_DEADMAN_S, distinct from entry_time
-        "size_usd": 1.0,                  # paper-only; size is irrelevant to pct outcomes
+        "size_usd": 3.0,                  # 2026-09-24: was 1.0, bumped to match V7's real live-trade sizing ($3-5/trade) for readable $ comparisons; paper-only, doesn't affect pct outcomes or exit logic
         "current_price": entry_price,
         "peak_price": entry_price,
         "status": "open",

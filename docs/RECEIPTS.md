@@ -5144,3 +5144,25 @@ to it; (2) pausing V7's own screener/`progress_capture` to free more
 Helius headroom — it's a live, separate paper-trading product, not
 dead weight, and stopping it reduces V7's own data collection, which is
 a call to make explicitly rather than as a side effect of a V8 fix.
+
+## V8_PAPER_SIZE_USD_BUMPED — 2026-09-24
+
+`size_usd` was hardcoded to `1.0` since this file's origin (comment:
+"paper-only; size is irrelevant to pct outcomes") — true for `pnl_pct`,
+but it made every `pnl_usd`/net-$ figure in the journal and this
+document artificially small and easy to misread against V7's real
+$3-5/trade live sizing. User asked directly ("u r using 3$?") after a
+PnL readout, then asked to switch to $3. Changed to `3.0`
+(`memecoin/v8_paper.py:587`) to match V7's real sizing for readable $
+comparisons going forward.
+
+**Scope**: cosmetic/reporting only — `pnl_usd = pnl_pct * size_usd`,
+so this doesn't touch exit logic, gate logic, or any decision the bot
+makes; purely scales the $ figure. Only affects positions opened after
+this deploy — all 306 existing journal rows stay at their original
+`size_usd=1.0` and their $ figures don't retroactively change (their
+`pnl_pct` values are unaffected and remain the honest source of truth
+for historical comparisons). 52/52 passing in
+`memecoin/tests/test_v8_paper.py` (one test fixture hardcodes its own
+`size_usd=1.0` directly, bypassing this code path — unaffected, left
+as-is).
