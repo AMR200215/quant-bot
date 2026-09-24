@@ -998,6 +998,7 @@ class V8PaperBook:
                     continue
                 prices = _pp_monitor.get_prices()
                 stale_mints = []
+                fallback_gap = {}  # mint -> seconds since the last fallback attempt for it
                 now = time.time()
                 for pos in open_pos:
                     price = prices.get(pos["token_address"], 0)
@@ -1011,9 +1012,22 @@ class V8PaperBook:
                             _last_fallback_attempt[pos["token_address"]] = now
                     if due:
                         stale_mints.append(pos["token_address"])
+                        fallback_gap[pos["token_address"]] = now - last if last else None
                 if stale_mints:
                     fallback_prices = _curve_fallback_prices_batch(stale_mints)
+                    # 2026-09-24: one line per resolved fallback sample -- cheap
+                    # (bounded by _ONGOING_FALLBACK_THROTTLE_S per mint, same as
+                    # the RPC call it accompanies) and the only way to directly
+                    # audit real sample cadence after the fact. Added after a
+                    # -91% hard_stop overshoot (V8a57ffd, 2026-09-24) couldn't be
+                    # root-caused post-hoc -- no per-sample record existed to
+                    # confirm whether the throttle fired on schedule or the
+                    # price genuinely moved >55% between two on-time samples.
                     for mint, price in fallback_prices.items():
+                        gap = fallback_gap.get(mint)
+                        log.info("v8_paper: fallback price sample mint=%s price=$%.10f gap_since_last_attempt=%s",
+                                 mint[:8] if mint else "?", price,
+                                 f"{gap:.1f}s" if gap is not None else "first")
                         self.update_price(mint, price)
                 # Always runs, even if every price lookup above failed --
                 # see docstring. update_price() above already closes any

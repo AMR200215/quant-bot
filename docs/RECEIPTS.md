@@ -5105,3 +5105,42 @@ anywhere.
 
 52/52 passing in `memecoin/tests/test_v8_paper.py` (no test asserted
 the old throttle value).
+
+**Follow-up check, 2026-09-24 (~22h after deploy):** 4 new hard_stop
+closes landed, all `curve_fallback`. 3/4 landed within ~4pp of the -35%
+target (-38.98%, -39.17%, -35.18% — a real, clear improvement over the
+pre-fix baseline where all 4 cases overshot by 28-56pp). The 4th
+(`V8a57ffd`, opened at progress=0.8985, very close to graduation)
+overshot to -91.07%, closing 191s after entry — essentially as bad as
+the pre-fix cases. Investigated: ruled out batch contention (only 2
+positions open concurrently during its lifetime, nowhere near
+`CURVE_BATCH_SIZE=100`); confirmed via DexScreener the crash was real
+and durable, not a bad on-chain read (current live price ≈ the paper
+exit price). Could not fully confirm whether the 1s throttle actually
+sampled multiple times during those 191s, because **no log line existed
+recording individual fallback price samples** — only position open/close
+are logged. Most likely explanation given the evidence: a genuinely
+fast flash-crash landing entirely inside one sample gap, which even a
+1s interval can't guarantee catching — but this is inference, not proof.
+
+**Fix for the observability gap** (same commit as the follow-up):
+`_monitor_loop` now logs one INFO line per resolved fallback price
+sample (`v8_paper: fallback price sample mint=... price=$... gap_since_last_attempt=...`),
+recording the actual elapsed time since that mint's previous fallback
+attempt. Bounded in volume — fires at most once per
+`_ONGOING_FALLBACK_THROTTLE_S` per mint currently needing the fallback
+path, same rate as the RPC call it accompanies, so no meaningful extra
+log volume. Next time a hard_stop overshoot like `V8a57ffd` happens,
+the real sample cadence will be directly visible in `journalctl`
+instead of needing to be reconstructed after the fact from indirect
+evidence.
+
+**Deliberately not done as part of this same change** (flagged as
+bigger, separate decisions, not blindly auto-applied): (1) switching
+from polling to Helius `accountSubscribe` push-based pricing — would
+remove the sample-gap problem entirely, but needs its own investigation
+into free-tier `accountSubscribe` limits/feasibility before committing
+to it; (2) pausing V7's own screener/`progress_capture` to free more
+Helius headroom — it's a live, separate paper-trading product, not
+dead weight, and stopping it reduces V7's own data collection, which is
+a call to make explicitly rather than as a side effect of a V8 fix.
