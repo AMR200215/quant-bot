@@ -1,0 +1,52 @@
+# Audit Summary — audit-20260924T083623Z
+
+## Deployed SHA / working tree
+- Deployed HEAD SHA: `9f8635c1086e399a4a805bb189616b9b1554868c` (EV002). This same SHA is echoed by the latest watchdog fast and slow runs (EV005 `latest_fast_run.git_sha`, `latest_slow_run.git_sha`) and by all recent job receipts (EV005 `recent_job_receipts` / `latest_receipt.git_sha`), confirming the running code matches this commit.
+- The working tree is **not clean**: EV002 lists 5 modified tracked files (`docs/RECEIPTS.md`, `docs/V8_INPUTS.md`, `logs/memecoin_social_journal.csv`, `logs/trade_telemetry_summary.csv`, `memecoin/data/memecoin_signals.json`) and 19 untracked paths, including code (`p15_1_2_audit.py`, `scratch_incident_check.py`) and multiple log/data directories (EV002).
+
+## systemd services / timers
+- `quantbot.service`: active/running, last exit success (EV003).
+- `quantbot-research.service`: active/running, last exit success (EV003).
+- `quantbot-watchdog-fast.service`: **inactive/dead** as a persistent service, but `Result=success`/`ExecMainStatus=0` from its last invocation (EV003). It is timer-triggered: `quantbot-watchdog-fast.timer` last fired 2026-09-24 08:35:03 UTC (1m17s before the snapshot) and is due again in ~3m39s (EV003) — this is expected behavior for a oneshot-style timer unit, not a failure.
+- `quantbot-watchdog-slow.service`: same pattern — inactive/dead but last result success; timer last fired 08:03:03 UTC, next due 09:03:00 UTC (EV003).
+- No service is in a `failed` ActiveState in this evidence (EV003).
+
+## Cron files
+- Three cron files present: `quantbot-epoch`, `quantbot-v8`, `quantbot-v8-inputs`, all mode 0644, with well-formed single-line crontab entries invoking `watchdog.exec_wrapper` (EV004).
+- `recent_parser_error_lines` is an empty list (EV004) — no recent cron parser errors recorded.
+- Corroborating watchdog checks `cron_static.k5_nightly`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily` all report `OK` / "parses cleanly, no recent journal parser errors" (EV005).
+
+## Watchdog's own most recent run status
+- Latest **fast** run (`b0827f8682774c24`, EV005): started/finished at `1790238904.8*` (epoch seconds; note this is a different/larger epoch scale than EV001's host time, so a direct UTC cross-check isn't possible from evidence given), duration ~10.5ms, `checks_due=11`, `checks_completed=11`, `final_runner_status: ok`. All 11 individual checks completed; **10 reported OK, 1 reported CRITICAL** (`funnel.v8`).
+- Latest **slow** run (`daa7e904494344cb`, EV005): `checks_due=10`, `checks_completed=10`, `final_runner_status: ok`. Of these, 9 are OK and 1 (`claims.batch.v8_readiness`) is WARN.
+- Both runs report `watchdog_version: 1.0.0-phase1` and `git_sha` matching the deployed HEAD (EV005, EV002).
+
+## Active incidents
+Per `all_incidents` (EV005), two incidents are currently in **FIRING** state (not recovered):
+1. **`funnel.v8`** — severity CRITICAL, first_seen 1786748706.89, last_seen 1790238904.82, `consecutive_failures: 8546`, last_notified 1790237104.78, `recovered_at` shows a past timestamp (1786810203.15) that predates `last_seen`, indicating it recovered once long ago and is firing again now. Underlying check detail: 1 candidate (`event_id bd6003380054eb57`, mint `AFf278av4oRQicFnpeGHFvcXqjmfNac3XaVyVZAhpump`) entered `telegram_received` at ts 1787710096.66 with no terminal disposition recorded (EV005 `funnel.v8` check evidence).
+2. **`claims.batch.v8_readiness`** — severity WARN, `state: FIRING`, `consecutive_failures: 1174`, `recovered_at: null`. Underlying check: batch `v8_readiness` has 4 of 7 items (`N2, N4, N6, N7`) in PARTIAL status, 3 GREEN, 0 FAIL (EV005 `claims.batch.v8_readiness`).
+
+All other listed incident fingerprints (`watchdog.self_test`, `cron_static.epoch_daily`, `cron_static.v8_vs_v7_daily`, `cron_execution.k5_nightly`, `cron_execution.epoch_daily`, `cron_execution.v8_vs_v7_daily`, `test_drift.collection.tests_memecoin`, `feed.pumpportal`, `layer2.staleness`, `research.path_collection`, `feed.telegram`, `pipeline.research_queue_lag`) show `state: RECOVERED` with `consecutive_failures: 0` (EV005).
+
+## Research pipeline queue lag
+- Latest fast-check result for `pipeline.research_queue_lag`: status OK, "consumer caught up (gap=0 bytes)", `queue_size: 3530151`, `offset: 3530151` (EV005).
+- Separately, EV006 (a later/independent snapshot, timestamp not stated) reports `queue_size: 3530198`, `queue_offset: "3530198"` — also equal, i.e., zero gap at that observation point. Note EV006 provides no timestamp, so it cannot be precisely correlated in time with EV005's check, only that both show offset == size (no lag) at their respective moments.
+- The `pipeline.research_queue_lag` incident fingerprint shows a past RECOVERED episode (first_seen 1788334503.89, recovered_at 1790077504.77) — meaning lag was a firing incident at some point in the past but is not currently active (EV005).
+
+## Other evidence-supported observations
+- **Cron execution receipts**: `k5_nightly`, `epoch_daily`, and `v8_vs_v7_daily` all show `exit_code: 0` for their most recent scheduler-triggered runs, and consistently for the prior several days back through 1789689482 (EV005 `recent_job_receipts`), all tagged with git_sha matching current HEAD.
+- **Telegram feed**: `feed.telegram` OK, last event 1194s ago vs. 7200s threshold (EV005). The incident history shows this check was firing in the past (first_seen 1787300101.99) but recovered at 1790234704.89, shortly before the current snapshot.
+- **PumpPortal feed**: OK, last connect logged 2026-09-24 08:34:48 UTC (EV005) — this log timestamp is consistent with EV001's host time of 08:36:20 UTC on the same date.
+- **Test collection**: all four test suites (`tests_memecoin` 335 tests, `tests_research` 635 tests, `tests_watchdog` 103 tests, `tests_layer2` 39 tests, `tests_quant-bot` 56 tests) collect cleanly with no drift errors (EV005).
+- **Stale mock check**: OK, 166 resolvable patch targets checked, explicitly noting third-party/stdlib targets are skipped and unverified (EV005) — this is a stated scope limitation, not a gap I'm inferring.
+- **Research spool**: OK, 0 failed inserts in the last 2 hours; 68 total historical failed-insert lines on disk noted as not itself evidence of an active problem (EV005) — this qualifier is in the original evidence, not my inference.
+- **Layer2 audit staleness**: OK, last audit `audit-20260923T084310Z` was 23.3h old with 7 findings, 0 critical (EV005).
+- **rc_closure batch**: OK, 3/3 items GREEN, tied to commit `db32f53` — note this commit hash differs from the current deployed HEAD `9f8635c1...` (EV005 vs EV002); evidence does not explain the relationship between the two, so I do not assume they refer to the same codebase state.
+- **receipts_tail (EV007)**: shows a file of length 278803 bytes with mtime 1790207881.47, which matches exactly the `started_at`/near `finished_at` of the `v8_vs_v7_daily` job receipt in EV005 — consistent with that job having written to this file, though EV007 does not name the file itself.
+
+## Explicit gaps / ambiguities in the evidence
+- EV001's host time (`2026-09-24T08:36:20Z`, uptime in seconds) uses a different epoch/format than the large Unix timestamps in EV005 (e.g., `1790238904`), which do not correspond to 2026-09-24 under standard Unix epoch conversion. I cannot reconcile these two time bases from the evidence provided, so I cannot independently verify exact recency of the watchdog runs against "now" beyond relative deltas stated inside EV005 itself (e.g., "1194s ago").
+- EV006 provides no timestamp, so its queue_size/offset reading cannot be precisely placed in the sequence of events relative to EV005's watchdog check.
+- The relationship between commit `db32f53` (EV005 `claims.batch.rc_closure`) and deployed HEAD `9f8635c1...` (EV002) is not established by any evidence — could be a different repo, a prior commit, or a truncated/short SHA; not stated.
+- No evidence shows *why* the working tree is dirty (no commit messages, no diffs shown) — only the file list (EV002). Whether this is expected runtime log/data churn or unreviewed code changes cannot be determined from this evidence alone.
+- No systemd evidence for any unit other than the four listed in EV003; presence/absence of other services on the host is not established.
